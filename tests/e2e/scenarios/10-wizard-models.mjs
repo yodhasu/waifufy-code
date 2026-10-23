@@ -9,12 +9,13 @@ const W = (name) => `#screen-wizard ${T(name)}`
 
 export default {
   name: 'First-run wizard without a models folder',
-  // A function, so the folders are only made when this file runs. The configured folder doesn't exist, and an
-  // empty home folder hides the places settings.ts looks in when it is missing (modelDirCandidates).
+  // A function, so the folders are only made when this file runs. The configured folder doesn't exist, and
+  // WC_NO_MODEL_SEARCH turns off the places settings.ts looks in when it is missing (modelDirCandidates). Faking
+  // USERPROFILE instead would also break WebView2 in the Tauri app.
   launch: () => ({
     wizard: true,
     settings: { appearance: { modelsDir: join(tempDir('wc-e2e-gone-'), 'no-such-folder') } },
-    env: { USERPROFILE: tempDir('wc-e2e-home-'), WAIFUFY_HOME: '' },
+    env: { WC_NO_MODEL_SEARCH: '1' },
   }),
   tests: [
     {

@@ -47,9 +47,10 @@ async function realShell(app, command) {
 
 /**
  * Answers permission prompts during the turn: "Allow once" for a read-only tool, so the tiny tool use can
- * finish, and No for anything else (reported as a failure, since the prompt asked for a Glob only).
+ * finish, and No for anything else. `strict`: a refusal is a failure (the prompt asked for a Glob only);
+ * otherwise she was free to look further, and the No just ends the turn.
  */
-async function answerPrompts(app, from, isDone) {
+async function answerPrompts(app, from, isDone, { strict = true } = {}) {
   const answered = new Set()
   while (!isDone()) {
     const ask = (await app.events(from, 'ask_permission')).filter((a) => !answered.has(a.id)).at(-1)
@@ -57,10 +58,20 @@ async function answerPrompts(app, from, isDone) {
       answered.add(ask.id)
       const allow = READ_ONLY.has(ask.tool)
       await app.click(T('ask-option', { v: allow ? 'allow' : 'deny' }))
-      if (!allow) report('FAIL', `refused a ${ask.tool} permission prompt`, ask.detail)
+      if (!allow) report(strict ? 'FAIL' : 'INFO', `refused a ${ask.tool} permission prompt`, ask.detail)
     }
     await new Promise((r) => setTimeout(r, PROMPT_POLL_MS))
   }
+}
+
+/** Waits for the turn that started at `from` to end, answering its permission prompts meanwhile. */
+async function finishTurn(app, from, options) {
+  let finished = false
+  const turn = turnEnd(app, from, TURN_MS).finally(() => (finished = true))
+  // Handled here so a timeout can't crash the process before `finally` closes the app; awaited below.
+  turn.catch(() => {})
+  await answerPrompts(app, from, () => finished, options)
+  return turn
 }
 
 let app
@@ -96,12 +107,7 @@ try {
 
   // 2. One tiny, read-only tool use.
   m = await realSay(app, 'Use the Glob tool to list the files in this folder, then tell me how many there are. Be brief.')
-  let finished = false
-  const turn = turnEnd(app, m, TURN_MS).finally(() => (finished = true))
-  // Handled here so a timeout can't crash the process before `finally` closes the app; awaited below.
-  turn.catch(() => {})
-  await answerPrompts(app, m, () => finished)
-  end = await turn
+  end = await finishTurn(app, m)
   await readAll(app)
   check(end.ok, 'tool turn ends ok', end.error)
   const tools = await app.events(m, 'tool')
@@ -113,11 +119,12 @@ try {
   m = await realShell(app, 'git status')
   const shell = await app.waitEvent('shell_result', {}, m, TURN_MS)
   check(/branch/i.test(shell.output), '!git status output arrives', shell.output.split('\n')[0])
-  end = await turnEnd(app, m, TURN_MS)
+  // She may want to look further (a Bash call to check .gitignore, say); that prompt is refused, ending the turn.
+  end = await finishTurn(app, m, { strict: false })
   await readAll(app)
-  check(end.ok, 'she answers the !cmd output', end.error)
-  const reply = (await app.dialogueLog(m)).map((d) => d.text).join(' ')
-  soft(reply.length > 0, 'her answer reaches the dialogue', reply.slice(0, 100))
+  check(end.ok || end.interrupted, 'the !cmd reply turn ends', end.error)
+  const answered = (await app.events(m, 'text')).map((e) => e.delta).join('')
+  check(answered.trim().length > 0, 'she answers the !cmd output', answered.slice(0, 100))
   // No more model turns from here: only the free local command below may go out.
   await app.eval(() => window.__e2e.block.add('shell'))
 

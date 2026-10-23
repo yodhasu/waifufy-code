@@ -60,8 +60,9 @@ export function lineDiff(a: string[], b: string[]): Line[] {
     let j = 0
     while (i < A.length || j < B.length) {
       if (i < A.length && j < B.length && A[i] === B[j]) out.push(same(A[i++])), j++
-      else if (j < B.length && (i === A.length || lcs[i * w + j + 1] >= lcs[(i + 1) * w + j])) out.push({ op: '+', s: B[j++] })
-      else out.push({ op: '-', s: A[i++] })
+      // Ties go to the removal, so a changed line reads − then +, as in the CLI and every diff tool.
+      else if (i < A.length && (j === B.length || lcs[(i + 1) * w + j] >= lcs[i * w + j + 1])) out.push({ op: '-', s: A[i++] })
+      else out.push({ op: '+', s: B[j++] })
     }
   }
   out.push(...a.slice(a.length - suf).map(same))

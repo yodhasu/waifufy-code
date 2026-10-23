@@ -386,7 +386,7 @@ export function chatScreen(): Screen {
     const keys: [string, string][] = [
       ['Enter', 'Send (queues while she works)'], ['Shift+Enter', 'New line'], ['↑ / ↓', 'Input history'],
       ['/', 'Commands'], ['@', 'Mention a file'], ['!', 'Run a shell command'], ['Esc', 'Close a menu · interrupt'],
-      ['Shift+Tab', 'Cycle permission mode'], ['Ctrl+L', 'Backlog'], ['Click · Space · Enter', 'Next page'],
+      ['Shift+Tab', 'Cycle permission mode'], ['Ctrl+L · Ctrl+O', 'Backlog (the full trace)'], ['Click · Space · Enter', 'Next page'],
       ['Hold Ctrl', 'Skip dialogue'], ['1–9 · ↑↓ · Enter', 'Answer a choice menu'],
     ]
     const app: [string, string][] = [
@@ -851,7 +851,8 @@ export function chatScreen(): Screen {
     const handled = () => (e.preventDefault(), e.stopPropagation())
     const top = layers.at(-1)
     if (top?.key?.(e)) return handled()
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'l') return void (handled(), openLog())
+    // Ctrl+L opens the backlog; Ctrl+O too, the CLI's key for the full transcript.
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && ['l', 'o'].includes(e.key.toLowerCase())) return void (handled(), openLog())
     if (top) return
     if (e.key === 'Tab' && e.shiftKey && !e.ctrlKey && !e.altKey) return void (handled(), cycleMode())
     const target = e.target as HTMLElement

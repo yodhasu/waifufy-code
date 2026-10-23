@@ -277,7 +277,9 @@
 .chat .chat-modal .modal.wide { inset: 44px 150px; }
 .chat .chat-modal:has(.modal.side) { background: transparent; backdrop-filter: none; }
 .chat .chat-modal .modal.side { inset: 24px 24px 24px auto; width: 330px; padding: 20px 20px; }
-.chat .modal.side h2 { font-size: 19px; letter-spacing: .12em; overflow: hidden; text-overflow: ellipsis; }
+.chat .modal.side h2 { font-size: 19px; letter-spacing: .06em; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+.chat .modal.side .mtools:empty { display: none; }
+.chat .modal.side .close { padding: 6px 12px; font-size: 13px; }
 .chat .modal.side .picks.grid { grid-template-columns: 1fr; }
 .chat .modal .close { white-space: nowrap; flex: none; }
 .chat .modal header { display: flex; align-items: center; gap: 14px; }

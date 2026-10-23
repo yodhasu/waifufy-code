@@ -38,7 +38,7 @@ async function tourTheme(theme) {
   await shot(`${theme}-04-chat-after-tools`)
 
   m = await say(app, 'ask permission to edit')
-  await app.waitVisible(T('ask', { kind: 'permission' }), { timeout: 30_000 })
+  await app.waitVisible(T('ask', { kind: 'permission' }), 30_000)
   await shot(`${theme}-05-permission`)
   await app.click(T('ask-option', { v: 'allow' }))
   await turnEnd(app, m)

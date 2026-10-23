@@ -1,5 +1,7 @@
 # Waifufy Code: spec
 
+> The v0 design notes. The v1 requirements, architecture and contracts are in [docs/V1.md](docs/V1.md), which supersedes this file where they differ.
+
 A desktop Claude Code client with a visual novel UI. Rem from Re:Zero is the agent's persona: every reply is in character. Under the hood it's the full Claude Code harness through the Claude Agent SDK (tools, MCP, skills, hooks, CLAUDE.md, permissions). Desktop first (Tauri 2), Android port later.
 
 ## Architecture

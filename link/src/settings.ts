@@ -10,6 +10,8 @@ const FILE = join(DATA_DIR, 'settings.json')
 
 /** Where costume folders are looked for when `appearance.modelsDir` is empty or missing, in order. */
 export function modelDirCandidates(): string[] {
+  // The E2E suite turns the search off to play a first run on a machine without the costumes.
+  if (process.env.WC_NO_MODEL_SEARCH === '1') return []
   const home = homedir()
   return [
     join(home, 'Downloads', 'ReZero LiM Live2D Characters', 'Live2D Characters'),

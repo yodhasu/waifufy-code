@@ -8,7 +8,9 @@ Everything here runs without spending plan budget, except `e2e/real.mjs`, which 
 | E2E suite (mock session) | `node tests/e2e/run.mjs` | a dev-config debug build (below), or Chrome/Edge for `WC_E2E_TARGET=browser` |
 | Part of the suite | `node tests/e2e/run.mjs chat R14` | files whose name contains `chat`, plus every test tagged R14 |
 | Strict run | `node tests/e2e/run.mjs --strict` | also fails when a requirement is skipped or has no test |
-| Real SDK smoke test | `node tests/e2e/real.mjs` | a Claude login; sends at most 3 short Haiku messages |
+| Real SDK smoke test | `node tests/e2e/real.mjs` | a Claude login; at most 3 short Haiku turns (plus the free `/context`) |
+| Real roleplay research | `node tests/e2e/real-research.mjs ["Name"] ["Series"] ["notes"]` | a Claude login; one Haiku research run with web search |
+| Visual tour | `node tests/e2e/tour.mjs` | like the E2E suite; PNGs of every screen in light and dark go to `tests/e2e/out/tour/` |
 
 **The build.** `cargo build --manifest-path app/src-tauri/Cargo.toml` makes
 `app/src-tauri/target/debug/waifufy-code.exe` with the dev config, which loads the page from Vite on 1430 (the
@@ -119,7 +121,9 @@ The suite also uses these, falling back to text matching when they are missing: 
 ## real.mjs
 
 Runs the real Agent SDK (no `WC_MOCK`) in a temp project, refuses to send anything unless the session reports a
-Haiku model, and sends exactly three messages: a one-sentence greeting (persona and emotion tags, no tag in the
+Haiku model, and uses at most three model turns: a one-sentence greeting (persona and emotion tags, no tag in the
 dialogue), a Glob of the folder (a tool call with its result in the tool log; a permission prompt is allowed only
-for Glob, Grep, Read or LS, and anything else is denied and reported as a failure), and `/context` (free). After the third, every further `say` is blocked. WARN lines are soft checks (the
+for Glob, Grep, Read or LS, and anything else is denied and reported as a failure), and `!git status`, whose output
+she answers as the CLI does by default. Then `/context`, a local command that costs nothing, and every further
+`say` and `shell` is blocked. WARN lines are soft checks (the
 model may skip a tag).

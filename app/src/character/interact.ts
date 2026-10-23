@@ -90,12 +90,21 @@ export function createInteract(o: {
     const dx = p.x - g.head.x
     const dy = p.y - g.head.y
     const distance = Math.hypot(dx, dy)
-    if (distance < 1) return a.focus(0, 0)
+    if (distance < 1) return focus(a, 0, 0)
     const strength = Math.min(1, distance / (g.head.r * FOCUS_RADII))
-    a.focus((dx / distance) * strength, (-dy / distance) * strength)
+    focus(a, (dx / distance) * strength, (-dy / distance) * strength)
   }
 
-  const center = () => o.actor()?.focus(0, 0)
+  /** Turns her toward (x, y) and mirrors it on `#chara[data-focus]`, so tracking can be seen and tested (R32). */
+  function focus(a: Actor, x: number, y: number) {
+    a.focus(x, y)
+    root.dataset.focus = `${x.toFixed(2)},${y.toFixed(2)}`
+  }
+
+  const center = () => {
+    const a = o.actor()
+    if (a) focus(a, 0, 0)
+  }
 
   function updateCursor() {
     const m = o.motion()

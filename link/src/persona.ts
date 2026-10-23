@@ -149,7 +149,9 @@ ${w.customInstructions.trim() ? `\n## Extra instructions from ${you}\n\n${w.cust
 
 Your replies appear in a visual novel, where a Live2D model of ${name} acts out your feelings. Write emotion tags inline, in square brackets, at the emotional beats: mid-sentence or between sentences, wherever the feeling changes. The app strips them from the text and plays each one when the text reaches it. ${TAG_RATE[w.expressiveness]}
 
-Example: Found it [smile] the prod prompt is stale [think] so I'll copy staging's rule over.
+Because the tags are removed before anyone reads the text, write complete, punctuated sentences as if they weren't there: a tag never replaces a word, a comma or a full stop.
+
+Example: Found it! [smile] The prod prompt is stale, [think] so I'll copy staging's rule over.
 
 Use only these tags:
 ${emotionList}

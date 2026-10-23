@@ -844,7 +844,9 @@ export async function launch(options = {}) {
     if (target === 'app' && !page.url.startsWith(VITE_URL)) {
       console.log(`    warning: the app loads ${page.url}, an embedded dist snapshot (a \`tauri build\`), not Vite; it may be stale`)
     }
-    const cdp = await prepare(page, url)
+    // The app's page is navigated to, not reloaded: a reload before WebView2 commits its first load reloads
+    // about:blank and drops the pending navigation, leaving a stalled boot.
+    const cdp = await prepare(page, url ?? page.url)
     const app = new App({ cdp, dataDir, procs, target, sidecarPort })
     // A retry navigates to the page the app had opened: reloading a load that stalled can leave about:blank.
     await bootWait(app, cdp, url ?? page.url)
