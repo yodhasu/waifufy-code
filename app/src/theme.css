@@ -1,0 +1,149 @@
+/*
+  Design tokens. Every module's CSS uses ONLY these variables for color, so the light and dark themes
+  cover the whole app (R46). The accent comes from settings (--accent is set on :root by state.ts);
+  the deep/pale variants are derived from it.
+*/
+:root {
+  --accent: #5b8de0;
+  --accent-deep: color-mix(in oklab, var(--accent) 62%, #0b1a4a);
+  --accent-pale: color-mix(in oklab, var(--accent) 22%, #ffffff);
+  --accent-glow: color-mix(in oklab, var(--accent) 45%, transparent);
+  --gold: #d4ad5c;
+  --gold-soft: rgba(212, 173, 92, 0.55);
+  --gold-faint: rgba(212, 173, 92, 0.3);
+
+  --text: #1d2340;
+  --text-soft: #5a6285;
+  --text-faint: #8d94b2;
+  --text-on-accent: #ffffff;
+  --heading: var(--accent-deep);
+
+  --panel: rgba(252, 253, 255, 0.86);
+  --panel-solid: #fbfcff;
+  --panel-inset: rgba(255, 255, 255, 0.72);
+  --panel-line: rgba(47, 79, 158, 0.15);
+  --panel-shadow: 0 14px 40px rgba(20, 30, 80, 0.28);
+  --input: rgba(255, 255, 255, 0.92);
+  --chip: #ffffff;
+  --hover: color-mix(in oklab, var(--accent) 14%, transparent);
+
+  --dialogue-top: rgba(255, 255, 255, 1);
+  --dialogue-bottom: rgba(240, 245, 255, 1);
+  --code-bg: #1d2340;
+  --code-text: #dbe7ff;
+  --inline-code-bg: var(--accent-pale);
+  --inline-code-text: var(--accent-deep);
+
+  --ok: #3fae84;
+  --warn: #e09a2e;
+  --bad: #dc5470;
+  --pink: #f29bb8;
+
+  --overlay: rgba(11, 16, 36, 0.45);
+  --toast-bg: rgba(29, 35, 64, 0.92);
+  --toast-text: #ffffff;
+
+  /* Backdrop (day) */
+  --sky-1: #e9ecff;
+  --sky-2: #c3d1f3;
+  --sky-3: #8ea2d8;
+  --sky-4: #4b5c9c;
+  --sun: rgba(255, 255, 255, 0.9);
+  --window: rgba(255, 255, 255, 0.75);
+  --window-edge: rgba(255, 255, 255, 0.35);
+  --ray: rgba(255, 255, 255, 0.35);
+  --floor: rgba(30, 40, 90, 0.45);
+  --petal: rgba(255, 255, 255, 0.85);
+  --char-glow: #ffe2ec;
+
+  /* Context bar categories */
+  --c-system: #8a94b8;
+  --c-tools: #a497e6;
+  --c-mcp: #5b8de0;
+  --c-memory: #d4ad5c;
+  --c-messages: #f29bb8;
+  --c-buffer: #c9cde0;
+
+  --font-ui: 'Zen Maru Gothic', 'Segoe UI', sans-serif;
+  --font-title: 'Shippori Mincho', 'Yu Mincho', serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Mono', ui-monospace, monospace;
+
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --accent-deep: color-mix(in oklab, var(--accent) 55%, #ffffff);
+  --accent-pale: color-mix(in oklab, var(--accent) 26%, #12172e);
+  --gold: #c9a45a;
+  --gold-soft: rgba(201, 164, 90, 0.5);
+  --gold-faint: rgba(201, 164, 90, 0.25);
+
+  --text: #e6e9f8;
+  --text-soft: #a7aecb;
+  --text-faint: #6f7697;
+  --heading: color-mix(in oklab, var(--accent) 45%, #ffffff);
+
+  --panel: rgba(20, 25, 48, 0.86);
+  --panel-solid: #161b33;
+  --panel-inset: rgba(34, 40, 70, 0.75);
+  --panel-line: rgba(150, 170, 255, 0.14);
+  --panel-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+  --input: rgba(24, 29, 54, 0.94);
+  --chip: #232a4d;
+  --hover: color-mix(in oklab, var(--accent) 22%, transparent);
+
+  --dialogue-top: rgba(26, 31, 58, 1);
+  --dialogue-bottom: rgba(18, 22, 44, 1);
+  --code-bg: #0b0f22;
+  --code-text: #cfdcff;
+  --inline-code-bg: rgba(91, 141, 224, 0.22);
+  --inline-code-text: #c3d5ff;
+
+  --overlay: rgba(2, 4, 14, 0.6);
+  --toast-bg: rgba(8, 10, 24, 0.94);
+
+  /* Backdrop (night) */
+  --sky-1: #2a2f5c;
+  --sky-2: #1c2148;
+  --sky-3: #121634;
+  --sky-4: #080a1c;
+  --sun: rgba(170, 190, 255, 0.28);
+  --window: rgba(150, 175, 255, 0.28);
+  --window-edge: rgba(150, 175, 255, 0.16);
+  --ray: rgba(160, 185, 255, 0.12);
+  --floor: rgba(0, 0, 0, 0.5);
+  --petal: rgba(220, 228, 255, 0.55);
+  --char-glow: #4a4f8f;
+
+  --c-buffer: #3a4062;
+
+  color-scheme: dark;
+}
+
+/* The backdrop can be forced to night while the UI stays light, and vice versa (settings: background). */
+:root[data-scene='night'] {
+  --sky-1: #2a2f5c;
+  --sky-2: #1c2148;
+  --sky-3: #121634;
+  --sky-4: #080a1c;
+  --sun: rgba(170, 190, 255, 0.28);
+  --window: rgba(150, 175, 255, 0.28);
+  --window-edge: rgba(150, 175, 255, 0.16);
+  --ray: rgba(160, 185, 255, 0.12);
+  --floor: rgba(0, 0, 0, 0.5);
+  --petal: rgba(220, 228, 255, 0.55);
+  --char-glow: #4a4f8f;
+}
+:root[data-scene='day'] {
+  --sky-1: #e9ecff;
+  --sky-2: #c3d1f3;
+  --sky-3: #8ea2d8;
+  --sky-4: #4b5c9c;
+  --sun: rgba(255, 255, 255, 0.9);
+  --window: rgba(255, 255, 255, 0.75);
+  --window-edge: rgba(255, 255, 255, 0.35);
+  --ray: rgba(255, 255, 255, 0.35);
+  --floor: rgba(30, 40, 90, 0.45);
+  --petal: rgba(255, 255, 255, 0.85);
+  --char-glow: #ffe2ec;
+}

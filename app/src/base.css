@@ -1,0 +1,75 @@
+/* Shell: the scaled 1600×900 stage, the backdrop, and shared primitives (buttons, panels, overlays,
+   toast, confirm dialog). Screen modules style their own content in their own CSS files. */
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #05070f; font-family: var(--font-ui); color: var(--text); }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:disabled { cursor: default; opacity: .55; }
+input, textarea, select { font: inherit; color: var(--text); }
+::selection { background: var(--accent-glow); }
+* { scrollbar-width: thin; scrollbar-color: var(--gold-soft) transparent; }
+
+/* A fixed 1600×900 stage centered on the window and scaled to fit (letterboxed), like a VN engine. */
+#viewport { position: fixed; inset: 0; overflow: hidden; }
+#stage {
+  width: 1600px; height: 900px; position: absolute; left: 50%; top: 50%; overflow: hidden; transform-origin: center;
+  background:
+    radial-gradient(ellipse 60% 50% at 50% 28%, var(--sun), transparent 70%),
+    linear-gradient(180deg, var(--sky-1) 0%, var(--sky-2) 38%, var(--sky-3) 72%, var(--sky-4) 100%);
+  transition: background .6s;
+}
+
+/* ---------- Backdrop ---------- */
+#backdrop { position: absolute; inset: 0; pointer-events: none; }
+.window-light { position: absolute; width: 120px; height: 620px; border-radius: 60px 60px 6px 6px; top: 70px;
+  background: linear-gradient(180deg, var(--window), transparent); border: 6px solid var(--window-edge); box-shadow: 0 0 60px var(--window-edge); }
+.ray { position: absolute; top: 0; height: 1000px; width: 160px; transform-origin: top; transform: rotate(-18deg);
+  background: linear-gradient(180deg, var(--ray), transparent 75%); filter: blur(6px); }
+.floor { position: absolute; left: 0; right: 0; bottom: 0; height: 260px; background: linear-gradient(180deg, transparent, var(--floor)); }
+.petal { position: absolute; top: -20px; width: 12px; height: 9px; border-radius: 60% 0 60% 0; background: var(--petal);
+  animation: fall linear infinite; opacity: .75; }
+#stage[data-petals='off'] .petal { display: none; }
+@keyframes fall { 100% { transform: translate(-160px, 960px) rotate(540deg); } }
+
+/* ---------- Character layer (owned by the character module) ---------- */
+#chara { position: absolute; inset: 0; pointer-events: none; }
+
+/* ---------- Screens ---------- */
+/* Screen roots cover the stage but let clicks through to the character; their children capture as usual. */
+.screen { position: absolute; inset: 0; display: none; z-index: 2; pointer-events: none; }
+.screen > * { pointer-events: auto; }
+.screen.active { display: block; animation: fade .3s; }
+@keyframes fade { from { opacity: 0; } }
+@keyframes pulse { 50% { opacity: .35; } }
+
+/* ---------- Shared primitives ---------- */
+.panel { background: var(--panel); backdrop-filter: blur(12px); border: 1.5px solid var(--gold-soft); border-radius: 20px;
+  box-shadow: var(--panel-shadow), inset 0 0 0 4px color-mix(in oklab, var(--panel-solid) 55%, transparent); }
+.title-text { font-family: var(--font-title); font-weight: 800; letter-spacing: .14em; color: var(--heading); }
+.btn { border: 1.5px solid var(--gold-soft); background: var(--panel-inset); border-radius: 12px; padding: 8px 18px; font-weight: 700;
+  transition: border-color .15s, box-shadow .15s, transform .15s; }
+.btn:not(:disabled):hover, .btn:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); outline: none; }
+.btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent-deep)); color: var(--text-on-accent); border-color: transparent; }
+.btn.danger { border-color: var(--bad); color: var(--bad); }
+.field { width: 100%; border-radius: 12px; border: 1.5px solid var(--gold-soft); background: var(--input); padding: 9px 14px; outline: none; }
+.field:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+code, .mono { font-family: var(--font-mono); }
+
+.overlay { position: absolute; inset: 0; background: var(--overlay); backdrop-filter: blur(2px); display: none;
+  align-items: center; justify-content: center; z-index: 50; }
+.overlay.show { display: flex; animation: fade .2s; }
+
+#toast { position: absolute; top: 26px; left: 50%; transform: translate(-50%, -90px); background: var(--toast-bg); color: var(--toast-text);
+  padding: 10px 20px; border-radius: 12px; font-size: 14px; transition: transform .35s; z-index: 90; border: 1px solid var(--gold-soft);
+  max-width: 900px; pointer-events: none; }
+#toast.show { transform: translate(-50%, 0); }
+
+#confirm .box { width: 620px; padding: 28px 32px 22px; display: flex; flex-direction: column; gap: 14px; }
+#confirm h3 { margin: 0; font-family: var(--font-title); font-size: 24px; letter-spacing: .1em; color: var(--heading); }
+#confirm p { margin: 0; color: var(--text-soft); line-height: 1.6; white-space: pre-wrap; }
+#confirm .row { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
+
+#offline { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 95; display: none;
+  background: var(--toast-bg); color: var(--toast-text); border: 1px solid var(--bad); border-radius: 12px; padding: 8px 18px; font-size: 14px; }
+#offline.show { display: block; animation: fade .2s; }
+#offline::before { content: '✦'; margin-right: 8px; color: var(--bad); animation: pulse 1s infinite; display: inline-block; }

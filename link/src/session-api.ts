@@ -1,0 +1,35 @@
+import type { Image, PermissionModeName, SessionEvent, Settings } from './protocol.ts'
+
+/** Contract between server.ts and a session implementation: session.ts (real SDK) or mock.ts (E2E tests). */
+export type SessionOptions = {
+  /** Chosen by the app in `start`; server.ts tags every emitted event with it. */
+  epoch: number
+  cwd: string
+  resume?: string
+  settings: Settings
+  /** Full path to the Claude Code executable (bundled claude.exe in release); undefined = SDK default lookup. */
+  claudePath?: string
+  emit(e: SessionEvent): void
+}
+
+export interface SessionApi {
+  readonly epoch: number
+  readonly cwd: string
+  /** Current SDK session id; changes after /clear. */
+  sessionId(): string | undefined
+  /** Starts the CLI and completes the handshake; emits `ready` (and `stats`). Never throws: failures are emitted as `error` + `ended`. */
+  start(): Promise<void>
+  say(text: string, images?: Image[]): void
+  /** `!cmd`: runs it in `cwd`, emits `shell_result`, and appends input+output to context without a turn. */
+  shell(command: string): Promise<void>
+  interrupt(): Promise<void>
+  /** Intentional shutdown: no `error` for the resulting abort; emits `ended` with reason 'closed'. */
+  close(): void
+  setMode(mode: PermissionModeName): Promise<void>
+  setModel(model: string): Promise<void>
+  answerPermission(id: string, decision: 'allow' | 'always' | 'deny' | 'feedback', message?: string): void
+  answerQuestion(id: string, answers: Record<string, string>): void
+  answerPlan(id: string, decision: 'auto' | 'manual' | 'keep', message?: string): void
+}
+
+export type SessionFactory = (opts: SessionOptions) => SessionApi
