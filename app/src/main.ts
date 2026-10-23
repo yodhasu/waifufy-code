@@ -136,8 +136,9 @@ const router: Router = {
   current: () => current ?? 'title',
   back() {
     const prev = history.pop()
-    // Never go "back" into a finished chat; the title screen is the hub.
-    router.go(prev && prev !== 'chat' && prev !== 'wizard' ? prev : 'title')
+    // Back into the chat returns to the running session (Settings or Load opened from it); chat.show() with no
+    // params falls back to the title when that session has ended. The wizard is never gone back to.
+    router.go(prev && prev !== 'wizard' ? prev : 'title')
     history.pop()
   },
 }

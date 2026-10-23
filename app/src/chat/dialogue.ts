@@ -158,14 +158,36 @@ export function classify(block: string): { kind: BlockKind; leadLines: number; i
   return { kind: 'prose', leadLines: lines.length, items }
 }
 
-/** The opening sentences of `s` that fit one page (at least one sentence). */
+/**
+ * `s` cut at a word boundary to at most `max` visible characters. Markers before the cut stay, and a `**` or
+ * backtick run the cut leaves open is closed, so the page never shows stray Markdown.
+ */
+function clipVisible(s: string, max: number) {
+  let seen = 0
+  let cut = s.length
+  let lastSpace = -1
+  for (let i = 0; i < s.length; i++) {
+    if (isMark(s[i])) continue
+    if (/\s/.test(s[i])) lastSpace = i
+    if (++seen > max) {
+      cut = lastSpace > 0 ? lastSpace : i
+      break
+    }
+  }
+  let out = s.slice(0, cut).trimEnd()
+  if ((out.match(/\*\*/g)?.length ?? 0) % 2) out += '**'
+  if ((out.replace(/\*\*/g, '').match(/`/g)?.length ?? 0) % 2) out += '`'
+  return out
+}
+
+/** The opening sentences of `s` that fit one page; a first sentence longer than a page is cut at a word (R29). */
 function leadSentences(s: string) {
   let out = ''
   for (const sentence of sentences(s)) {
     if (out && visLen(out) + visLen(sentence) > PAGE_CHARS) break
     out += sentence
   }
-  return out.trim()
+  return visLen(out) > PAGE_CHARS ? clipVisible(out.trim(), PAGE_CHARS) : out.trim()
 }
 
 /**
@@ -451,8 +473,9 @@ export function createDialogue(
   const motion = () => deps.store.get().motion
   const talk = (on: boolean) => deps.character.setTalking(on && !muted && motion().lipSync)
   const done = () => !current || shown >= current.rich.plain.length
-  // Her unread lines, and pages with buttons (Log in, Restart), stay until the reader moves on.
-  const waitsForReader = () => !!current && (typed(current.page) || !!current.page.actions?.length) && !acked
+  // Her unread lines, command and shell output (she may answer it next), and pages with buttons (Log in,
+  // Restart) stay until the reader moves on.
+  const waitsForReader = () => !!current && (typed(current.page) || !!current.page.mono || !!current.page.actions?.length) && !acked
 
   function updateAdvance() {
     const ready = done() && queue.length > 0

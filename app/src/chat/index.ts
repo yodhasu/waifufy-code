@@ -24,6 +24,8 @@ const TICK_MS = 1000
 const SKIP_ARM_MS = 150
 const SKIP_ARM_IN_FIELD_MS = 400
 const LAST_LINE_CHARS = 200
+/** The stats that follow turn_end are waited for this long before the turn is saved without them. */
+const STATS_WAIT_MS = 1500
 /** The LOG follows new entries while you are this close to its bottom. */
 const LOG_STICK_PX = 40
 const LOG_DETAIL_CHARS = 140
@@ -110,6 +112,8 @@ export function chatScreen(): Screen {
   const log: LogEntry[] = []
   const layers: Layer[] = []
   let logView: { el: HTMLElement; add(e: LogEntry): void; refresh(e: LogEntry): void } | undefined
+  /** A finished turn waiting for its stats, so the save records the new turn count. */
+  let pendingSave: number | undefined
 
   const settings = () => ctx.store.get()
   const charName = () => settings().waifu.name
@@ -550,6 +554,8 @@ export function chatScreen(): Screen {
   }
 
   async function saveMeta(withThumb: boolean) {
+    clearTimeout(pendingSave)
+    pendingSave = undefined
     const id = sessionId
     if (!id) return
     // Before the first stats of a resumed save the turn count is unknown, so the saved one stays.
@@ -562,6 +568,19 @@ export function chatScreen(): Screen {
     }
     const thumb = withThumb ? await ctx.character.snapshot(THUMB_W, THUMB_H).catch(() => undefined) : undefined
     ctx.link.send({ t: 'save_meta', id, patch, thumb })
+  }
+
+  /** Saves a finished turn once its stats are in (they follow turn_end), or after STATS_WAIT_MS without them. */
+  function saveAfterStats() {
+    clearTimeout(pendingSave)
+    pendingSave = window.setTimeout(flushSave, STATS_WAIT_MS)
+  }
+
+  function flushSave() {
+    if (pendingSave === undefined) return
+    clearTimeout(pendingSave)
+    pendingSave = undefined
+    void saveMeta(true)
   }
 
   async function leave(to: 'title' | 'saves') {
@@ -663,7 +682,7 @@ export function chatScreen(): Screen {
       if (error !== lastError) addLog({ who: 'error', text: error })
     }
     lastError = undefined
-    void saveMeta(true)
+    saveAfterStats()
     if (!m.interrupted) sendNext()
   }
 
@@ -672,6 +691,7 @@ export function chatScreen(): Screen {
     lastError = m.message
     if (m.kind === 'auth') {
       authFailed = true
+      gesture('fail')
       return dialogue.show({
         kind: 'error',
         text: `${charName()} can't reach Claude: ${m.message}`,
@@ -793,7 +813,8 @@ export function chatScreen(): Screen {
         stats = m.stats
         model = m.stats.model ?? model
         if (m.stats.mode) (mode = m.stats.mode), (autoSeen ||= mode === 'auto')
-        return panels.stats(m.stats)
+        panels.stats(m.stats)
+        return flushSave()
       case 'notice': return onNotice(m)
       case 'shell_result': return onShell(m)
       case 'turn_end': return onTurnEnd(m)

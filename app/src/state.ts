@@ -6,13 +6,24 @@ const SAVE_DEBOUNCE_MS = 400
 /** The settings store: one copy shared by every screen, persisted through the link. */
 export function createStore(link: Link, initial: Settings): Store {
   let settings = structuredClone(initial)
+  /** What the link last sent us or was sent: the base a pending local edit is compared against. */
+  let synced = structuredClone(initial)
   const subs = new Set<(s: Settings) => void>()
   let timer: number | undefined
 
-  // Another window or the wizard may push settings; keep in sync.
+  // The link pushes settings it changed itself (lastDir on New Game, a researched preset). A local edit still
+  // waiting for its save wins section by section; everything else follows the link.
   link.on((m) => {
     if (m.t !== 'settings') return
-    settings = m.settings
+    if (timer === undefined) settings = m.settings
+    else {
+      const merged: Record<string, unknown> = { ...m.settings }
+      const local = settings as Record<string, unknown>
+      const base = synced as Record<string, unknown>
+      for (const k of Object.keys(local)) if (JSON.stringify(local[k]) !== JSON.stringify(base[k])) merged[k] = local[k]
+      settings = merged as Settings
+    }
+    synced = m.settings
     for (const fn of subs) fn(settings)
   })
 
@@ -24,7 +35,11 @@ export function createStore(link: Link, initial: Settings): Store {
       settings = next
       for (const fn of subs) fn(settings)
       clearTimeout(timer)
-      timer = window.setTimeout(() => link.send({ t: 'settings_set', settings }), SAVE_DEBOUNCE_MS)
+      timer = window.setTimeout(() => {
+        timer = undefined
+        synced = settings
+        link.send({ t: 'settings_set', settings })
+      }, SAVE_DEBOUNCE_MS)
     },
     subscribe(fn) {
       subs.add(fn)

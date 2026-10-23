@@ -172,14 +172,16 @@ export function createDirector(host: DirectorHost) {
     scheduleIdle()
     if (!actor || !host.motion().idle || talking || busy || playing) return
     const a = actor
-    const moves: (() => void)[] = [() => void a.addon(pick(LOOK_AROUND))]
+    // Each variation is reported as an `idle-*` gesture (data-gesture), so it can be seen and tested (R31).
+    const idle = (name: string, steps: Step[]) => () => (host.onGesture(name), void run('idle', IDLE_PRIORITY, steps))
+    const moves: (() => void)[] = [() => (host.onGesture('idle-look'), void a.addon(pick(LOOK_AROUND)))]
     if (RESTING.includes(emotion)) {
-      moves.push(() => void run('idle', IDLE_PRIORITY, IDLE_SMILE))
+      moves.push(idle('idle-smile-small', IDLE_SMILE))
       // Only the variations this costume has, and that differ from what she already holds.
       const current = a.resolve(holdPose())
       for (const v of IDLE_HOLDS) {
         const key = a.resolve(v.pose)
-        if (key !== undefined && key !== current) moves.push(() => void run('idle', IDLE_PRIORITY, [{ ...v.pose, ms: rand(v.ms) }]))
+        if (key !== undefined && key !== current) moves.push(idle(v.name, [{ ...v.pose, ms: rand(v.ms) }]))
       }
     }
     pick(moves)()

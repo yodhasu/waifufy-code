@@ -16,6 +16,8 @@ const PERSIST_MS = 1000
 const TRACK_SETTLE_MS = 600
 const BUSY_REACT_MS = 600
 const GESTURE_MS = 15_000
+/** character/director.ts DEDUPE_MS (2 s), plus slack: the same gesture again within it is ignored. */
+const GESTURE_DEDUPE_MS = 2_300
 const BUSY_MS = 10_000
 /** The "slow" scenario runs past the chat's 20 s threshold for the success gesture. */
 const SLOW_TURN_MS = 60_000
@@ -359,7 +361,9 @@ export default {
         await turnEnd(app, m)
         await expectGesture('fail', m)
 
-        // Not logged in is an error too (R35 "errors (sad)"), even though its line offers Log in.
+        // Not logged in is an error too (R35 "errors (sad)"), even though its line offers Log in. The director
+        // ignores a repeat of the same gesture within DEDUPE_MS, so the second error comes after that window.
+        await sleep(GESTURE_DEDUPE_MS)
         m = await say(app, 'trigger an error')
         await turnEnd(app, m)
         await expectGesture('fail', m)

@@ -97,8 +97,13 @@ async function scan(dir: string): Promise<Found[]> {
 }
 
 /** The `costumes` reply: Rem's costumes in `dir` (default: the models folder from settings). */
+/**
+ * Lists the costumes in `dir`. `undefined` = the saved models folder; '' = the default folder (Settings → Use default),
+ * which the saved value can't be trusted for: the store saves 400 ms after the change.
+ */
 export async function listCostumes(dir?: string): Promise<{ list: Costume[]; dir: string; found: boolean }> {
-  const root = dir?.trim() ? resolve(dir.trim()) : (await loadSettings()).appearance.modelsDir || defaultModelsDir()
+  const root =
+    dir === undefined ? (await loadSettings()).appearance.modelsDir || defaultModelsDir() : dir.trim() ? resolve(dir.trim()) : defaultModelsDir()
   if (!root) return { list: [], dir: '', found: false }
   const all = await scan(root)
   const mine = all.filter((f) => CHARACTER_RE.test(f.id) || CHARACTER_RE.test(f.model))

@@ -8,12 +8,14 @@ import {
   type Emotion,
   type Image,
   type ModelChoice,
+  type PersonaPreset,
   type PermissionModeName,
   type Question,
   type SessionEvent,
   type Stats,
   type Todo,
 } from './protocol.ts'
+import { toPreset, type ResearchOptions } from './research.ts'
 import type { SessionApi, SessionFactory, SessionOptions } from './session-api.ts'
 import { addressOf } from './settings.ts'
 
@@ -293,6 +295,8 @@ class MockSession implements SessionApi {
     const { output, code } = fakeShell(command, this.cwd)
     this.shellTokens += Math.ceil((command.length + output.length) / CHARS_PER_TOKEN)
     this.emit({ t: 'shell_result', command, output, code })
+    // Like the CLI's default (respondToBashCommands), she answers the output in a turn of its own.
+    this.say(`<bash-input>${command}</bash-input>\n<bash-stdout>${output}</bash-stdout><bash-stderr></bash-stderr>`)
   }
 
   async interrupt() {
@@ -495,6 +499,7 @@ class MockSession implements SessionApi {
   private scenario(turn: Turn, text: string, images: Image[]): Promise<Outcome> {
     const t = text.trim()
     if (t.startsWith('/')) return this.slash(turn, t)
+    if (t.startsWith('<bash-input>')) return this.bashReply(turn, t)
     const k = t.toLowerCase()
     if (/\bcrash/.test(k)) return this.crash(turn)
     if (/\bapi error|\boverloaded/.test(k)) return this.apiError(turn)
@@ -515,6 +520,14 @@ class MockSession implements SessionApi {
 
   private get addr() {
     return addressOf(this.opts.settings)
+  }
+
+  /** Her answer to a `!` command's output. */
+  private async bashReply(turn: Turn, text: string): Promise<Outcome> {
+    await this.think(turn)
+    const command = /<bash-input>([\s\S]*?)<\/bash-input>/.exec(text)?.[1]?.trim() ?? ''
+    await this.speak(turn, `[nod] I read the output of \`${command}\`, ${this.addr}. Tell me what you'd like done with it.`)
+    return { ok: true }
   }
 
   private async echo(turn: Turn, text: string, images: Image[]): Promise<Outcome> {
@@ -1028,3 +1041,56 @@ const LONG_REPLY = [
 ].join('\n')
 
 export const createMockSession: SessionFactory = (opts) => new MockSession(opts)
+
+// ---------------------------------------------------------------- research (R40)
+
+/** One progress step of the mock research run. */
+const RESEARCH_STEP_MS = 12 * TICK_MS
+const RESEARCH_SOURCE = 'https://rezero.fandom.com/wiki/Rem'
+
+/**
+ * Stand-in for research.ts under WC_MOCK=1: the same progress lines, cancel behaviour and preset shape,
+ * with no model call. Notes containing "fail" make it fail, so the error path can be tested too.
+ */
+export async function mockResearch(o: ResearchOptions): Promise<PersonaPreset> {
+  const name = o.name.trim()
+  const series = o.series.trim()
+  const steps = [
+    `Looking up ${name}${series ? ` (${series})` : ''}…`,
+    `Searching: ${[name, series, 'personality speech patterns'].filter(Boolean).join(' ')}`,
+    `Reading: ${RESEARCH_SOURCE.replace(/^https?:\/\//, '')}`,
+    'Writing the roleplay prompt…',
+  ]
+  try {
+    for (const line of steps) {
+      o.onProgress(line)
+      await sleep(RESEARCH_STEP_MS, o.signal)
+    }
+  } catch {
+    const e = new Error('Research cancelled.')
+    e.name = 'AbortError'
+    throw e
+  }
+  if (/\bfail\b/i.test(o.notes)) throw new Error('Research failed: the mock was asked to fail.')
+  const preset = toPreset(
+    o,
+    {
+      profile: {
+        summary: `${name}${series ? ` from ${series}` : ''}: a mock profile for UI tests.`,
+        personality: ['earnest', 'devoted', 'quietly playful'],
+        speechPatterns: ['polite, a little formal', 'speaks of herself in the third person when flustered'],
+        catchphrases: ['Leave it to me!'],
+        addressing: "the user's name with -kun",
+        relationshipCues: ['worries when work is risky', 'proud when it goes well'],
+        do: ['stay warm and encouraging'],
+        dont: ['call the user by a canon character name'],
+        sampleLines: ['The tests pass! I did my best.', "That command looks dangerous… are you sure?"],
+      },
+      prompt: `You are ${name}${series ? ` from ${series}` : ''}. Speak warmly and earnestly. ${o.notes.trim()}`.trim(),
+      sources: [RESEARCH_SOURCE],
+    },
+    [RESEARCH_SOURCE],
+  )
+  o.onProgress('Done.')
+  return preset
+}

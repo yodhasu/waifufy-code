@@ -101,7 +101,10 @@ process.stderr.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
 process.on('unhandledRejection', (e) => console.error('[link] unhandled rejection:', e))
 process.on('uncaughtException', (e) => console.error('[link] uncaught exception:', e))
 
-const factory: SessionFactory = MOCK ? (await import('./mock.ts')).createMockSession : createSession
+const mock = MOCK ? await import('./mock.ts') : undefined
+const factory: SessionFactory = mock?.createMockSession ?? createSession
+/** Mock mode never spends model turns: research gets the scripted stand-in too. */
+const runResearchQuery = mock?.mockResearch ?? research
 
 // ---------------------------------------------------------------- HTTP
 
@@ -300,7 +303,7 @@ async function runResearch(m: Extract<ClientMsg, { t: 'research' }>) {
   const ctl = new AbortController()
   researchCtl = ctl
   try {
-    const preset = await research({
+    const preset = await runResearchQuery({
       name: m.name,
       series: m.series,
       notes: m.notes,
@@ -340,6 +343,9 @@ const MODES: readonly PermissionModeName[] = ['default', 'acceptEdits', 'plan', 
 const PERMISSION_DECISIONS: readonly Extract<ClientMsg, { t: 'permission' }>['decision'][] = ['allow', 'always', 'deny', 'feedback']
 const PLAN_DECISIONS: readonly Extract<ClientMsg, { t: 'plan' }>['decision'][] = ['auto', 'manual', 'keep']
 
+/** Connections that already said hello. */
+const greeted = new WeakSet<WebSocket>()
+
 function live(): SessionApi {
   const s = current?.session
   if (!s) throw new BadRequest('No session is running. Start or load one first.')
@@ -360,12 +366,16 @@ function reveal(path: string) {
 async function handle(ws: WebSocket, m: ClientMsg) {
   switch (m.t) {
     case 'hello':
-      // The page says hello only when it boots (first launch, F5, a renderer crash). It starts at the title screen
-      // and can't attach to a running session, which may be blocked on a prompt nobody can see now: close it.
-      if (current) {
-        console.log(`[session] the app reloaded; closing epoch ${current.epoch}`)
-        ++startGen
-        void closeCurrent()
+      // The first hello on a connection means the page booted (first launch, F5, a renderer crash). It starts at the
+      // title screen and can't attach to a running session, which may be blocked on a prompt nobody can see now: close
+      // it. Screens may say hello again later (for the version or login state); those must never end the session.
+      if (!greeted.has(ws)) {
+        greeted.add(ws)
+        if (current) {
+          console.log(`[session] the app reloaded; closing epoch ${current.epoch}`)
+          ++startGen
+          void closeCurrent()
+        }
       }
       return sendTo(ws, { t: 'hello', version: VERSION, settings: await loadSettings(), auth: await auth.get(), dataDir: DATA_DIR })
     case 'settings_set': {

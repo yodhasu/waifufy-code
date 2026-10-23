@@ -2,14 +2,14 @@
 //
 //   node tests/e2e/real.mjs
 //
-// Guards: the session must report a Haiku model before anything is sent, and at most MAX_MESSAGES
-// messages go out in total (a greeting, one tiny tool use, and /context, which is free). After the last
-// one the harness blocks every further `say`.
+// Guards: the session must report a Haiku model before anything is sent, and at most MAX_TURNS model turns
+// go out: a greeting, one tiny tool use, and a `!git status` she answers (the CLI's respondToBashCommands).
+// /context is a local command and costs nothing. After it the harness blocks every further `say` and `shell`.
 
 import { launch, stopVite } from './driver.mjs'
-import { EMOTIONS, makeProject, newGame, readAll, removeTempDirs, say, T, turnEnd } from './lib.mjs'
+import { EMOTIONS, focusInput, makeProject, newGame, readAll, removeTempDirs, say, T, turnEnd } from './lib.mjs'
 
-const MAX_MESSAGES = 3
+const MAX_TURNS = 3
 const TURN_MS = 120_000
 const PROMPT_POLL_MS = 300
 /** The only tools a prompt may be allowed for: this runs on the user's real account. */
@@ -26,11 +26,22 @@ const check = (cond, what, detail) => report(cond ? 'PASS' : 'FAIL', what, detai
 const soft = (cond, what, detail) => report(cond ? 'PASS' : 'WARN', what, detail)
 
 let sent = 0
-async function realSay(app, text) {
-  if (sent >= MAX_MESSAGES) throw new Error(`message budget of ${MAX_MESSAGES} used up; refusing to send "${text}"`)
+/** Sends a message that costs a model turn; a local command (`free`) doesn't count. */
+async function realSay(app, text, { free = false } = {}) {
+  if (!free && sent >= MAX_TURNS) throw new Error(`budget of ${MAX_TURNS} model turns used up; refusing to send "${text}"`)
+  if (!free) sent++
+  return say(app, text)
+}
+
+/** `!cmd` through the composer; she answers its output, so it costs a model turn. */
+async function realShell(app, command) {
+  if (sent >= MAX_TURNS) throw new Error(`budget of ${MAX_TURNS} model turns used up; refusing to run "!${command}"`)
   sent++
-  const m = await say(app, text)
-  if (sent === MAX_MESSAGES) await app.eval(() => window.__e2e.block.add('say'))
+  const m = await app.mark()
+  await focusInput(app)
+  await app.type(`!${command}`)
+  await app.key('Enter')
+  await app.waitSent('shell', {}, m)
   return m
 }
 
@@ -98,8 +109,21 @@ try {
   check((await app.events(m, 'tool_done')).length > 0, 'its result is reported')
   check((await app.count(T('action-item'), { visibleOnly: false })) > 0, 'the tool log shows it')
 
-  // 3. A local slash command (no model turn).
-  m = await realSay(app, '/context')
+  // 3. `!cmd`: the output is shown, and she answers it in a turn of its own, as the CLI does by default.
+  m = await realShell(app, 'git status')
+  const shell = await app.waitEvent('shell_result', {}, m, TURN_MS)
+  check(/branch/i.test(shell.output), '!git status output arrives', shell.output.split('\n')[0])
+  end = await turnEnd(app, m, TURN_MS)
+  await readAll(app)
+  check(end.ok, 'she answers the !cmd output', end.error)
+  const reply = (await app.dialogueLog(m)).map((d) => d.text).join(' ')
+  soft(reply.length > 0, 'her answer reaches the dialogue', reply.slice(0, 100))
+  // No more model turns from here: only the free local command below may go out.
+  await app.eval(() => window.__e2e.block.add('shell'))
+
+  // 4. A local slash command (no model turn).
+  m = await realSay(app, '/context', { free: true })
+  await app.eval(() => window.__e2e.block.add('say'))
   end = await turnEnd(app, m, TURN_MS)
   const notice = (await app.events(m, 'notice')).find((n) => n.kind === 'command')
   check(Boolean(notice) && /context/i.test(notice.text), '/context output arrives as a command notice', notice?.text.slice(0, 60))
@@ -117,5 +141,5 @@ try {
   removeTempDirs()
 }
 const tally = (s) => results.filter((r) => r.status === s).length
-console.log(`\n${sent} message(s) sent · ${tally('FAIL')} failed, ${tally('WARN')} warnings`)
+console.log(`\n${sent} model turn(s) used · ${tally('FAIL')} failed, ${tally('WARN')} warnings`)
 process.exit(results.some((r) => r.status === 'FAIL') ? 1 : 0)

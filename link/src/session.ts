@@ -119,27 +119,41 @@ function accountLabel(a: AccountInfo | undefined) {
   return a.email ?? (a.apiProvider && a.apiProvider !== 'firstParty' ? a.apiProvider : undefined)
 }
 
-/**
- * The mode the CLI starts in when the app leaves it to the settings files: `permissions.defaultMode` from the
- * enabled sources, later ones winning as the CLI merges them. system/init only confirms it with the first turn.
- */
-function settingsMode(cwd: string, sources: readonly string[]): PermissionModeName {
+type SettingsJson = { permissions?: { defaultMode?: unknown }; respondToBashCommands?: unknown }
+
+/** A value from the enabled Claude Code settings files (user, project, local), later ones winning as the CLI merges them. */
+function fromSettings<T>(cwd: string, sources: readonly string[], pick: (json: SettingsJson) => T | undefined): T | undefined {
   const files: [string, string][] = [
     ['user', join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'settings.json')],
     ['project', join(cwd, '.claude', 'settings.json')],
     ['local', join(cwd, '.claude', 'settings.local.json')],
   ]
-  let mode: PermissionModeName = 'default'
+  let value: T | undefined
   for (const [source, file] of files) {
     if (!sources.includes(source)) continue
     try {
-      const v = (JSON.parse(readFileSync(file, 'utf8')) as { permissions?: { defaultMode?: unknown } }).permissions?.defaultMode
-      if (typeof v === 'string' && MODES.has(v)) mode = v as PermissionModeName
+      const v = pick(JSON.parse(readFileSync(file, 'utf8')) as SettingsJson)
+      if (v !== undefined) value = v
     } catch {
-      // Missing or unreadable: this source sets no mode.
+      // Missing or unreadable: this source sets nothing.
     }
   }
-  return mode
+  return value
+}
+
+/**
+ * The mode the CLI starts in when the app leaves it to the settings files: `permissions.defaultMode`.
+ * system/init only confirms it with the first turn.
+ */
+function settingsMode(cwd: string, sources: readonly string[]): PermissionModeName {
+  const mode = fromSettings(cwd, sources, (j) => j.permissions?.defaultMode)
+  return typeof mode === 'string' && MODES.has(mode) ? (mode as PermissionModeName) : 'default'
+}
+
+/** Whether Claude answers a `!cmd`'s output, as the CLI's `respondToBashCommands` setting says (default: yes). */
+function respondsToBash(cwd: string, sources: readonly string[]) {
+  const v = fromSettings(cwd, sources, (j) => (typeof j.respondToBashCommands === 'boolean' ? j.respondToBashCommands : undefined))
+  return v ?? true
 }
 
 /** The messages the user typed, fed to query() as they are sent. */
@@ -420,6 +434,19 @@ class Session implements SessionApi {
       return this.emit({ t: 'error', kind: 'process', message: 'This session has ended. Resume it or start a new one to keep going.' })
     }
     if (!text && !images.length) return
+    this.send(
+      images.length
+        ? [
+            // Images first, then the text, as the CLI sends a pasted screenshot.
+            ...images.map((img) => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: img.mediaType, data: img.data } })),
+            ...(text ? [{ type: 'text' as const, text }] : []),
+          ]
+        : text,
+    )
+  }
+
+  /** Sends a user message as a turn, or as the next one when a turn is running. */
+  private send(content: SDKUserMessage['message']['content']) {
     const busy = this.running
     if (!busy) this.beginTurn()
     if (this.quiet) {
@@ -428,13 +455,6 @@ class Session implements SessionApi {
       this.swallowIdle = true
       this.emit({ t: 'state', state: 'running' })
     }
-    const content: SDKUserMessage['message']['content'] = images.length
-      ? [
-          // Images first, then the text, as the CLI sends a pasted screenshot.
-          ...images.map((img) => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: img.mediaType, data: img.data } })),
-          ...(text ? [{ type: 'text' as const, text }] : []),
-        ]
-      : text
     this.inbox.push({
       type: 'user',
       message: { role: 'user', content },
@@ -453,7 +473,16 @@ class Session implements SessionApi {
     // Stopped by the session ending: there is no transcript left to record it in.
     if (this.ended) return
     this.emit({ t: 'shell_result', command, output: run.output, code: run.code })
-    for (const text of bashModeMessages(command, run)) {
+    const [caveat, input, output] = bashModeMessages(command, run)
+    // As in the CLI: by default she answers the output, in a turn without the caveat. A command the user
+    // stopped, or `respondToBashCommands: false`, is only recorded in context: caveat first, no turn.
+    if (!abort.signal.aborted && respondsToBash(this.cwd, this.opts.settings.claude.settingSources)) {
+      return this.send([
+        { type: 'text', text: input },
+        { type: 'text', text: output },
+      ])
+    }
+    for (const text of [caveat, input, output]) {
       const uuid = randomUUID()
       this.silent.add(uuid)
       this.inbox.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, shouldQuery: false, uuid })
@@ -614,7 +643,9 @@ class Session implements SessionApi {
         if (extra.origin !== undefined && extra.origin.kind !== 'human') return false
         const content = (m.message as { content?: unknown } | undefined)?.content
         if (Array.isArray(content) && content.some((b: { type?: string }) => b?.type === 'tool_result')) return false
-        return !NOT_A_PROMPT.test(textOf(content))
+        const text = textOf(content)
+        // A `!cmd` she answered carries its output in the same message (one turn); a recorded-only one doesn't.
+        return !NOT_A_PROMPT.test(text) || (text.startsWith('<bash-input>') && text.includes('<bash-stdout>'))
       }).length
     } catch {
       // No transcript to count: Turns start at 0.

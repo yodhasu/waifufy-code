@@ -24,6 +24,11 @@ const THUMB_MAX_BYTES = 4 * 1024 * 1024
 const PRUNE_AFTER_MS = 24 * 60 * 60_000
 /** Terminal sessions listed per project folder, newest first. */
 const DISCOVER_PER_DIR = 50
+/**
+ * Whether the Load page also lists sessions started in a terminal (`claude`) in the folders the app knows.
+ * Off for v1: the product decision is that only sessions started in Waifufy Code are saves.
+ */
+const INCLUDE_TERMINAL_SESSIONS = false
 /** Mock sessions (WC_MOCK=1, the E2E harness) never write a transcript, so the registry alone describes them. */
 const MOCK = process.env.WC_MOCK === '1'
 const MOCK_TITLE = 'Mock session'
@@ -195,9 +200,10 @@ async function discover(dirs: string[]): Promise<SDKSessionInfo[]> {
 }
 
 /**
- * Every save whose transcript still exists, newest first: the sessions the app played (with their VN stats)
- * plus terminal sessions in the same folders (with zeroed stats). A registered session without a transcript
- * is hidden; once it is older than PRUNE_AFTER_MS it never got a first message and is dropped.
+ * Every save whose transcript still exists, newest first: the sessions the app played (with their VN stats),
+ * plus, when INCLUDE_TERMINAL_SESSIONS is on, terminal sessions in the same folders (with zeroed stats).
+ * A registered session without a transcript is hidden; once it is older than PRUNE_AFTER_MS it never got a
+ * first message and is dropped.
  */
 export async function listSaves(): Promise<Save[]> {
   await queue
@@ -206,7 +212,7 @@ export async function listSaves(): Promise<Save[]> {
   const [found, terminal] = await Promise.all([
     Promise.all(saves.map(async (e) => ({ e, ...(await lookup(e)) }))),
     // Mock runs list only the app's own saves, so E2E counts don't depend on this machine's transcripts.
-    MOCK ? [] : discover([...saves.map((e) => e.cwd), settings.lastDir, settings.claude.defaultDir]),
+    MOCK || !INCLUDE_TERMINAL_SESSIONS ? [] : discover([...saves.map((e) => e.cwd), settings.lastDir, settings.claude.defaultDir]),
   ])
   const stale = new Set(found.filter((f) => !f.info && !f.failed && !MOCK && Date.now() - f.e.createdAt > PRUNE_AFTER_MS).map((f) => f.e.id))
   if (stale.size) {
