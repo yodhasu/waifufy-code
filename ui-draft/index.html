@@ -1,0 +1,808 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Waifufy Code — UI draft</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&family=Shippori+Mincho:wght@600;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --rem: #5b8de0;
+    --rem-deep: #2f4f9e;
+    --rem-pale: #dbe7ff;
+    --ink: #1d2340;
+    --ink-soft: #5a6285;
+    --paper: rgba(252, 253, 255, 0.86);
+    --gold: #d4ad5c;
+    --gold-soft: rgba(212, 173, 92, 0.55);
+    --pink: #f29bb8;
+    --ok: #4fb991;
+    --warn: #eaa83f;
+    --bad: #e3637a;
+    --lav: #a497e6;
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1024; font-family: 'Zen Maru Gothic', sans-serif; color: var(--ink); }
+  button { font: inherit; color: inherit; cursor: pointer; }
+
+  /* A fixed 1600×900 stage scaled to the window, letterboxed, like a VN engine. */
+  #viewport { position: fixed; inset: 0; overflow: hidden; }
+  /* Centered on the window's midpoint, then scaled around it; see fit(). */
+  #stage {
+    width: 1600px; height: 900px; position: absolute; left: 50%; top: 50%; overflow: hidden; transform-origin: center;
+    background:
+      radial-gradient(ellipse 60% 50% at 50% 28%, rgba(255, 255, 255, 0.9), transparent 70%),
+      linear-gradient(180deg, #e9ecff 0%, #c3d1f3 38%, #8ea2d8 72%, #4b5c9c 100%);
+  }
+  /* Mansion-ish backdrop: tall windows with light falling through. */
+  .window-light { position: absolute; top: 0; width: 120px; height: 620px; border-radius: 60px 60px 6px 6px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.75), rgba(255, 255, 255, 0.05));
+    border: 6px solid rgba(255, 255, 255, 0.35); box-shadow: 0 0 60px rgba(255, 255, 255, 0.5); top: 70px; }
+  .ray { position: absolute; top: 0; height: 1000px; width: 160px; transform-origin: top; transform: rotate(-18deg);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.35), transparent 75%); filter: blur(6px); }
+  .floor { position: absolute; left: 0; right: 0; bottom: 0; height: 260px;
+    background: linear-gradient(180deg, transparent, rgba(30, 40, 90, 0.45)); }
+  .petal { position: absolute; top: -20px; width: 12px; height: 9px; border-radius: 60% 0 60% 0; background: rgba(255, 255, 255, 0.85);
+    animation: fall linear infinite; opacity: 0.75; }
+  @keyframes fall {
+    0% { transform: translate(0, 0) rotate(0); }
+    100% { transform: translate(-160px, 960px) rotate(540deg); }
+  }
+
+  /* Glass panels with a thin gold frame. */
+  .panel {
+    position: absolute; top: 24px; bottom: 24px; padding: 18px 18px 16px;
+    background: var(--paper); backdrop-filter: blur(12px);
+    border: 1.5px solid var(--gold-soft); border-radius: 20px;
+    box-shadow: 0 14px 40px rgba(20, 30, 80, 0.28), inset 0 0 0 4px rgba(255, 255, 255, 0.55);
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .panel::before { content: ''; position: absolute; inset: 7px; border-radius: 15px; border: 1px dashed rgba(212, 173, 92, 0.35); pointer-events: none; }
+  #left { left: 24px; width: 330px; }
+  #right { right: 24px; width: 310px; }
+  .section-title { font-family: 'Shippori Mincho', serif; font-weight: 800; font-size: 15px; letter-spacing: 0.18em; color: var(--rem-deep);
+    display: flex; align-items: center; gap: 8px; text-transform: uppercase; }
+  .section-title::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, var(--gold-soft), transparent); }
+
+  /* Profile card */
+  .profile { display: flex; gap: 14px; align-items: center; }
+  .portrait { width: 74px; height: 74px; border-radius: 50%; flex: none; position: relative;
+    background: radial-gradient(circle at 50% 38%, #f8e4d6 0 30%, transparent 31%), linear-gradient(160deg, #8db8f5, #3f6cc8);
+    border: 3px solid #fff; box-shadow: 0 0 0 2px var(--gold), 0 6px 16px rgba(47, 79, 158, 0.35); }
+  .portrait::after { content: '✿'; position: absolute; right: -4px; top: -4px; font-size: 18px; color: #fff; text-shadow: 0 0 4px var(--rem); }
+  .profile h1 { margin: 0; font-family: 'Shippori Mincho', serif; font-size: 28px; color: var(--rem-deep); line-height: 1; }
+  .profile .sub { font-size: 12.5px; color: var(--ink-soft); margin-top: 4px; }
+  .hearts { margin-top: 6px; display: flex; gap: 3px; font-size: 17px; }
+  .hearts span { color: #d8dbe8; transition: color .4s, transform .4s; }
+  .hearts span.on { color: var(--pink); text-shadow: 0 0 6px rgba(242, 155, 184, 0.7); }
+  .hearts span.pop { transform: scale(1.5); }
+  .hint { font-size: 11px; color: var(--ink-soft); }
+
+  /* Stat rows */
+  .stat { display: grid; grid-template-columns: 30px 1fr auto; align-items: center; gap: 2px 10px; }
+  .stat .ico { grid-row: span 2; width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; font-size: 15px;
+    background: linear-gradient(160deg, #fff, var(--rem-pale)); border: 1px solid var(--gold-soft); }
+  .stat .label { font-size: 12.5px; color: var(--ink-soft); font-weight: 500; }
+  .stat .val { font-family: var(--mono); font-size: 13px; font-weight: 600; text-align: right; }
+  .bar { grid-column: 2 / 4; height: 9px; border-radius: 6px; background: rgba(47, 79, 158, 0.12); overflow: hidden; display: flex;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12); }
+  .bar > i { display: block; height: 100%; transition: width .6s cubic-bezier(.2, .8, .2, 1); }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 10.5px; color: var(--ink-soft); margin: -4px 0 0 40px; }
+  .legend b { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: 0; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .chip { background: rgba(255, 255, 255, 0.7); border: 1px solid rgba(47, 79, 158, 0.15); border-radius: 12px; padding: 8px 10px; }
+  .chip .k { font-size: 11px; color: var(--ink-soft); }
+  .chip .v { font-family: var(--mono); font-weight: 600; font-size: 15px; margin-top: 2px; }
+  .chip .v small { font-size: 11px; color: var(--ink-soft); font-weight: 400; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; }
+  .badge { font-size: 11.5px; padding: 4px 10px; border-radius: 999px; font-weight: 700; border: 1px solid transparent; }
+  .badge.model { background: linear-gradient(90deg, var(--rem), var(--rem-deep)); color: #fff; }
+  .badge.mode { background: #fff; border-color: var(--gold); color: #8a6a24; }
+  .badge.mode[data-mode="acceptEdits"] { background: #eafaf3; border-color: var(--ok); color: #23795a; }
+  .badge.mode[data-mode="plan"] { background: #f1eeff; border-color: var(--lav); color: #5b4cb0; }
+  .badge.mode[data-mode="auto"] { background: #fff3e6; border-color: var(--warn); color: #9a5f0b; }
+  .left-foot { margin-top: auto; display: flex; justify-content: space-between; align-items: end; font-family: 'Shippori Mincho', serif; color: var(--rem-deep); }
+  .left-foot .day { font-size: 13px; letter-spacing: .12em; }
+  .left-foot .clock { font-family: var(--mono); font-size: 22px; }
+
+  /* Quest log + actions */
+  .quests { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .quests li { display: flex; gap: 9px; align-items: flex-start; font-size: 13px; line-height: 1.35; padding: 6px 8px; border-radius: 10px; transition: background .3s; }
+  .quests li::before { content: '◇'; color: var(--gold); font-size: 13px; flex: none; }
+  .quests li.active { background: rgba(91, 141, 224, 0.13); font-weight: 700; color: var(--rem-deep); }
+  .quests li.active::before { content: '◆'; color: var(--rem); animation: pulse 1.2s infinite; }
+  .quests li.done { color: var(--ink-soft); text-decoration: line-through; text-decoration-color: rgba(90, 98, 133, 0.5); }
+  .quests li.done::before { content: '✔'; color: var(--ok); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .actions { flex: 1; overflow: hidden; display: flex; flex-direction: column; gap: 6px; mask-image: linear-gradient(180deg, #000 80%, transparent); }
+  .act { display: grid; grid-template-columns: 26px 1fr auto; gap: 8px; align-items: center; padding: 7px 8px; border-radius: 10px;
+    background: rgba(255, 255, 255, 0.72); border: 1px solid rgba(47, 79, 158, 0.12); animation: slideIn .35s ease-out; }
+  @keyframes slideIn { from { opacity: 0; transform: translateX(16px); } }
+  .act .ai { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; font-size: 13px; background: var(--rem-pale); }
+  .act .an { font-size: 12.5px; font-weight: 700; }
+  .act .ad { font-family: var(--mono); font-size: 10.5px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+  .act .as { font-size: 12px; }
+  .act.run .as { color: var(--warn); animation: pulse .8s infinite; }
+  .act.ok .as { color: var(--ok); }
+  .act.err .as { color: var(--bad); }
+  .party { display: flex; gap: 6px; flex-wrap: wrap; }
+  .party span { font-size: 11.5px; padding: 4px 9px; border-radius: 8px; background: #fff; border: 1px solid rgba(47, 79, 158, 0.18); }
+  .party span.idle { opacity: .55; }
+
+  /* Character */
+  #chara { position: absolute; left: 378px; right: 358px; top: 30px; bottom: 0; display: flex; justify-content: center; pointer-events: none; }
+  #chara .glow { position: absolute; bottom: 120px; width: 520px; height: 520px; border-radius: 50%; filter: blur(50px); opacity: .55;
+    background: var(--glow, #ffd6e6); transition: background .6s; }
+  #rem { position: relative; height: 860px; animation: breathe 4.5s ease-in-out infinite; transform-origin: bottom center; }
+  #rem.react { animation: hop .5s ease-out, breathe 4.5s ease-in-out .5s infinite; }
+  @keyframes breathe { 50% { transform: translateY(4px) scaleY(.995); } }
+  @keyframes hop { 30% { transform: translateY(-16px); } }
+  #rem .eyes { animation: blink 5s infinite; transform-origin: 210px 225px; }
+  @keyframes blink { 0%, 95%, 100% { transform: scaleY(1); } 97% { transform: scaleY(.1); } }
+  #rem path, #rem ellipse { transition: d .35s, opacity .35s, transform .35s; }
+  .face-tag { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); font-family: var(--mono); font-size: 11px;
+    background: rgba(255, 255, 255, 0.8); padding: 4px 10px; border-radius: 8px; color: var(--ink-soft); border: 1px dashed var(--gold-soft); }
+
+  /* Dialogue box */
+  #dialogue {
+    position: absolute; left: 378px; right: 358px; bottom: 86px; height: 214px; padding: 34px 40px 22px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.93), rgba(240, 245, 255, 0.93));
+    border-radius: 22px; border: 2px solid var(--gold);
+    box-shadow: 0 18px 50px rgba(20, 30, 80, 0.35), inset 0 0 0 5px rgba(255, 255, 255, 0.8), inset 0 0 0 6px rgba(212, 173, 92, 0.35);
+    cursor: pointer; user-select: none;
+  }
+  #dialogue::after { content: '❦'; position: absolute; right: 18px; top: 10px; color: var(--gold); font-size: 18px; opacity: .7; }
+  .nameplate {
+    position: absolute; top: -22px; left: 30px; padding: 7px 34px 7px 26px; min-width: 140px;
+    font-family: 'Shippori Mincho', serif; font-weight: 800; font-size: 22px; letter-spacing: .1em; color: #fff;
+    background: linear-gradient(90deg, var(--rem-deep), var(--rem)); border-radius: 12px 26px 26px 12px;
+    box-shadow: 0 6px 16px rgba(47, 79, 158, 0.45); border: 2px solid #fff; transition: background .3s;
+  }
+  .nameplate.user { background: linear-gradient(90deg, #7a5a1e, var(--gold)); }
+  .nameplate.hidden { opacity: 0; }
+  #line { font-size: 24px; line-height: 1.65; min-height: 120px; }
+  #line.narration { font-style: italic; color: var(--ink-soft); font-size: 21px; }
+  #line.narration code { font-style: normal; }
+  #line code { font-family: var(--mono); font-size: .8em; background: var(--rem-pale); padding: 1px 6px; border-radius: 5px; color: var(--rem-deep); }
+  .advance { position: absolute; right: 30px; bottom: 46px; color: var(--rem); font-size: 18px; animation: bob 1s infinite; opacity: 0; }
+  .advance.show { opacity: 1; }
+  @keyframes bob { 50% { transform: translateY(5px); } }
+  .quickmenu { position: absolute; right: 26px; bottom: 12px; display: flex; gap: 4px; }
+  .quickmenu button { border: 0; background: none; font-family: 'Shippori Mincho', serif; font-weight: 800; font-size: 13px; letter-spacing: .16em;
+    color: var(--ink-soft); padding: 4px 9px; border-radius: 8px; }
+  .quickmenu button:hover { color: var(--rem-deep); background: var(--rem-pale); }
+  .quickmenu button.on { color: #fff; background: var(--rem); }
+
+  /* Input */
+  #input { position: absolute; left: 378px; right: 358px; bottom: 24px; height: 50px; display: flex; gap: 10px; z-index: 6; }
+  #input input { flex: 1; border-radius: 16px; border: 1.5px solid var(--gold-soft); background: rgba(255, 255, 255, 0.9); padding: 0 20px;
+    font: inherit; font-size: 16px; outline: none; box-shadow: 0 8px 20px rgba(20, 30, 80, 0.2); }
+  #input input:focus { border-color: var(--rem); box-shadow: 0 0 0 4px rgba(91, 141, 224, 0.2); }
+  #input input:disabled { opacity: .7; }
+  #input .send { width: 110px; border-radius: 16px; border: 0; color: #fff; font-weight: 700; letter-spacing: .08em;
+    background: linear-gradient(135deg, var(--rem), var(--rem-deep)); box-shadow: 0 8px 20px rgba(47, 79, 158, 0.35); }
+  #input .send:disabled { filter: grayscale(.6); opacity: .7; cursor: default; }
+  #input .attach { width: 50px; border-radius: 16px; border: 1.5px solid var(--gold-soft); background: rgba(255, 255, 255, 0.9); font-size: 18px; }
+
+  /* Slash command picker above the input: five rows visible, the rest scroll. */
+  .slash { display: none; position: absolute; left: 60px; bottom: calc(100% + 10px); width: 580px; max-height: 274px; overflow-y: auto;
+    padding: 6px; background: rgba(252, 253, 255, 0.97); border: 2px solid var(--gold); border-radius: 16px;
+    box-shadow: 0 16px 40px rgba(20, 30, 80, 0.35); z-index: 5; cursor: default; scrollbar-width: thin; scrollbar-color: var(--gold-soft) transparent; }
+  .slash.show { display: block; animation: fade .15s; }
+  .sl { display: grid; grid-template-columns: 180px 1fr auto; gap: 10px; align-items: center; height: 52px; padding: 0 14px; border-radius: 10px; }
+  .sl b { font-family: var(--mono); font-size: 15px; color: var(--rem-deep); }
+  .sl span { font-size: 13px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sl em { font-style: normal; font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: #fff; border: 1px solid var(--gold-soft); color: #8a6a24; }
+  .sl em.skill { border-color: var(--lav); color: #5b4cb0; }
+  .sl:hover { background: rgba(219, 231, 255, 0.55); }
+  .sl.sel { background: var(--rem-pale); box-shadow: inset 3px 0 0 var(--rem); }
+
+  /* Choice overlay */
+  .overlay { position: absolute; inset: 0; background: rgba(11, 16, 36, 0.45); backdrop-filter: blur(2px); display: none;
+    flex-direction: column; align-items: center; justify-content: center; gap: 16px; z-index: 10; }
+  .overlay.show { display: flex; animation: fade .25s; }
+  @keyframes fade { from { opacity: 0; } }
+  .choice-head { text-align: center; color: #fff; margin-bottom: 8px; }
+  .choice-head .t { font-family: 'Shippori Mincho', serif; font-weight: 800; font-size: 26px; letter-spacing: .12em; text-shadow: 0 2px 10px rgba(0, 0, 0, 0.4); }
+  .choice-head pre { margin: 12px auto 0; font-family: var(--mono); font-size: 15px; background: rgba(11, 16, 36, 0.75); color: #cfe0ff;
+    padding: 10px 18px; border-radius: 10px; border: 1px solid rgba(212, 173, 92, 0.6); display: inline-block; }
+  .choice { width: 600px; padding: 16px 30px; border-radius: 14px; border: 2px solid var(--gold); background: linear-gradient(180deg, #fff, #eef3ff);
+    display: flex; justify-content: space-between; align-items: center; font-size: 19px; font-weight: 700;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.3); transition: transform .15s, box-shadow .15s; }
+  .choice::before { content: '◆'; color: var(--rem); margin-right: 14px; }
+  .choice span:first-of-type { flex: 1; text-align: left; }
+  .choice small { font-size: 12px; color: var(--ink-soft); font-weight: 500; }
+  .choice:hover { transform: translateX(8px); box-shadow: 0 10px 30px rgba(91, 141, 224, 0.6); }
+
+  /* Modals: backlog and commands */
+  .modal { position: absolute; inset: 60px 240px; background: rgba(252, 253, 255, 0.96); border-radius: 22px; border: 2px solid var(--gold);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45); padding: 26px 34px; display: flex; flex-direction: column; gap: 14px; }
+  .modal header { display: flex; justify-content: space-between; align-items: center; }
+  .modal h2 { margin: 0; font-family: 'Shippori Mincho', serif; letter-spacing: .2em; color: var(--rem-deep); }
+  .modal .close { border: 0; background: var(--rem-pale); border-radius: 10px; padding: 6px 14px; font-weight: 700; }
+  .log { overflow: auto; display: flex; flex-direction: column; gap: 14px; padding-right: 8px; }
+  .log .e { display: grid; grid-template-columns: 90px 1fr; gap: 14px; font-size: 16px; line-height: 1.55; }
+  .log .who { font-family: 'Shippori Mincho', serif; font-weight: 800; color: var(--rem-deep); text-align: right; }
+  .log .e.user .who { color: #8a6a24; }
+  .log .e.narr { color: var(--ink-soft); font-style: italic; font-size: 14px; }
+  .cmds { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; overflow: auto; }
+  .cmd { text-align: left; border: 1px solid rgba(47, 79, 158, 0.18); background: #fff; border-radius: 12px; padding: 12px 16px; }
+  .cmd b { font-family: var(--mono); color: var(--rem-deep); }
+  .cmd div { font-size: 12.5px; color: var(--ink-soft); margin-top: 3px; }
+  .cmd:hover { border-color: var(--rem); box-shadow: 0 0 0 3px rgba(91, 141, 224, 0.15); }
+
+  .toast { position: absolute; top: 26px; left: 50%; transform: translate(-50%, -80px); background: rgba(29, 35, 64, 0.92); color: #fff;
+    padding: 10px 20px; border-radius: 12px; font-size: 14px; transition: transform .35s; z-index: 20; border: 1px solid var(--gold-soft); }
+  .toast.show { transform: translate(-50%, 0); }
+  .draft-tag { position: absolute; left: 50%; bottom: 4px; transform: translateX(-50%); font-size: 10px; color: rgba(255, 255, 255, 0.6); letter-spacing: .1em; }
+</style>
+</head>
+<body>
+<div id="viewport">
+  <div id="stage">
+    <!-- Backdrop -->
+    <div class="window-light" style="left:520px"></div>
+    <div class="window-light" style="left:740px"></div>
+    <div class="window-light" style="left:960px"></div>
+    <div class="ray" style="left:600px"></div>
+    <div class="ray" style="left:820px"></div>
+    <div class="ray" style="left:1040px"></div>
+    <div class="floor"></div>
+    <div id="petals"></div>
+
+    <!-- Character (placeholder for the Live2D canvas from stage.ts) -->
+    <div id="chara">
+      <div class="glow"></div>
+      <svg id="rem" viewBox="0 0 420 860" aria-label="Rem placeholder">
+        <defs>
+          <linearGradient id="hair" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fbaf5"/><stop offset="1" stop-color="#4675cc"/></linearGradient>
+          <linearGradient id="dress" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2b3460"/><stop offset="1" stop-color="#171d38"/></linearGradient>
+        </defs>
+        <path d="M118 235 Q105 115 210 92 Q315 115 302 235 L306 340 Q290 356 274 340 L268 262 L152 262 L146 340 Q130 356 114 340 Z" fill="url(#hair)"/>
+        <rect x="190" y="298" width="40" height="56" rx="14" fill="#f2d8c8"/>
+        <path d="M84 860 L108 440 Q118 362 210 348 Q302 362 312 440 L336 860 Z" fill="url(#dress)"/>
+        <path d="M158 860 L170 480 Q210 462 250 480 L262 860 Z" fill="#f7f8fc"/>
+        <path d="M150 360 Q210 410 270 360 L258 396 Q210 430 162 396 Z" fill="#fff"/>
+        <path d="M196 404 L210 420 L224 404 L210 440 Z" fill="#1d2340"/>
+        <ellipse cx="116" cy="424" rx="42" ry="36" fill="#fff"/>
+        <ellipse cx="304" cy="424" rx="42" ry="36" fill="#fff"/>
+        <ellipse cx="210" cy="214" rx="78" ry="90" fill="#f8e4d6"/>
+        <ellipse id="blushL" cx="168" cy="252" rx="16" ry="8" fill="#f29bb8" opacity=".45"/>
+        <ellipse id="blushR" cx="252" cy="252" rx="16" ry="8" fill="#f29bb8" opacity=".45"/>
+        <g class="eyes" id="eyes">
+          <ellipse cx="180" cy="224" rx="12" ry="16" fill="#3e6fd1"/>
+          <ellipse cx="240" cy="224" rx="12" ry="16" fill="#3e6fd1"/>
+          <circle cx="184" cy="218" r="4" fill="#fff"/>
+          <circle cx="244" cy="218" r="4" fill="#fff"/>
+        </g>
+        <path id="brows" d="M166 196 Q180 190 194 196 M226 196 Q240 190 254 196" stroke="#4675cc" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <path id="mouth" d="M196 266 Q210 280 224 266" stroke="#c46a6a" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+        <path d="M130 205 Q138 110 210 104 Q292 110 292 210 Q272 160 252 178 Q240 140 214 172 Q192 138 172 178 Q152 160 130 205 Z" fill="url(#hair)"/>
+        <path d="M138 124 Q210 66 282 124 Q272 102 210 88 Q148 102 138 124 Z" fill="#fff" stroke="#dfe4f2" stroke-width="2"/>
+        <g transform="translate(266 150)" stroke="#fff" stroke-width="5" stroke-linecap="round"><path d="M-8 -8 L8 8 M8 -8 L-8 8"/></g>
+      </svg>
+      <div class="face-tag" id="faceTag">act: normal_w · face: normal_w</div>
+    </div>
+
+    <!-- Left: status -->
+    <aside class="panel" id="left">
+      <div class="profile">
+        <div class="portrait"></div>
+        <div>
+          <h1>Rem</h1>
+          <div class="sub">Your maid · Claude Code harness</div>
+          <div class="hearts" id="hearts"></div>
+          <div class="hint">Affection · rises with every task you finish together</div>
+        </div>
+      </div>
+
+      <div class="section-title">Status</div>
+
+      <div class="stat">
+        <div class="ico">♥</div><div class="label">Memory · context</div><div class="val" id="ctxVal">—</div>
+        <div class="bar" id="ctxBar"></div>
+      </div>
+      <div class="legend">
+        <span><b style="background:#8a94b8"></b>system</span><span><b style="background:#a497e6"></b>tools</span>
+        <span><b style="background:#5b8de0"></b>MCP</span><span><b style="background:#d4ad5c"></b>memory</span><span><b style="background:#f29bb8"></b>messages</span>
+      </div>
+
+      <div class="stat">
+        <div class="ico">⚡</div><div class="label">Stamina · 5-hour limit</div><div class="val" id="fiveVal">—</div>
+        <div class="bar"><i id="fiveBar" style="background:linear-gradient(90deg,#4fb991,#eaa83f)"></i></div>
+      </div>
+      <div class="stat">
+        <div class="ico">☾</div><div class="label">Weekly limit</div><div class="val" id="weekVal">—</div>
+        <div class="bar"><i id="weekBar" style="background:linear-gradient(90deg,#a497e6,#5b8de0)"></i></div>
+      </div>
+
+      <div class="grid2">
+        <div class="chip"><div class="k">✦ Gold spent</div><div class="v" id="cost">—</div></div>
+        <div class="chip"><div class="k">❖ Turns</div><div class="v" id="turns">—</div></div>
+        <div class="chip"><div class="k">⏳ Together</div><div class="v" id="elapsed">—</div></div>
+        <div class="chip"><div class="k">⚙ API time</div><div class="v" id="api">—</div></div>
+        <div class="chip"><div class="k">↓ Tokens in</div><div class="v" id="tin">—</div></div>
+        <div class="chip"><div class="k">↑ Tokens out</div><div class="v" id="tout">—</div></div>
+      </div>
+      <div class="chip" style="display:flex;justify-content:space-between;align-items:center">
+        <div><div class="k">⟳ Cache read</div><div class="v" id="cache">—</div></div>
+        <div style="text-align:right"><div class="k">Cache hit</div><div class="v" id="hit">—</div></div>
+      </div>
+
+      <div class="badges">
+        <span class="badge model" id="model">Opus 5.5</span>
+        <span class="badge mode" id="mode" data-mode="default">Mode · Default</span>
+      </div>
+
+      <div class="left-foot">
+        <div class="day">Support<br><span style="font-size:11px;color:var(--ink-soft)">~/Work/booking-tools</span></div>
+        <div class="clock" id="clock">--:--</div>
+      </div>
+    </aside>
+
+    <!-- Right: quests and actions -->
+    <aside class="panel" id="right">
+      <div class="section-title">Quest</div>
+      <ul class="quests" id="quests"></ul>
+      <div class="section-title">Party</div>
+      <div class="party" id="party">
+        <span>✧ Rem</span><span class="idle">Explore</span><span class="idle">Plan</span><span class="idle">chat-runner ×5</span>
+      </div>
+      <div class="section-title">Rem's actions</div>
+      <div class="actions" id="actions"></div>
+    </aside>
+
+    <!-- Dialogue -->
+    <div id="dialogue">
+      <div class="nameplate" id="name">Rem</div>
+      <div id="line"></div>
+      <div class="advance" id="adv">▼</div>
+      <nav class="quickmenu" onclick="event.stopPropagation()">
+        <button id="qLog" title="Backlog (L)">LOG</button>
+        <button id="qAuto" title="Auto-advance">AUTO</button>
+        <button id="qMode" title="Permission mode (Shift+Tab)">MODE</button>
+        <button id="qCmd" title="Slash commands (/)">CMD</button>
+        <button id="qStop" title="Interrupt (Esc)">STOP</button>
+      </nav>
+    </div>
+
+    <form id="input" onsubmit="return false">
+      <button type="button" class="attach" title="Attach a screenshot">📎</button>
+      <input id="msg" placeholder="Speak to Rem…" autocomplete="off" disabled>
+      <button class="send" id="send" disabled>SAY ❀</button>
+      <div class="slash" id="slash"></div>
+    </form>
+
+    <!-- Choice -->
+    <div class="overlay" id="choice">
+      <div class="choice-head"><div class="t" id="choiceTitle"></div><pre id="choiceCmd"></pre></div>
+      <div id="choiceOpts" style="display:flex;flex-direction:column;gap:14px"></div>
+    </div>
+
+    <!-- Backlog -->
+    <div class="overlay" id="backlog">
+      <div class="modal" onclick="event.stopPropagation()">
+        <header><h2>Backlog</h2><button class="close" data-close>Close · Esc</button></header>
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+    <div class="draft-tag">WAIFUFY CODE · UI DRAFT · Live2D, data and dialogue are mocked</div>
+  </div>
+</div>
+
+<script>
+const USER = 'Yodha'
+const $ = (id) => document.getElementById(id)
+
+// ---------- Fitting the 1600×900 stage to the window ----------
+function fit() {
+  const s = Math.min(innerWidth / 1600, innerHeight / 900)
+  $('stage').style.transform = `translate(-50%, -50%) scale(${s})`
+}
+addEventListener('resize', fit)
+fit()
+
+// ---------- Petals ----------
+for (let k = 0; k < 16; k++) {
+  const p = document.createElement('i')
+  p.className = 'petal'
+  p.style.left = `${200 + Math.random() * 1500}px`
+  p.style.animationDuration = `${9 + Math.random() * 9}s`
+  p.style.animationDelay = `${-Math.random() * 18}s`
+  p.style.transform = `scale(${0.6 + Math.random() * 0.8})`
+  $('petals').appendChild(p)
+}
+
+// ---------- Mock session stats (shaped like the SDK's result / getContextUsage / rate_limit_event) ----------
+const state = {
+  ctx: 38400, ctxMax: 200000, five: 22, week: 14,
+  cost: 0.42, turns: 3, tin: 12400, tout: 3100, cache: 81200,
+  start: Date.now() - (72 * 60 + 5) * 1000 * 1, apiMs: 18 * 60 * 1000 + 22000,
+  mode: 0, model: 0, affection: 3,
+}
+const MODES = [['default', 'Default'], ['acceptEdits', 'Accept edits'], ['plan', 'Plan'], ['auto', 'Auto']]
+const MODELS = ['Opus 5.5', 'Sonnet 5.5', 'Fable 5.1', 'Haiku 5.5']
+const fmtK = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`)
+const fmtDur = (ms) => { const m = Math.floor(ms / 60000); return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` }
+
+function renderStats() {
+  const pct = (state.ctx / state.ctxMax) * 100
+  $('ctxVal').textContent = `${fmtK(state.ctx)} / ${fmtK(state.ctxMax)} · ${pct.toFixed(0)}%`
+  // Fixed overheads, then messages take the rest of what's used.
+  const parts = [['#8a94b8', 3200], ['#a497e6', 11800], ['#5b8de0', 16400], ['#d4ad5c', 2100]]
+  const fixed = parts.reduce((a, [, v]) => a + v, 0)
+  parts.push(['#f29bb8', Math.max(0, state.ctx - fixed)])
+  $('ctxBar').innerHTML = parts.map(([c, v]) => `<i style="width:${(v / state.ctxMax) * 100}%;background:${c}"></i>`).join('')
+  $('fiveVal').textContent = `${state.five}% · resets 2h 14m`
+  $('fiveBar').style.width = `${state.five}%`
+  $('weekVal').textContent = `${state.week}% · resets Thu`
+  $('weekBar').style.width = `${state.week}%`
+  $('cost').innerHTML = `$${state.cost.toFixed(2)} <small>today $6.10</small>`
+  $('turns').textContent = state.turns
+  $('api').textContent = fmtDur(state.apiMs)
+  $('tin').textContent = fmtK(state.tin)
+  $('tout').textContent = fmtK(state.tout)
+  $('cache').textContent = fmtK(state.cache)
+  $('hit').textContent = `${Math.round((state.cache / (state.cache + state.tin)) * 100)}%`
+  $('model').textContent = MODELS[state.model]
+  const [key, label] = MODES[state.mode]
+  $('mode').dataset.mode = key
+  $('mode').textContent = `Mode · ${label}`
+  $('hearts').innerHTML = Array.from({ length: 5 }, (_, k) => `<span class="${k < state.affection ? 'on' : ''}">♥</span>`).join('')
+}
+function tickClock() {
+  const d = new Date()
+  $('clock').textContent = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  $('elapsed').textContent = fmtDur(Date.now() - state.start)
+}
+setInterval(tickClock, 1000)
+tickClock()
+renderStats()
+
+function spend(kind) {
+  const r = (a, b) => a + Math.random() * (b - a)
+  if (kind === 'tool') {
+    state.ctx += Math.round(r(1800, 5200)); state.tin += Math.round(r(300, 900)); state.cache += Math.round(r(4000, 9000))
+    state.tout += Math.round(r(80, 260)); state.cost += r(0.03, 0.09); state.apiMs += r(2000, 6000); state.five += Math.random() < 0.4 ? 1 : 0
+  } else if (kind === 'say') {
+    state.ctx += Math.round(r(300, 900)); state.tout += Math.round(r(120, 320)); state.cost += r(0.01, 0.03); state.apiMs += r(1500, 3500)
+  } else if (kind === 'turn') {
+    state.turns++; state.tin += Math.round(r(200, 600))
+  }
+  renderStats()
+}
+
+// ---------- Rem's face (stand-in for Live2D motions from waifufy.config.json) ----------
+const FACES = {
+  normal: { mouth: 'M198 268 Q210 276 222 268', blush: 0.35, glow: '#ffe2ec', act: 'normal_w', face: 'normal_w' },
+  egao: { mouth: 'M194 264 Q210 284 226 264', blush: 0.55, glow: '#ffd1e3', act: 'egao', face: 'egao' },
+  egao02: { mouth: 'M192 262 Q210 290 228 262', blush: 0.75, glow: '#ffc4dc', act: 'unazuku', face: 'egao02' },
+  kangaeru: { mouth: 'M202 272 L220 269', blush: 0.1, glow: '#e0dbff', act: 'kangaeru', face: 'komaru', eyes: -5 },
+  shinken: { mouth: 'M200 272 L220 272', blush: 0, glow: '#d3e2ff', act: 'normal_w', face: 'shinken02_w', brows: 'M166 192 L194 199 M226 199 L254 192' },
+  komaru: { mouth: 'M200 274 Q210 266 220 274', blush: 0.25, glow: '#e4e6f5', act: 'nayamu', face: 'komaru', brows: 'M166 199 Q180 192 194 192 M226 192 Q240 192 254 199' },
+  bikkuri: { mouth: 'M204 270 Q210 286 216 270 Q210 260 204 270', blush: 0, glow: '#ffd6d6', act: 'bikkuri', face: 'shinken02_w' },
+  tere: { mouth: 'M202 268 Q210 274 218 268', blush: 1, glow: '#ffbfd6', act: 'hohoemu', face: 'tere_w' },
+}
+function setFace(name, hop = true) {
+  const f = FACES[name] ?? FACES.normal
+  $('mouth').setAttribute('d', f.mouth)
+  $('blushL').setAttribute('opacity', f.blush)
+  $('blushR').setAttribute('opacity', f.blush)
+  $('brows').setAttribute('d', f.brows ?? 'M166 196 Q180 190 194 196 M226 196 Q240 190 254 196')
+  $('eyes').style.transform = `translateX(${f.eyes ?? 0}px)`
+  document.querySelector('#chara .glow').style.setProperty('--glow', f.glow)
+  $('faceTag').textContent = `act: ${f.act} · face: ${f.face}`
+  if (hop) { const r = $('rem'); r.classList.remove('react'); void r.getBoundingClientRect(); r.classList.add('react') }
+}
+
+// ---------- Quest log (TodoWrite) and actions (tool calls) ----------
+const QUESTS = [
+  'Trace the client chat and its LangSmith run',
+  'Compare PRODUCTION vs STAGING prompts',
+  'Fix the production prompt',
+  'Prove it with chat-runner simulations',
+  'Push to develop and write the report',
+]
+let questAt = -1
+function renderQuests() {
+  $('quests').innerHTML = QUESTS.map((q, k) => `<li class="${k < questAt ? 'done' : k === questAt ? 'active' : ''}">${q}</li>`).join('')
+}
+renderQuests()
+const ICONS = { Read: '📖', Edit: '✒️', Bash: '⚔️', Skill: '✦', LangSmith: '❖', Grep: '🔍', 'git push': '🚀' }
+function addAction(name, detail) {
+  const el = document.createElement('div')
+  el.className = 'act run'
+  el.innerHTML = `<div class="ai">${ICONS[name] ?? '✧'}</div><div><div class="an">${name}</div><div class="ad">${detail}</div></div><div class="as">●</div>`
+  $('actions').prepend(el)
+  while ($('actions').children.length > 9) $('actions').lastChild.remove()
+  return (ok = true) => { el.className = `act ${ok ? 'ok' : 'err'}`; el.querySelector('.as').textContent = ok ? '✔' : '✖' }
+}
+function setParty(name, on) {
+  for (const s of $('party').children) if (s.textContent.includes(name)) s.classList.toggle('idle', !on)
+}
+
+// ---------- Dialogue engine ----------
+const backlog = []
+let typing = null, waiting = false, auto = false, gen = 0, idleMode = false, toolRunning = false
+
+function say(who, text, face) {
+  const isRem = who === 'Rem', isNarr = who === null
+  $('name').textContent = who ?? ''
+  $('name').className = `nameplate${isNarr ? ' hidden' : isRem ? '' : ' user'}`
+  $('line').className = isNarr ? 'narration' : ''
+  if (face) setFace(face)
+  backlog.push({ who, text })
+  $('adv').classList.remove('show')
+  waiting = false
+  const html = text.replace(/`([^`]+)`/g, '<code>$1</code>')
+  // Type the plain text, then swap in the formatted version.
+  const plain = text.replace(/`/g, '')
+  let n = 0
+  clearInterval(typing)
+  typing = setInterval(() => {
+    n += 1
+    $('line').textContent = plain.slice(0, n)
+    if (n >= plain.length) finishTyping(html)
+  }, isNarr ? 12 : 24)
+  $('line').dataset.html = html
+}
+function finishTyping(html = $('line').dataset.html) {
+  clearInterval(typing)
+  typing = null
+  $('line').innerHTML = html
+  // A tool's narration waits for the tool, not for a click.
+  if (idleMode || toolRunning) return
+  waiting = true
+  $('adv').classList.add('show')
+  if (auto) { const g = gen; setTimeout(() => g === gen && waiting && advance(), 1500) }
+}
+function advance() {
+  if (typing) return finishTyping()
+  if (!waiting) return
+  waiting = false
+  $('adv').classList.remove('show')
+  next()
+}
+$('dialogue').addEventListener('click', advance)
+
+// ---------- The scripted demo: one support fix, start to finish ----------
+const script = [
+  { t: 'rem', face: 'egao', text: `Welcome back, ${USER}-kun! Rem has tidied up the workspace and brought all of your tools along. What shall we work on today?` },
+  { t: 'user', text: 'Client says the booking agent ignores Sunday opening hours. Trace it and fix it.' },
+  { t: 'rem', face: 'shinken', text: 'Understood. Rem will find whoever is responsible… ah, Rem means whatever is responsible. Please leave it to Rem.' },
+  { t: 'tool', name: 'Skill', detail: 'triage-workflow', narr: 'Rem opens the `triage-workflow` notebook and rolls up her sleeves…', quest: 0 },
+  { t: 'tool', name: 'LangSmith', detail: 'get_run 8f2c41e…', narr: 'Rem is reading the LangSmith trace of the client\'s chat…' },
+  { t: 'tool', name: 'Read', detail: 'prompts/production/booking.md', narr: 'Rem is comparing `production/booking.md`…', quest: 1 },
+  { t: 'tool', name: 'Read', detail: 'prompts/staging/booking.md', narr: '…against `staging/booking.md`.' },
+  { t: 'rem', face: 'kangaeru', text: 'Found it. Staging says `Sundays: 10:00–14:00`, but production still says `closed on Sundays`. The agent was faithfully following old orders. It\'s not the poor thing\'s fault.' },
+  { t: 'tool', name: 'Edit', detail: 'prompts/production/booking.md  +1 −1', narr: 'Rem carefully rewrites one line of the production prompt.', quest: 2 },
+  { t: 'tool', name: 'Bash', detail: 'npm run chat-runner -- --parallel 5', narr: 'Rem sends five little test guests to ask about Sunday…', quest: 3, party: 'chat-runner', slow: true },
+  { t: 'rem', face: 'egao', text: 'Five simulations, five correct answers! Rem would like to push the fix to `develop` now. May Rem proceed?' },
+  { t: 'choice', title: 'Rem asks for permission', cmd: '$ git push origin develop', quest: 4 },
+]
+let at = 0
+
+function next() {
+  if (at >= script.length) return goIdle()
+  const s = script[at++]
+  const g = gen
+  if (s.quest !== undefined) { questAt = s.quest; renderQuests() }
+  if (s.t === 'rem') { spend('say'); say('Rem', s.text, s.face) }
+  else if (s.t === 'user') { spend('turn'); setFace('normal', false); say(USER, s.text) }
+  else if (s.t === 'tool') {
+    if (s.party) setParty(s.party, true)
+    const done = addAction(s.name, s.detail)
+    toolRunning = true
+    say(null, s.narr)
+    setTimeout(() => {
+      toolRunning = false
+      if (g !== gen) return done(false)
+      done(true); spend('tool')
+      if (s.party) setParty(s.party, false)
+      if (s.react) toast(s.react)
+      clearInterval(typing); typing = null
+      next()
+    }, s.slow ? 2400 : 1100)
+  } else if (s.t === 'choice') showChoice(s)
+}
+
+function showChoice(s) {
+  setFace('kangaeru')
+  $('choiceTitle').textContent = s.title
+  $('choiceCmd').textContent = s.cmd
+  const opts = [
+    ['Yes, go ahead', 'Allow once', 'allow'],
+    ['Always allow git push', 'Saves a permission rule', 'always'],
+    ['Not yet, Rem', 'Deny', 'deny'],
+  ]
+  $('choiceOpts').innerHTML = opts.map(([l, sub, v]) => `<button class="choice" data-v="${v}"><span>${l}</span><small>${sub}</small></button>`).join('')
+  $('choice').classList.add('show')
+  $('choiceOpts').onclick = (e) => {
+    const b = e.target.closest('.choice')
+    if (!b) return
+    $('choice').classList.remove('show')
+    pick(b.dataset.v)
+  }
+}
+function pick(v) {
+  backlog.push({ who: null, text: `▸ ${v === 'deny' ? 'Denied' : v === 'always' ? 'Always allowed' : 'Allowed'}: git push origin develop` })
+  if (v === 'deny') {
+    script.splice(at, 0, { t: 'rem', face: 'komaru', text: 'Then Rem will wait right here. Just say the word when you\'re ready, and Rem will push it.' })
+  } else {
+    script.splice(at, 0,
+      { t: 'tool', name: 'git push', detail: 'origin develop  a41c9e2', narr: 'Rem pushes the fix to `develop`…', react: '♪ reaction: push · AC_rem01_act_unazuku' },
+      { t: 'rem', face: 'egao02', text: `Pushed! The fix is on \`develop\`, and Rem wrote the three-part report for the client in the backlog. Rem is proud of you, ${USER}-kun… and maybe a little proud of herself, too.`, after: 'affection' },
+    )
+    state.affection = Math.min(5, state.affection + 1)
+    renderStats()
+    const h = $('hearts').children[state.affection - 1]
+    h?.classList.add('pop'); setTimeout(() => h?.classList.remove('pop'), 500)
+    if (v === 'always') toast('Permission saved · Bash(git push:*)')
+    setTimeout(() => { questAt = QUESTS.length; renderQuests() }, 2600)
+  }
+  next()
+}
+
+function goIdle() {
+  idleMode = true
+  waiting = false
+  $('adv').classList.remove('show')
+  $('msg').disabled = false
+  $('send').disabled = false
+  $('msg').placeholder = 'Speak to Rem…  ( / for commands )'
+  $('msg').focus()
+}
+function busy() {
+  idleMode = false
+  closeSlash()
+  $('msg').disabled = true
+  $('send').disabled = true
+  $('msg').placeholder = 'Rem is working…  (Esc to interrupt)'
+}
+
+function send() {
+  const text = $('msg').value.trim()
+  if (!text) return
+  $('msg').value = ''
+  closeSlash()
+  const cmd = COMMANDS.find(([c]) => text === c || text.startsWith(`${c} `))
+  if (cmd && LOCAL[cmd[0]]) return LOCAL[cmd[0]]()
+  busy()
+  gen++
+  const work = cmd
+    ? { t: 'tool', name: 'Skill', detail: cmd[0].slice(1), narr: `Rem opens the \`${cmd[0]}\` notebook…` }
+    : { t: 'tool', name: 'Grep', detail: `"${text.slice(0, 24)}"`, narr: 'Rem looks through the workspace…' }
+  script.splice(at, 0,
+    { t: 'user', text },
+    work,
+    { t: 'rem', face: 'egao', text: `(UI draft) Rem heard you: “${text}”. In the real app, this line goes to the Claude Agent SDK and Rem answers for real.` },
+  )
+  next()
+}
+$('send').addEventListener('click', send)
+
+// ---------- Slash command picker ----------
+const COMMANDS = [
+  ['/compact', 'Rem tidies her memory into a summary', 'built-in'],
+  ['/model', 'Change who Rem thinks with', 'built-in'],
+  ['/clear', 'Start a fresh day with Rem', 'built-in'],
+  ['/context', 'What is filling Rem\'s memory', 'built-in'],
+  ['/usage', 'Plan limits and spending', 'built-in'],
+  ['/resume', 'Pick up an earlier session', 'built-in'],
+  ['/memory', 'Edit what Rem remembers about you', 'built-in'],
+  ['/triage-workflow', 'Trace and fix a client complaint', 'skill'],
+  ['/graft', 'Ask the code graph', 'skill'],
+  ['/code-review', 'Review the current diff', 'skill'],
+  ['/simplify', 'Clean up changed code', 'skill'],
+  ['/security-review', 'Security review of pending changes', 'skill'],
+  ['/loop', 'Repeat a task on an interval', 'skill'],
+]
+// Commands the app answers itself, without a turn.
+const LOCAL = {
+  '/compact': () => { state.ctx = 21800; renderStats(); toast('Context compacted · 21.8k'); setFace('egao') },
+  '/model': () => { state.model = (state.model + 1) % MODELS.length; renderStats(); toast(`Model · ${MODELS[state.model]}`) },
+  '/clear': () => { backlog.length = 0; state.ctx = 33500; renderStats(); toast('A fresh day with Rem'); setFace('egao') },
+  '/context': () => toast(`Memory · ${fmtK(state.ctx)} of ${fmtK(state.ctxMax)} (MCP 16.4k · tools 11.8k)`),
+  '/usage': () => toast(`5h ${state.five}% · week ${state.week}% · session $${state.cost.toFixed(2)}`),
+}
+let slashItems = [], slashSel = 0
+function updateSlash() {
+  const v = $('msg').value
+  if (!v.startsWith('/') || /\s/.test(v)) return closeSlash()
+  const q = v.slice(1).toLowerCase()
+  const starts = (c) => (c.startsWith(`/${q}`) ? 0 : 1)
+  slashItems = COMMANDS.filter(([c, d]) => c.includes(q) || d.toLowerCase().includes(q)).sort((a, b) => starts(a[0]) - starts(b[0]))
+  if (!slashItems.length) return closeSlash()
+  slashSel = Math.min(slashSel, slashItems.length - 1)
+  $('slash').innerHTML = slashItems.map(([c, d, k], n) =>
+    `<div class="sl${n === slashSel ? ' sel' : ''}" data-i="${n}"><b>${c}</b><span>${d}</span><em class="${k}">${k}</em></div>`).join('')
+  $('slash').classList.add('show')
+  $('slash').children[slashSel].scrollIntoView({ block: 'nearest' })
+}
+function closeSlash() {
+  $('slash').classList.remove('show')
+  slashItems = []
+  slashSel = 0
+}
+function pickSlash(n, run) {
+  $('msg').value = `${slashItems[n][0]} `
+  closeSlash()
+  run ? send() : $('msg').focus()
+}
+$('msg').addEventListener('input', () => { slashSel = 0; updateSlash() })
+$('msg').addEventListener('keydown', (e) => {
+  const open = $('slash').classList.contains('show')
+  if (open && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+    e.preventDefault()
+    slashSel = (slashSel + (e.key === 'ArrowDown' ? 1 : -1) + slashItems.length) % slashItems.length
+    return updateSlash()
+  }
+  if (open && e.key === 'Tab') { e.preventDefault(); return pickSlash(slashSel, false) }
+  if (open && e.key === 'Escape') { e.stopPropagation(); return closeSlash() }
+  if (e.key === 'Enter') { e.preventDefault(); open ? pickSlash(slashSel, true) : send() }
+})
+// mousedown, so the input keeps focus.
+$('slash').addEventListener('mousedown', (e) => {
+  const row = e.target.closest('.sl')
+  if (!row) return
+  e.preventDefault()
+  pickSlash(Number(row.dataset.i), true)
+})
+function openSlash() {
+  if (!idleMode) return toast('Rem is busy · Esc to interrupt')
+  $('msg').value = '/'
+  $('msg').focus()
+  updateSlash()
+}
+
+// ---------- Quick menu ----------
+function toast(text) {
+  const t = $('toast')
+  t.textContent = text
+  t.classList.add('show')
+  clearTimeout(t._h)
+  t._h = setTimeout(() => t.classList.remove('show'), 2200)
+}
+function openBacklog() {
+  $('log').innerHTML = backlog.map((e) =>
+    `<div class="e ${e.who === null ? 'narr' : e.who === 'Rem' ? '' : 'user'}"><div class="who">${e.who ?? ''}</div><div>${e.text.replace(/`([^`]+)`/g, '<code>$1</code>')}</div></div>`).join('')
+  $('backlog').classList.add('show')
+  $('log').scrollTop = 1e6
+}
+$('qLog').onclick = openBacklog
+$('qCmd').onclick = openSlash
+$('qAuto').onclick = () => { auto = !auto; $('qAuto').classList.toggle('on', auto); if (auto && waiting) advance() }
+$('qMode').onclick = () => { state.mode = (state.mode + 1) % MODES.length; renderStats(); toast(`Permission mode · ${MODES[state.mode][1]}`) }
+$('qStop').onclick = stop
+function stop() {
+  if (idleMode) return
+  gen++
+  at = script.length
+  $('choice').classList.remove('show')
+  setFace('bikkuri')
+  say('Rem', 'Ah—! Rem stopped right away. What would you like Rem to do instead?')
+  setTimeout(goIdle, 600)
+}
+$('backlog').addEventListener('click', () => $('backlog').classList.remove('show'))
+for (const b of document.querySelectorAll('[data-close]')) b.addEventListener('click', (e) => e.target.closest('.overlay').classList.remove('show'))
+
+addEventListener('keydown', (e) => {
+  const open = document.querySelector('#backlog.show')
+  if (e.key === 'Escape') { if (open) return open.classList.remove('show'); return stop() }
+  if (document.activeElement === $('msg')) return
+  if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); advance() }
+  if (e.key === 'l' || e.key === 'L') openBacklog()
+  if (e.key === '/') { e.preventDefault(); openSlash() }
+  if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); $('qMode').click() }
+})
+
+busy()
+setFace('normal', false)
+setTimeout(next, 500)
+</script>
+</body>
+</html>

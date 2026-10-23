@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Waifufy Code</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&family=Shippori+Mincho:wght@600;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<!-- Live2D Cubism Core must load before the engine. -->
+<script src="/live2dcubismcore.min.js"></script>
+</head>
+<body>
+<div id="viewport">
+  <div id="stage" class="menu-mode">
+    <!-- Backdrop -->
+    <div class="window-light" style="left:520px"></div>
+    <div class="window-light" style="left:740px"></div>
+    <div class="window-light" style="left:960px"></div>
+    <div class="ray" style="left:600px"></div>
+    <div class="ray" style="left:820px"></div>
+    <div class="ray" style="left:1040px"></div>
+    <div class="floor"></div>
+    <div id="petals"></div>
+
+    <!-- Rem: the Live2D canvas goes here -->
+    <div id="chara"><div class="glow"></div></div>
+
+    <!-- ============ Main menu ============ -->
+    <section id="menu">
+      <div class="title">
+        <div class="logo">Waifufy <span>Code</span></div>
+        <div class="tagline">Rem · your Claude Code maid</div>
+      </div>
+      <nav class="menu-items" id="menuItems">
+        <button id="mResume" disabled><span>Resume</span><small id="mResumeHint">Looking for your sessions…</small></button>
+        <button id="mNew"><span>New chat</span><small>Choose a folder for Rem to work in</small></button>
+        <button id="mSettings"><span>Settings</span><small>Coming soon</small></button>
+        <button id="mExit"><span>Exit</span></button>
+      </nav>
+      <div class="sessions" id="mSessions" hidden>
+        <header><h2>Resume</h2><button class="close" id="mBack">Back · Esc</button></header>
+        <div class="list" id="mList"></div>
+      </div>
+      <div class="menu-foot" id="menuFoot">Connecting to Rem…</div>
+    </section>
+
+    <!-- ============ Chat ============ -->
+    <aside class="panel chat-only" id="left">
+      <div class="profile">
+        <div class="portrait"></div>
+        <div>
+          <h1>Rem</h1>
+          <div class="sub" id="workdir">—</div>
+          <div class="hearts" id="hearts"></div>
+          <div class="hint">Affection · rises with every task you finish together</div>
+        </div>
+      </div>
+
+      <div class="section-title">Status</div>
+
+      <div class="stat">
+        <div class="ico">♥</div><div class="label">Memory · context</div><div class="val" id="ctxVal">—</div>
+        <div class="bar" id="ctxBar"></div>
+      </div>
+      <div class="legend">
+        <span><b style="background:var(--c-system)"></b>system</span><span><b style="background:var(--c-tools)"></b>tools</span>
+        <span><b style="background:var(--c-mcp)"></b>MCP</span><span><b style="background:var(--c-memory)"></b>memory</span><span><b style="background:var(--c-messages)"></b>messages</span>
+      </div>
+
+      <div class="stat">
+        <div class="ico">⚡</div><div class="label">Stamina · 5-hour limit</div><div class="val" id="fiveVal">—</div>
+        <div class="bar"><i id="fiveBar" style="background:linear-gradient(90deg,#4fb991,#eaa83f)"></i></div>
+      </div>
+      <div class="stat">
+        <div class="ico">☾</div><div class="label">Weekly limit</div><div class="val" id="weekVal">—</div>
+        <div class="bar"><i id="weekBar" style="background:linear-gradient(90deg,#a497e6,#5b8de0)"></i></div>
+      </div>
+
+      <div class="grid2">
+        <div class="chip"><div class="k">✦ Gold spent</div><div class="v" id="cost">—</div></div>
+        <div class="chip"><div class="k">❖ Turns</div><div class="v" id="turns">—</div></div>
+        <div class="chip"><div class="k">⏳ Together</div><div class="v" id="elapsed">—</div></div>
+        <div class="chip"><div class="k">⚙ API time</div><div class="v" id="api">—</div></div>
+        <div class="chip"><div class="k">↓ Tokens in</div><div class="v" id="tin">—</div></div>
+        <div class="chip"><div class="k">↑ Tokens out</div><div class="v" id="tout">—</div></div>
+      </div>
+      <div class="chip" style="display:flex;justify-content:space-between;align-items:center">
+        <div><div class="k">⟳ Cache read</div><div class="v" id="cache">—</div></div>
+        <div style="text-align:right"><div class="k">Cache hit</div><div class="v" id="hit">—</div></div>
+      </div>
+
+      <div class="badges">
+        <button class="badge model" id="model" title="Change model">—</button>
+        <button class="badge mode" id="mode" data-mode="default" title="Permission mode (Shift+Tab)">Mode · Default</button>
+      </div>
+
+      <div class="left-foot">
+        <div class="day" id="sessionTitle">Waifufy Code</div>
+        <div class="clock" id="clock">--:--</div>
+      </div>
+    </aside>
+
+    <aside class="panel chat-only" id="right">
+      <div class="section-title">Quest</div>
+      <ul class="quests" id="quests"><li class="empty">No quests yet</li></ul>
+      <div class="section-title">Party</div>
+      <div class="party" id="party"><span>✧ Rem</span></div>
+      <div class="section-title">Rem's actions</div>
+      <div class="actions" id="actions"></div>
+    </aside>
+
+    <div class="ribbon chat-only" id="ribbon"></div>
+
+    <div id="dialogue" class="chat-only">
+      <div class="nameplate" id="name">Rem</div>
+      <div id="line"></div>
+      <div class="advance" id="adv">▼</div>
+      <nav class="quickmenu" id="quickmenu">
+        <button id="qLog" title="Backlog (Ctrl+L)">LOG</button>
+        <button id="qAuto" title="Auto-advance">AUTO</button>
+        <button id="qMode" title="Permission mode (Shift+Tab)">MODE</button>
+        <button id="qCmd" title="Slash commands (/)">CMD</button>
+        <button id="qStop" title="Interrupt (Esc)">STOP</button>
+        <button id="qMenu" title="Back to the main menu">MENU</button>
+      </nav>
+    </div>
+
+    <form id="input" class="chat-only" onsubmit="return false">
+      <input id="msg" placeholder="Speak to Rem…   ( / for commands · Enter on empty to advance · hold Ctrl to skip )" autocomplete="off" spellcheck="false">
+      <button class="send" id="send">SAY ❀</button>
+      <div class="slash" id="slash"></div>
+    </form>
+
+    <!-- Choice menus: permissions, questions, plans -->
+    <div class="overlay" id="ask"><div class="ask" id="askBody"></div></div>
+
+    <!-- Backlog -->
+    <div class="overlay" id="backlog">
+      <div class="modal">
+        <header><h2>Backlog</h2><button class="close" data-close>Close · Esc</button></header>
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+
+    <!-- Model picker -->
+    <div class="overlay" id="models">
+      <div class="modal small">
+        <header><h2>Model</h2><button class="close" data-close>Close · Esc</button></header>
+        <div class="cmds" id="modelList"></div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </div>
+</div>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

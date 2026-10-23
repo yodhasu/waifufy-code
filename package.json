@@ -1,0 +1,10 @@
+{
+  "name": "waifufy-code",
+  "private": true,
+  "scripts": {
+    "setup": "npm --prefix link install && npm --prefix app install",
+    "dev": "npm --prefix app run tauri dev",
+    "tauri": "npm --prefix app run tauri --",
+    "check": "npm --prefix link run check && npm --prefix app exec tsc -- --noEmit"
+  }
+}

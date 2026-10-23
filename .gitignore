@@ -1,0 +1,6 @@
+node_modules/
+dist/
+target/
+app/src-tauri/gen/
+# Live2D Proprietary Software License: download it, don't commit it (see README).
+app/public/live2dcubismcore.min.js
