@@ -1,0 +1,105 @@
+/* The chat composer (input.ts). The chat places the root (x 378–1242, bottom 24px, height auto); everything here
+   grows upward from the bottom edge: queued chips, image thumbnails and up to six lines of text. */
+
+.wci { position: relative; display: flex; flex-direction: column; justify-content: flex-end; width: 100%; }
+
+/* ---------- Bar: 📎 · box · SAY ---------- */
+.wci-bar { position: relative; display: flex; align-items: flex-end; gap: 10px; }
+.wci-attach { flex: none; width: 50px; height: 50px; border-radius: 16px; border: 1.5px solid var(--gold-soft); background: var(--input);
+  font-size: 18px; box-shadow: var(--panel-shadow); transition: border-color .15s, box-shadow .15s; }
+.wci-attach:not(:disabled):hover, .wci-attach:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-glow); outline: none; }
+.wci-send { flex: none; width: 110px; height: 50px; border-radius: 16px; border: 0; color: var(--text-on-accent); font-weight: 700; letter-spacing: .08em;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep)); box-shadow: 0 8px 20px var(--accent-glow); transition: transform .15s, filter .15s; }
+.wci-send:not(:disabled):hover { transform: translateY(-1px); filter: brightness(1.06); }
+.wci-send:disabled { filter: grayscale(.6); }
+
+.wci-box { position: relative; flex: 1; min-width: 0; border-radius: 16px; border: 1.5px solid var(--gold-soft); background: var(--input);
+  box-shadow: var(--panel-shadow); transition: border-color .15s, box-shadow .15s; }
+.wci-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-glow); }
+.wci.off .wci-box { opacity: .7; }
+
+.wci-line { display: flex; align-items: flex-start; }
+.wci-box textarea { display: block; flex: 1; min-width: 0; height: 47px; margin: 0; border: 0; outline: none; resize: none; overflow-y: hidden;
+  background: transparent; padding: 12px 18px; font-size: 16px; line-height: 23px; color: var(--text); white-space: pre-wrap; }
+.wci-box textarea::placeholder { font-size: 13.5px; color: var(--text-faint); }
+.wci-box textarea:disabled { cursor: default; }
+
+/* ! bash mode (R16): accent frame, a mode chip and a monospace prompt. */
+.wci-mode { display: none; flex: none; margin: 12px 0 0 12px; height: 23px; padding: 0 10px; border-radius: 999px; align-items: center;
+  background: var(--accent); color: var(--text-on-accent); font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.wci-box[data-mode='bash'] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 0 5px var(--accent-glow); }
+.wci-box[data-mode='bash'] .wci-mode { display: inline-flex; }
+.wci-box[data-mode='bash'] textarea { font-family: var(--font-mono); font-size: 15px; padding-left: 12px; }
+
+/* Transient hints ("Esc again to clear") sit on the top border of the box. */
+.wci-hint { position: absolute; top: -11px; right: 14px; padding: 1px 10px; border-radius: 999px; font-size: 11.5px; color: var(--text-soft);
+  background: var(--panel-solid); border: 1px solid var(--gold-soft); opacity: 0; transform: translateY(3px); transition: opacity .2s, transform .2s;
+  pointer-events: none; white-space: nowrap; }
+.wci-hint.show { opacity: 1; transform: none; }
+
+/* ---------- Image thumbnails (R17) ---------- */
+.wci-images { display: none; gap: 8px; padding: 10px 12px 0; flex-wrap: wrap; }
+.wci-images.show { display: flex; }
+.wci-img { position: relative; width: 56px; height: 56px; border-radius: 10px; overflow: hidden; border: 1.5px solid var(--gold-soft);
+  background: var(--chip); animation: fade .2s; }
+.wci-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.wci-img button { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; line-height: 20px;
+  font-size: 14px; background: var(--toast-bg); color: var(--toast-text); opacity: .85; }
+.wci-img button:hover { opacity: 1; background: var(--bad); }
+
+.wci-drop { display: none; position: absolute; inset: -8px; border-radius: 20px; border: 2px dashed var(--accent); align-items: center;
+  justify-content: center; background: color-mix(in oklab, var(--panel-solid) 88%, transparent); color: var(--heading); font-weight: 700;
+  letter-spacing: .06em; pointer-events: none; z-index: 4; }
+.wci.drop .wci-drop { display: flex; animation: fade .15s; }
+
+/* ---------- Queued messages (R11) ---------- */
+.wci-queue { display: none; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 120px 8px 60px; }
+.wci-queue.show { display: flex; }
+.wci-queue::before { content: 'queued for the next turn'; font-size: 11.5px; letter-spacing: .06em; color: var(--text-soft); margin-right: 2px; }
+.wci-qchip { display: inline-flex; align-items: center; gap: 6px; max-width: 420px; padding: 4px 5px 4px 10px; border-radius: 999px;
+  background: var(--chip); border: 1px solid var(--gold-soft); font-size: 13px; color: var(--text); animation: fade .2s; }
+.wci-qchip .ico { font-size: 12px; animation: pulse 1.6s infinite; }
+.wci-qchip .txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wci-qchip button { flex: none; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; line-height: 20px; font-size: 14px;
+  background: var(--hover); color: var(--text-soft); }
+.wci-qchip button:hover { background: var(--bad); color: var(--text-on-accent); }
+
+/* ---------- Pickers above the box (shown by removing the hidden attribute) ---------- */
+.wci-pop { display: block; position: absolute; left: 60px; bottom: calc(100% + 10px); width: 620px; padding: 6px; overflow-y: auto; z-index: 5;
+  animation: fade .15s; background: var(--panel-solid); border: 2px solid var(--gold); border-radius: 16px; box-shadow: var(--panel-shadow); }
+.wci-pop[hidden] { display: none; }
+.wci-row { border-radius: 10px; cursor: pointer; }
+.wci-row:hover { background: var(--hover); }
+.wci-row.sel { background: var(--accent-pale); box-shadow: inset 3px 0 0 var(--accent); }
+.wci-empty { padding: 12px 14px; font-size: 13px; color: var(--text-faint); }
+.wci-empty code { color: var(--inline-code-text); background: var(--inline-code-bg); padding: 1px 6px; border-radius: 6px; }
+
+/* Slash commands (R14): five 52px rows visible, the rest scroll. */
+.wci-slash { max-height: calc(5 * 52px + 16px); }
+.wci-srow { display: grid; grid-template-columns: 210px 1fr auto; gap: 10px; align-items: center; height: 52px; padding: 0 14px; }
+.wci-srow b { font-family: var(--font-mono); font-size: 14.5px; color: var(--heading); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wci-srow b small { font-size: 11.5px; font-weight: 400; color: var(--text-faint); }
+.wci-srow span { font-size: 13px; color: var(--text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wci-srow span i { font-style: normal; font-family: var(--font-mono); color: var(--heading); }
+.wci-srow em { font-style: normal; font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--chip);
+  border: 1px solid var(--gold-soft); color: var(--text-soft); }
+.wci-srow em.tag-app { border-color: var(--accent); color: var(--heading); }
+.wci-srow em.tag-custom { border-color: var(--pink); }
+
+/* @ files (R15): up to eight compact rows. */
+.wci-arow { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 12px; font-family: var(--font-mono); font-size: 13.5px; }
+.wci-arow .ico { flex: none; font-size: 14px; }
+.wci-arow .path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wci-arow .dir { color: var(--text-faint); }
+.wci-arow b { font-weight: 600; color: var(--text); }
+
+/* Ctrl+R reverse history search. */
+.wci-hist { display: flex; flex-direction: column; overflow: hidden; }
+.wci-search { display: flex; align-items: center; gap: 10px; padding: 4px 6px 8px; border-bottom: 1px solid var(--panel-line); }
+.wci-search span { flex: none; font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; color: var(--heading); }
+.wci-search input { flex: 1; min-width: 0; border: 1.5px solid var(--gold-soft); border-radius: 10px; background: var(--input); padding: 6px 10px;
+  outline: none; font-size: 14px; }
+.wci-search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+.wci-hist-list { position: relative; max-height: calc(5 * 38px); overflow-y: auto; margin-top: 6px; }
+.wci-hrow { height: 38px; line-height: 38px; padding: 0 14px; font-family: var(--font-mono); font-size: 13.5px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }

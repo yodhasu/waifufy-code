@@ -4,3 +4,6 @@ target/
 app/src-tauri/gen/
 # Live2D Proprietary Software License: download it, don't commit it (see README).
 app/public/live2dcubismcore.min.js
+build/
+tests/e2e/out/*
+!tests/e2e/out/.gitignore

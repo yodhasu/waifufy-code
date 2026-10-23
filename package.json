@@ -5,6 +5,9 @@
     "setup": "npm --prefix link install && npm --prefix app install",
     "dev": "npm --prefix app run tauri dev",
     "tauri": "npm --prefix app run tauri --",
-    "check": "npm --prefix link run check && npm --prefix app exec tsc -- --noEmit"
+    "check": "npm --prefix link run check && npm --prefix app exec tsc -- --noEmit && cargo check --manifest-path app/src-tauri/Cargo.toml",
+    "stage:sidecar": "node scripts/stage-sidecar.mjs",
+    "build:installer": "node scripts/build-installer.mjs",
+    "test:e2e": "node tests/e2e/run.mjs"
   }
 }

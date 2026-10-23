@@ -1,26 +1,156 @@
 import { randomUUID } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import {
+  getSessionMessages,
   query,
+  type AccountInfo,
+  type CanUseTool,
+  type ModelInfo,
+  type Options,
   type PermissionResult,
   type PermissionUpdate,
   type Query,
+  type SDKAssistantMessageError,
   type SDKMessage,
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk'
-import { persona } from './persona.ts'
-import { EMOTIONS, type Emotion, type PermissionModeName, type ServerMsg, type Stats } from './protocol.ts'
-import { rememberSession } from './store.ts'
+import { buildPersona } from './persona.ts'
+import {
+  EMOTIONS,
+  type Emotion,
+  type Image,
+  type Limit,
+  type PermissionModeName,
+  type Question,
+  type SessionEvent,
+  type Stats,
+  type Todo,
+} from './protocol.ts'
+import type { SessionApi, SessionFactory, SessionOptions } from './session-api.ts'
+import { bashModeMessages, childEnv, runShell } from './shell.ts'
+import { ANSI, buildDiffs, clip, describeTool, isDestructive, prettyInput, str, toolLabel, toolOutput } from './tools.ts'
 
-type Emit = (m: ServerMsg) => void
+/** CLI stderr lines kept for error messages. */
+const STDERR_LINES = 40
+/** How many of them an error message quotes. */
+const STDERR_TAIL = 12
+/** Token-count updates for the spinner are sent at most this often; phase changes go out at once. */
+const PROGRESS_MS = 250
+/** The context gauge is re-read this long after the last main-agent tool result. */
+const CONTEXT_REFRESH_MS = 1500
+/** Rough size of a token, for the spinner's count while a message is still streaming. */
+const CHARS_PER_TOKEN = 4
+const TOKENS_PER_K = 1000
+const MS_PER_S = 1000
+/** Identifies the app to the CLI in its telemetry and logs. */
+const CLIENT_APP = 'waifufy-code'
+/** The model name the CLI gives messages it makes itself (command output, error notices). */
+const SYNTHETIC_MODEL = '<synthetic>'
+/** Placeholder texts of synthetic messages, which say nothing to show. */
+const PLACEHOLDERS = new Set(['(no content)', 'No response requested.'])
 
-/** The user's messages, fed to query() one at a time as they are typed. */
+// The CLI's own wording for "No" and "No, and tell Claude what to do differently".
+const DENY_MESSAGE =
+  "The user doesn't want to proceed with this tool use. The tool use was rejected. STOP what you are doing and wait for the user to tell you how to proceed."
+const FEEDBACK_MESSAGE =
+  "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\n"
+const KEEP_PLANNING = 'The user wants to keep planning. Keep refining the plan and present it again with ExitPlanMode when it is ready.'
+const KEEP_PLANNING_FEEDBACK = 'The user wants to keep planning. Revise the plan with this feedback, then present it again with ExitPlanMode:\n'
+
+const AUTH_ERRORS = new Set<SDKAssistantMessageError>(['authentication_failed', 'oauth_org_not_allowed', 'account_on_hold', 'verification_required'])
+
+const ERROR_TEXT: Partial<Record<SDKAssistantMessageError, string>> = {
+  authentication_failed: 'Claude Code is not logged in. Use Log in on the title screen (or run `claude` in a terminal and type /login), then try again.',
+  oauth_org_not_allowed: "This account's organization does not allow Claude Code. Log in with another account.",
+  account_on_hold: 'This Claude account is on hold. Check it on claude.ai, then log in again.',
+  verification_required: 'Claude needs the account to be verified. Log in again to continue.',
+  billing_error: 'Claude reported a billing problem with this account.',
+  rate_limit: 'The usage limit is reached. Check the limit gauges for when it resets.',
+  overloaded: 'Claude is overloaded right now. Try again in a moment.',
+  model_not_found: 'The selected model is not available for this account. Pick another one with /model.',
+  cloud_credential_error: 'The cloud provider rejected its credentials.',
+}
+
+/** terminal_reason values for a turn the user stopped: not an error. */
+const INTERRUPTED = new Set(['aborted_streaming', 'aborted_tools'])
+/** terminal_reason values that end a turn early without anything having gone wrong. */
+const SOFT_STOPS: Record<string, string> = {
+  max_turns: 'Stopped after reaching the maximum number of turns.',
+  stop_hook_prevented: 'A Stop hook ended the turn.',
+  hook_stopped: 'A hook stopped the turn.',
+}
+
+const LOCAL_OUTPUT = /<local-command-(stdout|stderr)>([\s\S]*?)<\/local-command-\1>/g
+const TODO_STATUS = new Set<Todo['status']>(['pending', 'in_progress', 'completed'])
+const MODES = new Set<string>(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'] satisfies PermissionModeName[])
+/** User text the CLI writes itself (bash-mode records, local command input and output), which is not a prompt. */
+const NOT_A_PROMPT = /^\s*<(bash-|local-command-|command-name>)/
+
+type Phase = Extract<SessionEvent, { t: 'progress' }>['phase']
+type AskOptions = Parameters<CanUseTool>[2]
+type AskKind = 'permission' | 'question' | 'plan'
+type Pending = { kind: AskKind; input: Record<string, unknown>; suggestions?: PermissionUpdate[]; canAlways: boolean; resolve(r: PermissionResult): void }
+type AgentStatus = Extract<SessionEvent, { t: 'agent' }>['status']
+type ContextUsage = Awaited<ReturnType<Query['getContextUsage']>>
+type ToolResult = { type: 'tool_result'; tool_use_id: string; content?: unknown; is_error?: boolean }
+type UsageWindow = { utilization: number | null; resets_at: string | null } | null | undefined
+
+const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
+const freshStats = (): Stats => ({ costUsd: 0, turns: 0, apiMs: 0, tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0, limits: {} })
+const kTokens = (n: number) => (n >= TOKENS_PER_K ? `${(n / TOKENS_PER_K).toFixed(1)}k` : String(n))
+
+/** Text blocks of a message's content, which is a string or an array of blocks. */
+function textOf(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter((b: { type?: string }) => b?.type === 'text')
+    .map((b: { text?: string }) => b.text ?? '')
+    .join('\n')
+}
+
+/** Local command output as the CLI prints it, without its wrapper tags and terminal colors. */
+const commandText = (s: string) => s.replace(ANSI, '').replace(/<\/?local-command-(stdout|stderr|caveat)>/g, '').trim()
+
+function accountLabel(a: AccountInfo | undefined) {
+  if (!a) return undefined
+  return a.email ?? (a.apiProvider && a.apiProvider !== 'firstParty' ? a.apiProvider : undefined)
+}
+
+/**
+ * The mode the CLI starts in when the app leaves it to the settings files: `permissions.defaultMode` from the
+ * enabled sources, later ones winning as the CLI merges them. system/init only confirms it with the first turn.
+ */
+function settingsMode(cwd: string, sources: readonly string[]): PermissionModeName {
+  const files: [string, string][] = [
+    ['user', join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'settings.json')],
+    ['project', join(cwd, '.claude', 'settings.json')],
+    ['local', join(cwd, '.claude', 'settings.local.json')],
+  ]
+  let mode: PermissionModeName = 'default'
+  for (const [source, file] of files) {
+    if (!sources.includes(source)) continue
+    try {
+      const v = (JSON.parse(readFileSync(file, 'utf8')) as { permissions?: { defaultMode?: unknown } }).permissions?.defaultMode
+      if (typeof v === 'string' && MODES.has(v)) mode = v as PermissionModeName
+    } catch {
+      // Missing or unreadable: this source sets no mode.
+    }
+  }
+  return mode
+}
+
+/** The messages the user typed, fed to query() as they are sent. */
 class Inbox implements AsyncIterable<SDKUserMessage> {
   private queue: SDKUserMessage[] = []
   private wake?: () => void
   private closed = false
 
-  push(text: string) {
-    this.queue.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, origin: { kind: 'human' } })
+  push(m: SDKUserMessage) {
+    if (this.closed) return
+    this.queue.push(m)
     this.wake?.()
   }
 
@@ -38,12 +168,26 @@ class Inbox implements AsyncIterable<SDKUserMessage> {
   }
 }
 
+const LONGEST_TAG = Math.max(...EMOTIONS.map((e) => e.length)) + 2
+/** After a stripped tag, no space is put back before these. */
+const NO_SPACE_BEFORE = /^[.,!?;:)\]}…'"’”\n]/
+
 /**
- * Splits streamed text into text and emotion tags. A `[` holds the stream back until its `]`
- * (or until it can no longer be a tag), so a tag split across deltas is still caught.
+ * Splits streamed text into text and emotion tags, in order. A `[` holds the stream back until its `]`
+ * (or until it can no longer be a tag), so a tag split across deltas is still caught. Tags inside
+ * inline code or code fences are left alone, and the spaces around a removed tag collapse to one.
  */
-class TagParser {
+export class TagParser {
   private buf = ''
+  /** Trailing spaces not yet sent: dropped if a tag follows them. */
+  private held = ''
+  /** Last character sent; a newline at the start of a block. */
+  private last = '\n'
+  private afterTag = false
+  /** Whitespace touched the tag (or tags) just removed. */
+  private spaced = false
+  /** Length of the backtick run that opened the current code span or fence; 0 outside code. */
+  private ticks = 0
   private onText: (s: string) => void
   private onFace: (e: Emotion) => void
 
@@ -57,324 +201,977 @@ class TagParser {
     this.drain(false)
   }
 
+  /** End of a text block: sends whatever is held back and resets for the next block. */
   flush() {
     this.drain(true)
-    if (this.buf) this.onText(this.buf)
-    this.buf = ''
+    this.buf = this.held = ''
+    this.last = '\n'
+    this.afterTag = this.spaced = false
+    this.ticks = 0
   }
 
-  private drain(isFinal: boolean) {
-    const longest = Math.max(...EMOTIONS.map((e) => e.length)) + 2
-    while (this.buf) {
-      const open = this.buf.indexOf('[')
-      if (open === -1) return this.take(this.buf.length)
-      if (open > 0) this.take(open)
-      const close = this.buf.indexOf(']')
-      if (close === -1) {
-        if (!isFinal && this.buf.length < longest) return
-        this.take(1)
+  private drain(final: boolean) {
+    const b = this.buf
+    let text = ''
+    let i = 0
+    while (i < b.length) {
+      const c = b[i]
+      if (c === '`') {
+        let j = i
+        while (j < b.length && b[j] === '`') j++
+        // The run may go on in the next delta, and its length decides what it opens or closes.
+        if (j === b.length && !final) break
+        const run = j - i
+        if (this.ticks === 0) this.ticks = run
+        else if (run === this.ticks) this.ticks = 0
+        text += b.slice(i, j)
+        i = j
         continue
       }
-      const word = this.buf.slice(1, close)
-      if ((EMOTIONS as readonly string[]).includes(word)) {
-        this.onFace(word as Emotion)
-        this.buf = this.buf.slice(close + 1).replace(/^ /, '')
-      } else {
-        this.take(close + 1)
+      if (c === '\n' && this.ticks > 0 && this.ticks < 3) this.ticks = 0
+      if (c === '[' && this.ticks === 0) {
+        const close = b.indexOf(']', i)
+        if (close === -1 && !final && b.length - i < LONGEST_TAG) break
+        const word = close === -1 ? '' : b.slice(i + 1, close).trim().toLowerCase()
+        if (close !== -1 && close - i <= LONGEST_TAG && (EMOTIONS as readonly string[]).includes(word)) {
+          this.text(text)
+          text = ''
+          this.tag(word as Emotion)
+          i = close + 1
+          continue
+        }
       }
+      text += c
+      i++
+    }
+    this.text(text)
+    this.buf = b.slice(i)
+  }
+
+  private text(s: string) {
+    if (!s) return
+    if (this.afterTag) {
+      const t = s.replace(/^[ \t]+/, '')
+      if (t !== s) this.spaced = true
+      if (!t) return
+      this.afterTag = false
+      if (this.spaced && !/\s/.test(this.last) && !NO_SPACE_BEFORE.test(t)) this.send(' ')
+      s = t
+    } else {
+      s = this.held + s
+      this.held = ''
+    }
+    const trailing = /[ \t]+$/.exec(s)
+    if (trailing) {
+      this.held = trailing[0]
+      s = s.slice(0, trailing.index)
+    }
+    this.send(s)
+  }
+
+  private tag(e: Emotion) {
+    if (!this.afterTag) {
+      this.spaced = this.held.length > 0
+      this.afterTag = true
+    }
+    this.held = ''
+    this.onFace(e)
+  }
+
+  private send(s: string) {
+    if (!s) return
+    this.last = s[s.length - 1]
+    this.onText(s)
+  }
+}
+
+class Session implements SessionApi {
+  readonly epoch: number
+  readonly cwd: string
+  private opts: SessionOptions
+  private q?: Query
+  private inbox = new Inbox()
+  private sid?: string
+  private stats: Stats = freshStats()
+  private models: ModelInfo[] = []
+  private pending = new Map<string, Pending>()
+  private tags: TagParser
+  private textOpen = false
+  /** Content block types of the main agent's message being streamed, by index. */
+  private blocks = new Map<number, string>()
+  /** Ids of main-agent messages that arrived as stream events; a complete message not in here was never streamed. */
+  private streamed = new Set<string>()
+  /** Tool calls waiting for their result, for todo and subagent tracking. */
+  private uses = new Map<string, { name: string; input: Record<string, unknown> }>()
+  private todos = new Map<string, Todo>()
+  private agents = new Map<string, { description: string; status: AgentStatus }>()
+  /**
+   * Uuids of `!cmd` context appends. The CLI still runs a (model-free) turn for each, with its own
+   * result and running/idle states; those are hidden, since nothing was asked.
+   */
+  private silent = new Set<string>()
+  /** The CLI reported 'running' for silent appends only, so its 'idle' is hidden too. */
+  private quiet = false
+  /** The user sent while an append ran: the append's own 'idle', if the CLI sends one before the user's turn, is hidden. */
+  private swallowIdle = false
+  /** `!cmd` runs in progress, stopped by Esc and by the session ending. */
+  private shells = new Set<AbortController>()
+  private stderr: string[] = []
+  private closed = false
+  private ended = false
+  /** A turn is in flight (sent, no result yet). */
+  private running = false
+  private turnStart = 0
+  /** Something was shown for the current turn, so a local command's result text would be a repeat. */
+  private shown = false
+  /** The turn's API or auth error was already sent, so its result doesn't repeat it. */
+  private errorShown = false
+  private haveResult = false
+  /** Output tokens of the turn: finished messages, the current message's reported count, and an estimate while it streams. */
+  private tokens = { done: 0, reported: 0, estimate: 0 }
+  private phase: Phase = 'thinking'
+  private note?: string
+  private lastProgress = 0
+  private refreshing?: Promise<void>
+  private refreshAgain = false
+  private contextTimer?: ReturnType<typeof setTimeout>
+
+  constructor(opts: SessionOptions) {
+    this.opts = opts
+    this.epoch = opts.epoch
+    this.cwd = opts.cwd
+    // A new session gets its id now, so the app can register the save before the first turn.
+    this.sid = opts.resume ?? randomUUID()
+    this.tags = new TagParser(
+      (delta) => this.emit({ t: 'text', delta }),
+      (emotion) => this.emit({ t: 'face', emotion }),
+    )
+  }
+
+  sessionId() {
+    return this.sid
+  }
+
+  async start() {
+    // The SDK reports a missing folder as a binary that failed to launch.
+    if (!existsSync(this.cwd)) return this.die(`The folder ${this.cwd} does not exist.`)
+    let q: Query
+    try {
+      q = this.q = query({ prompt: this.inbox, options: this.options() })
+    } catch (e) {
+      return this.die(`Claude Code could not start: ${message(e)}`)
+    }
+    void this.pump(q)
+    const c = this.opts.settings.claude
+    const mode = c.permissionMode === 'default' ? settingsMode(this.cwd, c.settingSources) : c.permissionMode
+    try {
+      // These answer as soon as the CLI's handshake completes; system/init only comes with the first turn.
+      const [init, ctx] = await Promise.all([
+        q.initializationResult(),
+        q.getContextUsage({ detail: 'summary' }).catch(() => undefined),
+        this.seedTurns(),
+      ])
+      if (this.ended) return
+      this.models = init.models
+      this.stats.mode = mode
+      this.stats.model = ctx?.model || this.resolveModel(this.opts.settings.claude.model)
+      if (ctx) this.applyContext(ctx)
+      this.emit({
+        t: 'ready',
+        sessionId: this.sid,
+        commands: init.commands.map((x) => ({ name: x.name, description: x.description, argumentHint: x.argumentHint, builtin: x.builtin === true })),
+        models: init.models.map((x) => ({ value: x.value, displayName: x.displayName, description: x.description, resolved: x.resolvedModel })),
+        mode,
+        model: this.stats.model,
+        account: accountLabel(init.account),
+      })
+      this.emitStats()
+      await this.refreshStats()
+    } catch (e) {
+      if (!this.closed) this.die(`Claude Code did not finish starting: ${message(e)}`)
     }
   }
 
-  private take(n: number) {
-    this.onText(this.buf.slice(0, n))
-    this.buf = this.buf.slice(n)
+  private options(): Options {
+    const s = this.opts.settings
+    const c = s.claude
+    return {
+      cwd: this.cwd,
+      ...(this.opts.resume ? { resume: this.opts.resume } : { sessionId: this.sid }),
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: buildPersona(s) },
+      // The same CLAUDE.md, skills, MCP servers, hooks and permission rules as the terminal.
+      settingSources: c.settingSources,
+      ...(c.model ? { model: c.model } : {}),
+      // 'default' is left out, so a defaultMode from the user's settings.json still applies, as in the CLI.
+      ...(c.permissionMode !== 'default' ? { permissionMode: c.permissionMode } : {}),
+      ...(c.permissionMode === 'bypassPermissions' ? { allowDangerouslySkipPermissions: true } : {}),
+      includePartialMessages: true,
+      ...(this.opts.claudePath ? { pathToClaudeCodeExecutable: this.opts.claudePath } : {}),
+      // Without the first variable the SDK swallows session_state_changed. childEnv() leaves out the
+      // link's credentials, which every command the model runs would otherwise see.
+      env: { ...childEnv(), CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1', CLAUDE_AGENT_SDK_CLIENT_APP: CLIENT_APP },
+      stderr: (d) => this.onStderr(d),
+      canUseTool: (name, input, o) => this.ask(name, input, o),
+    }
   }
-}
 
-const DESTRUCTIVE = /git\s+reset\s+--hard|git\s+push\s+.*(--force|-f\b)|git\s+clean\s+-\w*f|git\s+branch\s+-D|rm\s+-\w*r\w*f|Remove-Item\b.*-Recurse/i
-
-function str(v: unknown) {
-  return typeof v === 'string' ? v : ''
-}
-
-/** A one-line description of a tool call for the actions log and permission prompts. */
-export function describeTool(name: string, input: Record<string, unknown>): string {
-  switch (name) {
-    case 'Bash':
-    case 'PowerShell':
-      return str(input.command)
-    case 'Read':
-    case 'Write':
-    case 'Edit':
-    case 'NotebookEdit':
-      return str(input.file_path) || str(input.notebook_path)
-    case 'Grep':
-    case 'Glob':
-      return str(input.pattern)
-    case 'WebFetch':
-      return str(input.url)
-    case 'WebSearch':
-      return str(input.query)
-    case 'Skill':
-      return str(input.skill) || str(input.command)
-    case 'Agent':
-    case 'Task':
-      return str(input.description) || str(input.subagent_type)
-    case 'TodoWrite':
-      return `${Array.isArray(input.todos) ? input.todos.length : 0} quests`
-  }
-  const first = Object.values(input).find((v) => typeof v === 'string')
-  return typeof first === 'string' ? first : ''
-}
-
-/** `mcp__claude_ai_Slack__slack_send_message` → `claude_ai_Slack · slack_send_message`. */
-export function toolLabel(name: string) {
-  return name.startsWith('mcp__') ? name.slice(5).split('__').join(' · ') : name
-}
-
-type Pending = { input: Record<string, unknown>; suggestions?: PermissionUpdate[]; resolve: (r: PermissionResult) => void }
-
-export class Session {
-  readonly cwd: string
-  readonly stats: Stats = { costUsd: 0, turns: 0, apiMs: 0, tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0, limits: {} }
-  private emit: Emit
-  private q: Query
-  private inbox = new Inbox()
-  private pending = new Map<string, Pending>()
-  /** Input of the last answered request, which AskUserQuestion's answers are merged into. */
-  private lastInput: Record<string, unknown> = {}
-  /** Content block types of the message being streamed, by index. */
-  private blocks = new Map<number, string>()
-  private tags: TagParser
-  private turnStart = 0
-
-  constructor(cwd: string, resume: string | undefined, userName: string, emit: Emit) {
-    this.cwd = cwd
-    this.emit = emit
-    this.tags = new TagParser((delta) => emit({ t: 'text', delta }), (emotion) => emit({ t: 'face', emotion }))
-    this.q = query({
-      prompt: this.inbox,
-      options: {
-        cwd,
-        resume,
-        systemPrompt: { type: 'preset', preset: 'claude_code', append: persona(userName) },
-        // The same CLAUDE.md, skills, MCP servers, hooks and permission rules as the terminal.
-        settingSources: ['user', 'project', 'local'],
-        includePartialMessages: true,
-        canUseTool: (name, input, opts) => this.ask(name, input, opts.suggestions, opts.signal),
-      },
+  say(text: string, images: Image[] = []) {
+    if (this.ended) {
+      return this.emit({ t: 'error', kind: 'process', message: 'This session has ended. Resume it or start a new one to keep going.' })
+    }
+    if (!text && !images.length) return
+    const busy = this.running
+    if (!busy) this.beginTurn()
+    if (this.quiet) {
+      // The CLI is already 'running' (for an append) and won't say so again for this turn.
+      this.quiet = false
+      this.swallowIdle = true
+      this.emit({ t: 'state', state: 'running' })
+    }
+    const content: SDKUserMessage['message']['content'] = images.length
+      ? [
+          // Images first, then the text, as the CLI sends a pasted screenshot.
+          ...images.map((img) => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: img.mediaType, data: img.data } })),
+          ...(text ? [{ type: 'text' as const, text }] : []),
+        ]
+      : text
+    this.inbox.push({
+      type: 'user',
+      message: { role: 'user', content },
+      parent_tool_use_id: null,
+      origin: { kind: 'human' },
+      uuid: randomUUID(),
+      ...(busy ? { priority: 'next' as const } : {}),
     })
-    void this.pump()
   }
 
-  say(text: string) {
-    this.stats.turns++
-    this.turnStart = Date.now()
-    this.inbox.push(text)
+  async shell(command: string) {
+    const abort = new AbortController()
+    this.shells.add(abort)
+    const run = await runShell(command, this.cwd, abort.signal)
+    this.shells.delete(abort)
+    // Stopped by the session ending: there is no transcript left to record it in.
+    if (this.ended) return
+    this.emit({ t: 'shell_result', command, output: run.output, code: run.code })
+    for (const text of bashModeMessages(command, run)) {
+      const uuid = randomUUID()
+      this.silent.add(uuid)
+      this.inbox.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, shouldQuery: false, uuid })
+    }
+    this.scheduleContextRefresh()
   }
 
   async interrupt() {
+    this.stopShells()
     for (const [id, p] of this.pending) {
       this.emit({ t: 'ask_cancel', id })
-      p.resolve({ behavior: 'deny', message: 'The user interrupted.', interrupt: true })
+      p.resolve({ behavior: 'deny', message: DENY_MESSAGE, interrupt: true })
     }
     this.pending.clear()
-    await this.q.interrupt().catch(() => {})
+    await this.q?.interrupt().catch(() => undefined)
   }
 
   close() {
+    if (this.closed) return
+    if (!this.ended) this.emit({ t: 'ended', reason: 'closed' })
+    this.ended = this.closed = true
+    clearTimeout(this.contextTimer)
+    this.stopShells()
+    for (const p of this.pending.values()) p.resolve({ behavior: 'deny', message: 'The session was closed.', interrupt: true })
+    this.pending.clear()
     this.inbox.close()
-    this.q.close()
+    this.q?.close()
   }
 
   async setMode(mode: PermissionModeName) {
-    await this.q.setPermissionMode(mode)
-    this.stats.mode = mode
-    this.emit({ t: 'stats', stats: this.stats })
+    try {
+      await this.q?.setPermissionMode(mode)
+      this.stats.mode = mode
+      this.emitStats()
+    } catch (e) {
+      this.emit({ t: 'error', kind: 'internal', message: `Could not switch to ${mode} mode: ${message(e)}` })
+    }
   }
 
   async setModel(model: string) {
-    await this.q.setModel(model)
-    this.stats.model = model
-    this.emit({ t: 'stats', stats: this.stats })
+    try {
+      await this.q?.setModel(model || undefined)
+      const ctx = await this.q?.getContextUsage({ detail: 'summary' }).catch(() => undefined)
+      this.stats.model = this.models.find((m) => m.value === model)?.resolvedModel ?? ctx?.model ?? model
+      this.emitStats()
+    } catch (e) {
+      this.emit({ t: 'error', kind: 'internal', message: `Could not switch the model to ${model}: ${message(e)}` })
+    }
   }
 
-  answerPermission(id: string, decision: 'allow' | 'always' | 'deny', message?: string) {
+  answerPermission(id: string, decision: 'allow' | 'always' | 'deny' | 'feedback', note?: string) {
     const p = this.take(id)
     if (!p) return
-    if (decision === 'deny') return p.resolve({ behavior: 'deny', message: message || 'The user declined.' })
-    p.resolve({
-      behavior: 'allow',
-      updatedInput: p.input,
-      ...(decision === 'always' && p.suggestions ? { updatedPermissions: p.suggestions } : {}),
-    })
+    if (decision === 'deny') return p.resolve({ behavior: 'deny', message: DENY_MESSAGE, interrupt: true })
+    if (decision === 'feedback') return p.resolve({ behavior: 'deny', message: FEEDBACK_MESSAGE + (note?.trim() || '(no details)') })
+    const always = decision === 'always' && p.canAlways && p.suggestions
+    p.resolve({ behavior: 'allow', updatedInput: p.input, ...(always ? { updatedPermissions: p.suggestions } : {}) })
   }
 
   answerQuestion(id: string, answers: Record<string, string>) {
-    this.take(id)?.resolve({ behavior: 'allow', updatedInput: { ...this.lastInput, answers } })
+    const p = this.take(id)
+    p?.resolve({ behavior: 'allow', updatedInput: { ...p.input, answers } })
+  }
+
+  answerPlan(id: string, decision: 'auto' | 'manual' | 'keep', note?: string) {
+    const p = this.take(id)
+    if (!p) return
+    if (decision === 'keep') return p.resolve({ behavior: 'deny', message: note?.trim() ? KEEP_PLANNING_FEEDBACK + note.trim() : KEEP_PLANNING })
+    // Like the CLI's "Yes, and auto-accept edits" / "Yes, manually approve edits": the choice sets the mode,
+    // rather than falling back to whatever mode was on before plan mode.
+    const mode = decision === 'auto' ? 'acceptEdits' : 'default'
+    p.resolve({ behavior: 'allow', updatedInput: p.input, updatedPermissions: [{ type: 'setMode', mode, destination: 'session' }] })
+    // The CLI reports the new mode with its next status message; show it right away.
+    this.stats.mode = mode
+    this.emitStats()
+  }
+
+  // ---------------------------------------------------------------- internals
+
+  private stopShells() {
+    for (const abort of this.shells) abort.abort()
+    this.shells.clear()
+  }
+
+  private emit(e: SessionEvent) {
+    if (!this.closed) this.opts.emit(e)
+  }
+
+  private emitStats() {
+    this.emit({ t: 'stats', stats: { ...this.stats, limits: { ...this.stats.limits } } })
+  }
+
+  private notice(text: string, kind: Extract<SessionEvent, { t: 'notice' }>['kind']) {
+    if (!text) return
+    if (kind === 'command' || kind === 'compact') this.shown = true
+    this.emit({ t: 'notice', text, kind })
+  }
+
+  private onStderr(data: string) {
+    // Also into the sidecar's own log, which packaging writes to a file.
+    process.stderr.write(`[cli] ${data}${data.endsWith('\n') ? '' : '\n'}`)
+    for (const line of data.split(/\r?\n/)) if (line.trim()) this.stderr.push(line)
+    if (this.stderr.length > STDERR_LINES) this.stderr.splice(0, this.stderr.length - STDERR_LINES)
+  }
+
+  /**
+   * The CLI failed: one error with its last words, open asks withdrawn, then `ended`. The server drops the
+   * session on 'ended' without closing it, so a CLI that is still alive (a failed handshake) is closed here.
+   */
+  private die(text: string) {
+    if (this.ended) return
+    this.ended = true
+    this.running = false
+    clearTimeout(this.contextTimer)
+    this.stopShells()
+    const tail = this.stderr.slice(-STDERR_TAIL).join('\n')
+    this.emit({ t: 'error', kind: 'process', message: tail ? `${text}\n\n${tail}` : text })
+    for (const [id, p] of this.pending) {
+      this.emit({ t: 'ask_cancel', id })
+      p.resolve({ behavior: 'deny', message: 'Claude Code stopped.', interrupt: true })
+    }
+    this.pending.clear()
+    this.emit({ t: 'ended', reason: 'crashed' })
+    // Also keeps pump() from reporting the abort error that closing causes.
+    this.closed = true
+    this.inbox.close()
+    this.q?.close()
+  }
+
+  private async pump(q: Query) {
+    try {
+      for await (const m of q) {
+        try {
+          this.onMessage(m)
+        } catch (e) {
+          this.emit({ t: 'error', kind: 'internal', message: `Could not handle a ${m.type} message: ${message(e)}` })
+        }
+      }
+      if (!this.closed) this.die('Claude Code exited unexpectedly.')
+    } catch (e) {
+      // After close() the iterator ends with an abort error; that one is expected.
+      if (!this.closed) this.die(`Claude Code stopped: ${message(e)}`)
+    }
+  }
+
+  /**
+   * On resume, Turns continue from the transcript: one per prompt typed since the last compaction. Like the CLI,
+   * a message with no origin counts as typed (terminal prompts carry none); tool results and the CLI's own
+   * records (bash mode, local commands) don't.
+   */
+  private async seedTurns() {
+    if (!this.opts.resume) return
+    try {
+      const msgs = await getSessionMessages(this.opts.resume, { dir: this.cwd })
+      this.stats.turns = msgs.filter((m) => {
+        const extra = m as { origin?: { kind?: string }; is_meta?: boolean }
+        if (m.type !== 'user' || m.parent_tool_use_id || extra.is_meta) return false
+        if (extra.origin !== undefined && extra.origin.kind !== 'human') return false
+        const content = (m.message as { content?: unknown } | undefined)?.content
+        if (Array.isArray(content) && content.some((b: { type?: string }) => b?.type === 'tool_result')) return false
+        return !NOT_A_PROMPT.test(textOf(content))
+      }).length
+    } catch {
+      // No transcript to count: Turns start at 0.
+    }
+  }
+
+  private resolveModel(value: string) {
+    if (!value) return undefined
+    return this.models.find((m) => m.value === value)?.resolvedModel ?? value
+  }
+
+  private beginTurn() {
+    this.running = true
+    this.turnStart = Date.now()
+    this.shown = this.errorShown = false
+    this.tokens = { done: 0, reported: 0, estimate: 0 }
+    this.lastProgress = 0
+    this.progress('thinking')
+  }
+
+  private progress(phase: Phase, note?: string) {
+    const changed = phase !== this.phase || note !== this.note
+    if (changed) {
+      this.phase = phase
+      this.note = note
+    }
+    const now = Date.now()
+    if (!changed && now - this.lastProgress < PROGRESS_MS) return
+    this.lastProgress = now
+    const t = this.tokens
+    const outputTokens = Math.round(t.done + Math.max(t.reported, t.estimate))
+    this.emit({ t: 'progress', outputTokens, phase, ...(this.note ? { note: this.note } : {}) })
+  }
+
+  private endText() {
+    if (!this.textOpen) return
+    this.textOpen = false
+    this.tags.flush()
+    this.emit({ t: 'text_end' })
+  }
+
+  private onMessage(m: SDKMessage) {
+    switch (m.type) {
+      case 'stream_event':
+        return this.onStream(m)
+      case 'assistant':
+        return this.onAssistant(m)
+      case 'user':
+        return this.onUser(m)
+      case 'result':
+        return this.onResult(m)
+      case 'system':
+        return this.onSystem(m)
+      case 'rate_limit_event':
+        return this.onRateLimit(m.rate_limit_info)
+      case 'tool_progress':
+        if (!m.parent_tool_use_id) this.progress('tool', `${toolLabel(m.tool_name)} · ${Math.round(m.elapsed_time_seconds)}s`)
+        return
+      case 'conversation_reset':
+        return this.adoptSession(m.new_conversation_id)
+    }
+  }
+
+  private onStream(m: Extract<SDKMessage, { type: 'stream_event' }>) {
+    // Only the main agent speaks in the dialogue box; subagents show up as actions.
+    if (m.parent_tool_use_id) return
+    const ev = m.event
+    switch (ev.type) {
+      case 'message_start':
+        this.streamed.add(ev.message.id)
+        this.blocks.clear()
+        this.tokens.done += Math.max(this.tokens.reported, this.tokens.estimate)
+        this.tokens.reported = this.tokens.estimate = 0
+        return this.progress('thinking')
+      case 'content_block_start': {
+        const block = ev.content_block
+        this.blocks.set(ev.index, block.type)
+        if (block.type === 'text') {
+          this.textOpen = true
+          return this.progress('writing')
+        }
+        if (block.type === 'tool_use') return this.progress('tool', toolLabel(block.name))
+        return this.progress('thinking')
+      }
+      case 'content_block_delta': {
+        const d = ev.delta
+        const chunk = d.type === 'text_delta' ? d.text : d.type === 'thinking_delta' ? d.thinking : d.type === 'input_json_delta' ? d.partial_json : ''
+        this.tokens.estimate += chunk.length / CHARS_PER_TOKEN
+        if (d.type === 'text_delta') {
+          this.shown = true
+          this.tags.feed(d.text)
+        }
+        return this.progress(this.phase, this.note)
+      }
+      case 'content_block_stop':
+        if (this.blocks.get(ev.index) === 'text') this.endText()
+        return
+      case 'message_delta':
+        this.tokens.reported = ev.usage.output_tokens
+        return this.progress(this.phase, this.note)
+    }
+  }
+
+  private onAssistant(m: Extract<SDKMessage, { type: 'assistant' }>) {
+    const sub = m.parent_tool_use_id !== null
+    if (!sub && m.error) {
+      // Auth and API failures arrive as a synthetic assistant message with an error code.
+      this.shown = this.errorShown = true
+      const detail = textOf(m.message.content).trim()
+      const friendly = ERROR_TEXT[m.error]
+      const text = friendly ? (detail && !friendly.includes(detail) ? `${friendly}\n${detail}` : friendly) : detail || `Claude reported an error: ${m.error}`
+      this.emit({ t: 'error', kind: AUTH_ERRORS.has(m.error) ? 'auth' : 'api', message: text })
+    } else if (!sub && !this.streamed.has(m.message.id)) {
+      // Never streamed: output of a command like /context, or a reply the CLI fetched without streaming.
+      for (const block of m.message.content) {
+        if (block.type !== 'text' || !block.text.trim() || PLACEHOLDERS.has(block.text.trim())) continue
+        this.shown = true
+        if (m.message.model === SYNTHETIC_MODEL) this.notice(commandText(block.text), 'command')
+        else {
+          this.textOpen = true
+          this.tags.feed(block.text)
+          this.endText()
+        }
+      }
+    }
+    for (const block of m.message.content) {
+      if (block.type === 'tool_use') this.onToolUse(block.id, block.name, (block.input ?? {}) as Record<string, unknown>, sub)
+    }
+  }
+
+  private onToolUse(id: string, name: string, input: Record<string, unknown>, sub: boolean) {
+    this.uses.set(id, { name, input })
+    this.emit({ t: 'tool', id, name: toolLabel(name), detail: describeTool(name, input, this.cwd), input: prettyInput(input), sub })
+    if (name === 'Agent' || name === 'Task') this.setAgent(id, str(input.description) || str(input.subagent_type), 'running')
+    if (name === 'TodoWrite' && !sub && Array.isArray(input.todos)) {
+      const items = input.todos as { content?: unknown; status?: unknown }[]
+      this.todos = new Map(items.map((t, i) => [`todo-${i}`, { id: `todo-${i}`, content: str(t.content), status: this.todoStatus(t.status) }]))
+      this.emitTodos()
+    }
+  }
+
+  private onUser(m: Extract<SDKMessage, { type: 'user' }>) {
+    const content = m.message.content
+    const results = Array.isArray(content) ? (content.filter((b) => b.type === 'tool_result') as unknown as ToolResult[]) : []
+    if (!results.length) {
+      // A local command's output can come back as a user message wrapped in <local-command-stdout>.
+      const out = [...textOf(content).matchAll(LOCAL_OUTPUT)].map((x) => x[2]).join('\n')
+      if (!this.shown && out.trim()) this.notice(commandText(out), 'command')
+      return
+    }
+    const sub = m.parent_tool_use_id !== null
+    for (const block of results) {
+      // The structured result belongs to the message's only tool_result.
+      const structured = results.length === 1 ? m.tool_use_result : undefined
+      const ok = block.is_error !== true
+      this.emit({ t: 'tool_done', id: block.tool_use_id, ok, output: toolOutput(block.content, structured) })
+      const use = this.uses.get(block.tool_use_id)
+      this.uses.delete(block.tool_use_id)
+      if (use) this.track(block.tool_use_id, use.name, use.input, ok, structured as Record<string, unknown> | undefined)
+    }
+    if (!sub) {
+      this.progress('thinking')
+      this.scheduleContextRefresh()
+    }
+  }
+
+  /** Quest log and party from tool results: Task* ids only exist in the result. */
+  private track(id: string, name: string, input: Record<string, unknown>, ok: boolean, r: Record<string, unknown> | undefined) {
+    switch (name) {
+      case 'Agent':
+      case 'Task': {
+        // Background agents answer at once with async_launched; they finish with a task_notification.
+        const status = str(r?.status)
+        if (!ok) this.setAgent(id, '', 'failed')
+        else if (status !== 'async_launched' && status !== 'remote_launched') this.setAgent(id, '', 'done')
+        return
+      }
+      case 'TaskCreate': {
+        const task = r?.task as { id?: string; subject?: string } | undefined
+        if (!ok || !task?.id) return
+        this.todos.set(task.id, { id: task.id, content: task.subject || str(input.subject), status: 'pending' })
+        return this.emitTodos()
+      }
+      case 'TaskUpdate': {
+        const taskId = str(input.taskId) || str(r?.taskId)
+        if (!ok || r?.success === false || !taskId) return
+        if (input.status === 'deleted') this.todos.delete(taskId)
+        else {
+          const prev = this.todos.get(taskId)
+          this.todos.set(taskId, {
+            id: taskId,
+            content: str(input.subject) || prev?.content || `#${taskId}`,
+            status: input.status ? this.todoStatus(input.status) : (prev?.status ?? 'pending'),
+          })
+        }
+        return this.emitTodos()
+      }
+      case 'TaskList': {
+        const tasks = r?.tasks as { id: string; subject: string; status: unknown }[] | undefined
+        if (!ok || !Array.isArray(tasks)) return
+        this.todos = new Map(tasks.map((t) => [t.id, { id: t.id, content: t.subject, status: this.todoStatus(t.status) }]))
+        return this.emitTodos()
+      }
+      case 'TaskGet': {
+        const task = r?.task as { id: string; subject: string; status: unknown } | null | undefined
+        if (!ok || !task) return
+        this.todos.set(task.id, { id: task.id, content: task.subject, status: this.todoStatus(task.status) })
+        return this.emitTodos()
+      }
+    }
+  }
+
+  private todoStatus(v: unknown): Todo['status'] {
+    return TODO_STATUS.has(v as Todo['status']) ? (v as Todo['status']) : 'pending'
+  }
+
+  private emitTodos() {
+    this.emit({ t: 'todos', items: [...this.todos.values()] })
+  }
+
+  private setAgent(id: string, description: string, status: AgentStatus) {
+    const prev = this.agents.get(id)
+    const desc = description || prev?.description || 'Helper'
+    if (prev?.status === status && prev.description === desc) return
+    this.agents.set(id, { description: desc, status })
+    this.emit({ t: 'agent', id, description: desc, status })
+  }
+
+  private onResult(m: Extract<SDKMessage, { type: 'result' }>) {
+    const sent = m.user_message_uuids ?? (m.user_message_uuid ? [m.user_message_uuid] : [])
+    const appendOnly = sent.length > 0 && sent.every((id) => this.silent.has(id))
+    for (const id of sent) this.silent.delete(id)
+    if (appendOnly) {
+      // Appends queued behind a turn finish after it, so the last of them is what ends the CLI's run.
+      if (!(m.queued_turn_count ?? 0) && !this.swallowIdle) {
+        this.running = false
+        this.turnStart = 0
+      }
+      return
+    }
+    this.swallowIdle = false
+    this.endText()
+    const reason = m.terminal_reason ?? ''
+    const interrupted = INTERRUPTED.has(reason)
+    const soft = SOFT_STOPS[reason]
+    let error: string | undefined
+    if (m.subtype === 'success') {
+      if (m.is_error && !interrupted) error = m.result || 'The turn failed.'
+      // A local command (/context, /cost, an unknown /x) answers only through the result text.
+      else if (!this.shown && m.result.trim()) this.notice(commandText(m.result), 'command')
+    } else if (!interrupted && !soft) {
+      error = m.errors.join('\n') || m.subtype.replaceAll('_', ' ')
+    }
+    if (soft) this.notice(soft, 'info')
+
+    // Cost, API time and modelUsage are running totals for the session (they carry over on resume).
+    // Error results can carry zeroes, so a total never goes down here; /clear resets them in adoptSession.
+    this.haveResult = true
+    this.stats.costUsd = Math.max(this.stats.costUsd, m.total_cost_usd)
+    this.stats.apiMs = Math.max(this.stats.apiMs, m.duration_api_ms)
+    const usage = Object.values(m.modelUsage ?? {})
+    if (usage.length) this.applyModelUsage(usage)
+    this.stats.turns++
+
+    const now = Date.now()
+    // An API or auth error already went out with its assistant message; the turn still ends as failed.
+    const fresh = error && !this.errorShown ? { error } : {}
+    this.emit({ t: 'turn_end', ok: !error, interrupted, ...fresh, seconds: this.turnStart ? (now - this.turnStart) / MS_PER_S : 0 })
+    this.emitStats()
+
+    this.streamed.clear()
+    this.shown = this.errorShown = false
+    this.tokens = { done: 0, reported: 0, estimate: 0 }
+    // Messages sent during the turn run next without new input, so their turn starts now.
+    if ((m.queued_turn_count ?? 0) > 0) this.turnStart = now
+    else {
+      this.running = false
+      this.turnStart = 0
+    }
+    void this.refreshStats()
+  }
+
+  private onSystem(m: Extract<SDKMessage, { type: 'system' }>) {
+    switch (m.subtype) {
+      case 'init': {
+        this.adoptSession(m.session_id)
+        const mode = m.permissionMode as PermissionModeName
+        if (m.model !== this.stats.model || mode !== this.stats.mode) {
+          this.stats.model = m.model
+          this.stats.mode = mode
+          this.emitStats()
+        }
+        return
+      }
+      case 'status':
+        if (m.permissionMode && m.permissionMode !== this.stats.mode) {
+          this.stats.mode = m.permissionMode as PermissionModeName
+          this.emitStats()
+        }
+        if (m.status === 'compacting') this.progress('compacting')
+        else if (this.phase === 'compacting') this.progress('thinking')
+        if (m.compact_result === 'failed') this.notice(`Compacting failed${m.compact_error ? `: ${m.compact_error}` : '.'}`, 'info')
+        return
+      case 'session_state_changed':
+        if (m.state === 'running' && !this.running && this.silent.size) {
+          this.quiet = true
+          return
+        }
+        if (m.state === 'idle' && this.quiet) {
+          this.quiet = false
+          return
+        }
+        if (m.state === 'idle' && this.swallowIdle) {
+          this.swallowIdle = false
+          return
+        }
+        // The CLI's idle is the authoritative end of a run, whatever results came before it.
+        if (m.state === 'idle') {
+          this.running = false
+          this.turnStart = 0
+        }
+        // A turn the user didn't start (a finished background agent reporting back) starts here.
+        if (m.state === 'running' && !this.turnStart) {
+          this.running = true
+          this.turnStart = Date.now()
+        }
+        return this.emit({ t: 'state', state: m.state })
+      case 'commands_changed':
+        return this.emit({
+          t: 'commands',
+          commands: m.commands.map((x) => ({ name: x.name, description: x.description, argumentHint: x.argumentHint, builtin: x.builtin === true })),
+        })
+      case 'local_command_output':
+        if (!this.shown) this.notice(commandText(m.content), 'command')
+        return
+      case 'compact_boundary': {
+        const { trigger, pre_tokens: pre, post_tokens: post } = m.compact_metadata
+        const how = trigger === 'auto' ? 'Context compacted automatically' : 'Context compacted'
+        this.notice(`${how}: ${kTokens(pre)}${post !== undefined ? ` → ${kTokens(post)}` : ''} tokens.`, 'compact')
+        return void this.refreshStats()
+      }
+      case 'api_retry': {
+        const status = m.error_status ? ` ${m.error_status}` : ''
+        const wait = Math.round(m.retry_delay_ms / MS_PER_S)
+        this.notice(`API error${status} (${m.error.replaceAll('_', ' ')}). Retrying ${m.attempt}/${m.max_retries} in ${wait}s…`, 'retry')
+        return this.progress('retrying', `${m.attempt}/${m.max_retries}`)
+      }
+      case 'thinking_tokens':
+        this.tokens.estimate += m.estimated_tokens_delta
+        return this.progress(this.phase, this.note)
+      case 'task_started':
+        if (!m.ambient && (m.task_type === 'local_agent' || m.subagent_type)) this.setAgent(m.tool_use_id ?? m.task_id, m.description, 'running')
+        return
+      case 'task_notification': {
+        const id = m.tool_use_id ?? m.task_id
+        const agent = this.agents.get(id)
+        if (!agent) return
+        this.setAgent(id, '', m.status === 'completed' ? 'done' : 'failed')
+        if (m.summary && !m.skip_transcript) this.notice(`${agent.description}: ${m.summary}`, 'info')
+        return
+      }
+      case 'permission_denied': {
+        const why = m.decision_reason || m.message
+        return this.notice(`${toolLabel(m.tool_name)} was denied${why ? `: ${why}` : '.'}`, 'info')
+      }
+      case 'informational':
+        if (m.level === 'warning' || m.level === 'notice') this.notice(m.content.replace(ANSI, ''), 'info')
+        return
+    }
+  }
+
+  private onRateLimit(info: Extract<SDKMessage, { type: 'rate_limit_event' }>['rate_limit_info']) {
+    const key = info.rateLimitType === 'five_hour' ? 'fiveHour' : info.rateLimitType === 'seven_day' ? 'weekly' : info.rateLimitType === 'seven_day_opus' ? 'weeklyOpus' : undefined
+    const prev = key ? this.stats.limits[key] : undefined
+    // Event utilization is a 0–1 fraction from the API headers, resetsAt is in seconds.
+    const resetsAt = info.resetsAt ? info.resetsAt * MS_PER_S : prev?.resetsAt
+    if (info.status === 'rejected' && prev?.status !== 'rejected') {
+      const when = resetsAt ? ` It resets at ${new Date(resetsAt).toLocaleString()}.` : ''
+      this.notice(`Usage limit reached.${when}`, 'info')
+    }
+    if (!key) return
+    const pct = info.utilization !== undefined ? info.utilization * 100 : info.status === 'rejected' ? 100 : (prev?.pct ?? 0)
+    this.stats.limits[key] = { pct, resetsAt, status: info.status }
+    this.emitStats()
+  }
+
+  /** A new session id means /clear (or a plan-mode reset): the CLI's totals start over, so ours do too. */
+  private adoptSession(id: string) {
+    if (!id || id === this.sid) return
+    const cleared = this.sid !== undefined
+    this.sid = id
+    this.emit({ t: 'session_id', sessionId: id })
+    if (!cleared) return
+    const { model, mode, limits } = this.stats
+    this.stats = { ...freshStats(), model, mode, limits }
+    this.haveResult = false
+    this.todos.clear()
+    this.emitTodos()
+    this.emitStats()
+    void this.refreshStats()
+  }
+
+  private applyModelUsage(usage: { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }[]) {
+    const sum = (f: (u: (typeof usage)[number]) => number) => usage.reduce((n, u) => n + (f(u) || 0), 0)
+    this.stats.tokensIn = sum((u) => u.inputTokens)
+    this.stats.tokensOut = sum((u) => u.outputTokens)
+    this.stats.cacheRead = sum((u) => u.cacheReadInputTokens)
+    this.stats.cacheWrite = sum((u) => u.cacheCreationInputTokens)
+  }
+
+  private applyContext(ctx: ContextUsage) {
+    this.stats.context = {
+      used: ctx.totalTokens,
+      max: ctx.maxTokens,
+      parts: ctx.categories
+        .filter((c) => (c.kind === 'used' || c.kind === 'buffer') && c.id)
+        .map((c) => ({ id: c.id as string, tokens: c.tokens, kind: c.kind })),
+    }
+    if (ctx.model) this.stats.model = ctx.model
+  }
+
+  /** Re-reads the context gauge shortly after tool results, so a long turn doesn't leave it stale. */
+  private scheduleContextRefresh() {
+    clearTimeout(this.contextTimer)
+    this.contextTimer = setTimeout(() => {
+      void this.q
+        ?.getContextUsage({ detail: 'summary' })
+        .then((ctx) => {
+          this.applyContext(ctx)
+          this.emitStats()
+        })
+        .catch(() => undefined)
+    }, CONTEXT_REFRESH_MS)
+  }
+
+  /** Context use, lines changed and plan limits. Calls overlapping a running refresh coalesce into one more. */
+  private refreshStats(): Promise<void> {
+    if (this.refreshing) {
+      this.refreshAgain = true
+      return this.refreshing
+    }
+    this.refreshing = (async () => {
+      do {
+        this.refreshAgain = false
+        await this.readStats()
+      } while (this.refreshAgain && !this.ended)
+    })().finally(() => (this.refreshing = undefined))
+    return this.refreshing
+  }
+
+  private async readStats() {
+    const q = this.q
+    if (!q || this.ended) return
+    const [ctx, usage] = await Promise.all([
+      q.getContextUsage({ detail: 'summary' }).catch(() => undefined),
+      q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }).catch(() => undefined),
+    ])
+    if (ctx) this.applyContext(ctx)
+    const session = usage?.session
+    if (session) {
+      this.stats.linesAdded = session.total_lines_added
+      this.stats.linesRemoved = session.total_lines_removed
+      // Before the first result (a resumed session) this is the only source of the carried-over totals.
+      if (!this.haveResult) {
+        this.stats.costUsd = session.total_cost_usd
+        this.stats.apiMs = session.total_api_duration_ms
+        this.applyModelUsage(Object.values(session.model_usage ?? {}))
+      }
+    }
+    const limits = usage?.rate_limits_available ? usage.rate_limits : undefined
+    if (limits) {
+      // The usage API reports 0–100 and ISO times; the status comes only from rate_limit_event.
+      const toLimit = (w: UsageWindow, prev: Limit | undefined): Limit | undefined =>
+        w && typeof w.utilization === 'number'
+          ? { pct: w.utilization, resetsAt: w.resets_at ? Date.parse(w.resets_at) : prev?.resetsAt, status: prev?.status }
+          : prev
+      const l = this.stats.limits
+      l.fiveHour = toLimit(limits.five_hour, l.fiveHour)
+      l.weekly = toLimit(limits.seven_day, l.weekly)
+      l.weeklyOpus = toLimit(limits.seven_day_opus, l.weeklyOpus)
+    }
+    this.emitStats()
+  }
+
+  /** Every permission check, AskUserQuestion and plan approval becomes a choice menu in the app. */
+  private async ask(name: string, input: Record<string, unknown>, o: AskOptions): Promise<PermissionResult> {
+    const cancelled: PermissionResult = { behavior: 'deny', message: 'Cancelled.' }
+    const kind: AskKind = name === 'AskUserQuestion' ? 'question' : name === 'ExitPlanMode' ? 'plan' : 'permission'
+    const diffs = kind === 'permission' ? await buildDiffs(name, input, this.cwd).catch(() => []) : []
+    if (o.signal.aborted || this.ended) return cancelled
+    const id = randomUUID()
+    const canAlways = (o.suggestions?.length ?? 0) > 0 && !o.suppressAlwaysAllowRule
+    return new Promise<PermissionResult>((resolve) => {
+      this.pending.set(id, { kind, input, suggestions: o.suggestions, canAlways, resolve })
+      o.signal.addEventListener(
+        'abort',
+        () => {
+          if (!this.pending.delete(id)) return
+          this.emit({ t: 'ask_cancel', id })
+          resolve(cancelled)
+        },
+        { once: true },
+      )
+      if (kind === 'question') return this.emit({ t: 'ask_question', id, questions: this.questions(input) })
+      if (kind === 'plan') {
+        const planFile = str(input.planFilePath)
+        return this.emit({ t: 'ask_plan', id, plan: str(input.plan), ...(planFile ? { planFile } : {}) })
+      }
+      const shellTool = name === 'Bash' || name === 'PowerShell'
+      const reason = this.reason(o, shellTool ? str(input.description) : '')
+      this.emit({
+        t: 'ask_permission',
+        id,
+        tool: toolLabel(name),
+        // '' when the CLI gives no title: the app words its own.
+        title: this.inVoice(o.title || o.displayName || ''),
+        detail: shellTool ? clip(str(input.command)) : describeTool(name, input, this.cwd),
+        diffs,
+        canAlways,
+        danger: isDestructive(name, input),
+        defaultToNo: o.defaultToNo === true,
+        ...(reason ? { reason } : {}),
+      })
+    })
+  }
+
+  /** The bridge writes prompts as "Claude wants to …"; in this app the character is the one asking. */
+  private inVoice(text: string) {
+    const name = this.opts.settings.waifu.name.trim()
+    return name ? text.replace(/\bClaude\b(?! Code)/g, name) : text
+  }
+
+  /** The sub-line under the prompt: what the command does (its own description), then why the CLI asks. */
+  private reason(o: AskOptions, purpose: string) {
+    const parts = [purpose, o.description && this.inVoice(o.description), o.decisionReason, o.blockedPath && `Path: ${o.blockedPath}`]
+    return [...new Set(parts.filter((x): x is string => !!x?.trim()))].join(' · ') || undefined
+  }
+
+  private questions(input: Record<string, unknown>): Question[] {
+    const qs = Array.isArray(input.questions) ? (input.questions as Record<string, unknown>[]) : []
+    return qs.map((q) => ({
+      question: str(q.question),
+      header: str(q.header),
+      multiSelect: q.multiSelect === true,
+      options: (Array.isArray(q.options) ? (q.options as Record<string, unknown>[]) : []).map((x) => ({
+        label: str(x.label),
+        description: str(x.description),
+        ...(typeof x.preview === 'string' ? { preview: x.preview } : {}),
+      })),
+    }))
   }
 
   private take(id: string) {
     const p = this.pending.get(id)
     this.pending.delete(id)
-    if (p) this.lastInput = p.input
     return p
   }
-
-  /** Every permission check, AskUserQuestion and plan approval becomes a choice menu in the app. */
-  private ask(name: string, input: Record<string, unknown>, suggestions: PermissionUpdate[] | undefined, signal: AbortSignal) {
-    const id = randomUUID()
-    return new Promise<PermissionResult>((resolve) => {
-      this.pending.set(id, { input, suggestions, resolve })
-      signal.addEventListener('abort', () => {
-        if (!this.pending.delete(id)) return
-        this.emit({ t: 'ask_cancel', id })
-        resolve({ behavior: 'deny', message: 'Cancelled.' })
-      })
-      if (name === 'AskUserQuestion') {
-        this.emit({ t: 'ask_question', id, questions: (input.questions as never) ?? [] })
-      } else if (name === 'ExitPlanMode') {
-        this.emit({ t: 'ask_plan', id, plan: str(input.plan) })
-      } else {
-        const detail = describeTool(name, input)
-        this.emit({
-          t: 'ask_permission',
-          id,
-          tool: toolLabel(name),
-          detail,
-          canAlways: (suggestions?.length ?? 0) > 0,
-          danger: (name === 'Bash' || name === 'PowerShell') && DESTRUCTIVE.test(detail),
-        })
-      }
-    })
-  }
-
-  private async pump() {
-    try {
-      for await (const m of this.q) await this.onMessage(m)
-    } catch (e) {
-      this.emit({ t: 'error', message: e instanceof Error ? e.message : String(e) })
-    } finally {
-      this.emit({ t: 'ended' })
-    }
-  }
-
-  private async onMessage(m: SDKMessage) {
-    switch (m.type) {
-      case 'system':
-        if (m.subtype === 'init') {
-          this.stats.model = m.model
-          this.stats.mode = m.permissionMode
-          await rememberSession(m.session_id, this.cwd).catch(() => {})
-          const [commands, models] = await Promise.all([
-            this.q.supportedCommands().catch(() => []),
-            this.q.supportedModels().catch(() => []),
-          ])
-          const hidden = new Set(m.terminal_slash_commands ?? [])
-          this.emit({
-            t: 'init',
-            sessionId: m.session_id,
-            commands: commands
-              .filter((c) => !hidden.has(c.name))
-              .map((c) => ({ name: c.name, description: c.description, argumentHint: c.argumentHint, builtin: c.builtin === true })),
-            models: models.map((x) => ({ value: x.value, displayName: x.displayName })),
-          })
-          // Fill the gauges before the first turn, which matters most on resume. Not awaited, so the stream keeps flowing.
-          void this.refreshStats()
-        } else if (m.subtype === 'session_state_changed') {
-          this.emit({ t: 'state', state: m.state })
-        }
-        return
-
-      case 'stream_event': {
-        // Only the main agent speaks in the dialogue box; subagents show up as actions.
-        if (m.parent_tool_use_id) return
-        const ev = m.event
-        if (ev.type === 'content_block_start') {
-          this.blocks.set(ev.index, ev.content_block.type)
-        } else if (ev.type === 'content_block_delta' && ev.delta.type === 'text_delta') {
-          this.tags.feed(ev.delta.text)
-        } else if (ev.type === 'content_block_stop' && this.blocks.get(ev.index) === 'text') {
-          this.tags.flush()
-          this.emit({ t: 'text_end' })
-        }
-        return
-      }
-
-      case 'assistant': {
-        if (m.error) this.emit({ t: 'error', message: `Claude: ${m.error}` })
-        for (const block of m.message.content) {
-          if (block.type !== 'tool_use') continue
-          const input = (block.input ?? {}) as Record<string, unknown>
-          if (block.name === 'TodoWrite' && Array.isArray(input.todos)) this.emit({ t: 'todos', items: input.todos as never })
-          this.emit({ t: 'tool', id: block.id, name: toolLabel(block.name), detail: describeTool(block.name, input), sub: m.parent_tool_use_id !== null })
-        }
-        return
-      }
-
-      case 'user': {
-        const content = m.message.content
-        if (!Array.isArray(content)) return
-        for (const block of content) {
-          if (block.type === 'tool_result') this.emit({ t: 'tool_done', id: block.tool_use_id, ok: block.is_error !== true })
-        }
-        return
-      }
-
-      case 'result': {
-        // Cost and modelUsage are running totals; API time is per turn. /usage overrides both if it answers.
-        this.stats.costUsd = m.total_cost_usd
-        this.stats.apiMs += m.duration_api_ms
-        const usage = Object.values(m.modelUsage ?? {})
-        this.stats.tokensIn = usage.reduce((n, u) => n + u.inputTokens, 0)
-        this.stats.tokensOut = usage.reduce((n, u) => n + u.outputTokens, 0)
-        this.stats.cacheRead = usage.reduce((n, u) => n + u.cacheReadInputTokens, 0)
-        this.stats.cacheWrite = usage.reduce((n, u) => n + u.cacheCreationInputTokens, 0)
-        const ok = m.subtype === 'success' && !m.is_error
-        this.emit({
-          t: 'turn_end',
-          ok,
-          error: ok ? undefined : m.subtype === 'success' ? m.result : m.subtype,
-          seconds: this.turnStart ? (Date.now() - this.turnStart) / 1000 : 0,
-        })
-        await this.refreshStats()
-        return
-      }
-
-      case 'rate_limit_event': {
-        const info = m.rate_limit_info
-        if (info.utilization === undefined) return
-        const limit = { pct: info.utilization <= 1 ? info.utilization * 100 : info.utilization, resetsAt: info.resetsAt ? info.resetsAt * (info.resetsAt < 1e12 ? 1000 : 1) : undefined }
-        if (info.rateLimitType === 'five_hour') this.stats.limits.fiveHour = limit
-        if (info.rateLimitType === 'seven_day') this.stats.limits.weekly = limit
-        this.emit({ t: 'stats', stats: this.stats })
-        return
-      }
-    }
-  }
-
-  /** Context use, and plan limits from the (experimental) /usage data when it answers. */
-  private async refreshStats() {
-    const ctx = await this.q.getContextUsage({ detail: 'summary' }).catch(() => undefined)
-    if (ctx) {
-      this.stats.context = {
-        used: ctx.totalTokens,
-        max: ctx.maxTokens,
-        parts: ctx.categories.filter((c) => c.kind === 'used' && c.id).map((c) => ({ id: c.id!, tokens: c.tokens })),
-      }
-    }
-    const usage = await this.q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }).catch(() => undefined)
-    if (usage?.session) {
-      this.stats.costUsd = usage.session.total_cost_usd
-      this.stats.apiMs = usage.session.total_api_duration_ms
-    }
-    const limits = usage?.rate_limits_available ? usage.rate_limits : null
-    const toLimit = (w?: { utilization: number | null; resets_at: string | null } | null) =>
-      w && w.utilization !== null ? { pct: w.utilization, resetsAt: w.resets_at ? Date.parse(w.resets_at) : undefined } : undefined
-    if (limits) {
-      this.stats.limits.fiveHour = toLimit(limits.five_hour) ?? this.stats.limits.fiveHour
-      this.stats.limits.weekly = toLimit(limits.seven_day) ?? this.stats.limits.weekly
-    }
-    this.emit({ t: 'stats', stats: this.stats })
-  }
 }
+
+export const createSession: SessionFactory = (opts) => new Session(opts)
