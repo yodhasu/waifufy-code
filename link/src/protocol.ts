@@ -246,6 +246,8 @@ export type ClientMsg =
   | { t: 'answer'; id: string; answers: Record<string, string> }
   /** Plan approval. 'auto' approves and switches to acceptEdits; 'manual' approves in default mode. */
   | { t: 'plan'; id: string; decision: 'auto' | 'manual' | 'keep'; message?: string }
+  /** Builds the persona prompt for `settings` without saving them (settings preview, R39). */
+  | { t: 'persona_preview'; settings: Settings }
   | { t: 'research'; name: string; series: string; notes: string }
   | { t: 'research_cancel' }
   /** Opens a folder or file in the OS (Explorer). */
@@ -291,6 +293,7 @@ export type ServerMsg =
   | { t: 'saves'; list: Save[] }
   | { t: 'costumes'; list: Costume[]; dir: string; found: boolean }
   | { t: 'files'; query: string; hits: FileHit[] }
+  | { t: 'persona_preview'; text: string }
   | { t: 'research_progress'; text: string }
   | { t: 'research_done'; preset: PersonaPreset }
   | { t: 'research_error'; message: string }

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import type { Settings } from './protocol.ts'
 
 /** Everything the app writes: settings, saves registry, thumbnails, logs. */
-export const DATA_DIR = join(process.env.APPDATA ?? join(homedir(), '.config'), 'waifufy-code')
+export const DATA_DIR = process.env.WC_DATA_DIR || join(process.env.APPDATA ?? join(homedir(), '.config'), 'waifufy-code')
 const FILE = join(DATA_DIR, 'settings.json')
 
 /** Where costume folders are looked for when `appearance.modelsDir` is empty or missing, in order. */
