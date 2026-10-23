@@ -206,8 +206,10 @@ export type Question = {
   options: { label: string; description: string; preview?: string }[]
 }
 
-export type Command = { name: string; description: string; argumentHint: string; builtin: boolean }
-export type ModelChoice = { value: string; displayName: string; description: string; resolved?: string }
+/** `aliases`: other names that run it, as the CLI resolves them (`/cost` and `/stats` run `/usage`). */
+export type Command = { name: string; description: string; argumentHint: string; builtin: boolean; aliases?: string[] }
+/** `supportsAuto`: the model offers auto mode, so Shift+Tab includes it (R13). */
+export type ModelChoice = { value: string; displayName: string; description: string; resolved?: string; supportsAuto?: boolean }
 
 export type FileHit = { path: string; isDir: boolean }
 
@@ -231,7 +233,11 @@ export type ClientMsg =
   /** Updates play stats / thumbnail of the running save. `thumb` is a data: URL (JPEG). */
   | { t: 'save_meta'; id: string; patch: Partial<Pick<Save, 'playMs' | 'turns' | 'affection' | 'costume' | 'lastLine'>>; thumb?: string }
   | { t: 'costumes'; dir?: string }
-  /** `epoch` is chosen by the app; every session event carries it back, so stale events can be dropped. */
+  /** Whether `cwd` is trusted for its project settings, as the terminal's trust dialog decides; answered with `trust`. */
+  | { t: 'trust_check'; cwd: string }
+  /** The user accepted the trust dialog for `cwd`; answered with `trust`. */
+  | { t: 'trust_accept'; cwd: string }
+  /** `epoch` is chosen by the app; every session event carries it back, so stale events can be dropped. Refused for an untrusted `cwd`. */
   | { t: 'start'; epoch: number; cwd: string; resume?: string }
   | { t: 'say'; text: string; images?: Image[] }
   /** `!cmd`: runs in the session folder; output is appended to context without starting a turn. */
@@ -259,7 +265,8 @@ export type ClientMsg =
 export type SessionEvent =
   | { t: 'started'; cwd: string; cwdShort: string; resumed: boolean; history: HistoryEntry[]; save?: Save }
   /** Sent as soon as the CLI handshake completes (before the first turn). */
-  | { t: 'ready'; sessionId?: string; commands: Command[]; models: ModelChoice[]; mode: PermissionModeName; model?: string; account?: string }
+  /** `bypassAvailable`: the session was started with bypass permissions, so Shift+Tab may cycle to it, as in the CLI. */
+  | { t: 'ready'; sessionId?: string; commands: Command[]; models: ModelChoice[]; mode: PermissionModeName; model?: string; account?: string; bypassAvailable?: boolean }
   | { t: 'session_id'; sessionId: string }
   | { t: 'commands'; commands: Command[] }
   | { t: 'face'; emotion: Emotion }
@@ -272,7 +279,11 @@ export type SessionEvent =
   | { t: 'tool_done'; id: string; ok: boolean; output: string }
   | { t: 'todos'; items: Todo[] }
   | { t: 'agent'; id: string; description: string; status: 'running' | 'done' | 'failed' }
-  | { t: 'ask_permission'; id: string; tool: string; title: string; detail: string; diffs: Diff[]; canAlways: boolean; danger: boolean; defaultToNo: boolean; reason?: string }
+  /**
+   * `input`: the call's full parameters (pretty JSON, clipped) for tools without a diff or command, so nothing is
+   * approved unseen. `always`: what "don't ask again" saves, like the CLI's label ("npm run test:* commands in …").
+   */
+  | { t: 'ask_permission'; id: string; tool: string; title: string; detail: string; diffs: Diff[]; canAlways: boolean; danger: boolean; defaultToNo: boolean; reason?: string; input?: string; always?: string }
   | { t: 'ask_question'; id: string; questions: Question[] }
   | { t: 'ask_plan'; id: string; plan: string; planFile?: string }
   | { t: 'ask_cancel'; id: string }
@@ -293,6 +304,8 @@ export type ServerMsg =
   | { t: 'saves'; list: Save[] }
   | { t: 'costumes'; list: Costume[]; dir: string; found: boolean }
   | { t: 'files'; query: string; hits: FileHit[] }
+  /** `concerns`: what the folder's own settings would apply without asking (hooks, MCP servers, pre-approved rules). */
+  | { t: 'trust'; cwd: string; trusted: boolean; concerns: string[] }
   | { t: 'persona_preview'; text: string }
   | { t: 'research_progress'; text: string }
   | { t: 'research_done'; preset: PersonaPreset }

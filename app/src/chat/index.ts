@@ -1,7 +1,8 @@
 // The chat screen: a Claude Code session played as a visual novel (R10–R30). It owns the session
 // lifecycle and wires the link's events to the dialogue, the panels, the choice menus and the input.
 
-import type { Command, HistoryEntry, Image, ModelChoice, PermissionModeName, SessionEvent, Stats } from '../../../link/src/protocol.ts'
+import { getCurrentWindow, UserAttentionType } from '@tauri-apps/api/window'
+import type { Command, HistoryEntry, Image, ModelChoice, PermissionModeName, ServerMsg, SessionEvent, Stats } from '../../../link/src/protocol.ts'
 import type { ChatParams, Ctx, Gesture, Screen } from '../contracts'
 import { addressOf } from '../screens/title'
 import { esc, fmtK } from '../ui'
@@ -26,6 +27,7 @@ const SKIP_ARM_IN_FIELD_MS = 400
 const LAST_LINE_CHARS = 200
 /** The stats that follow turn_end are waited for this long before the turn is saved without them. */
 const STATS_WAIT_MS = 1500
+const TRUST_WAIT_MS = 15_000
 /** The LOG follows new entries while you are this close to its bottom. */
 const LOG_STICK_PX = 40
 const LOG_DETAIL_CHARS = 140
@@ -55,6 +57,19 @@ type ModalOptions = {
   tools?: string
   key?(e: KeyboardEvent): boolean
   onClose?(): void
+}
+
+/**
+ * Flashes the taskbar button while the window is in the background, the desktop version of the CLI's terminal
+ * bell: she needs an answer, or she finished. Only in the Tauri shell; a plain browser has no window API.
+ */
+function callForAttention() {
+  if (document.hasFocus()) return
+  try {
+    getCurrentWindow().requestUserAttention(UserAttentionType.Informational).catch(() => {})
+  } catch {
+    // Not in Tauri (the E2E browser target, `vite` alone).
+  }
 }
 
 const inField = (el: Element | null) =>
@@ -507,7 +522,8 @@ export function chatScreen(): Screen {
 
   // ---------------------------------------------------------------- lifecycle
 
-  function start(o: { cwd: string; resume?: string; title?: string }) {
+  /** `checkTrust`: a folder opened from the title or Load; a restart or /clear reuses a folder already trusted. */
+  function start(o: { cwd: string; resume?: string; title?: string }, checkTrust = false) {
     nextEpoch()
     live = true
     ready = false
@@ -546,7 +562,48 @@ export function chatScreen(): Screen {
     updateRibbon()
     dialogue.show({ kind: 'narration', text: `${charName()} is getting ready…` })
     input.setEnabled(false, `${charName()} is getting ready…`)
-    ctx.link.send({ t: 'start', epoch, cwd: o.cwd, resume: o.resume })
+    const send = () => ctx.link.send({ t: 'start', epoch, cwd: o.cwd, resume: o.resume })
+    if (checkTrust) void trustThen(o.cwd, send)
+    else send()
+  }
+
+  /**
+   * The terminal's "Quick safety check": a folder's own hooks, MCP servers and pre-approved rules apply only
+   * once you trust it. Declining goes back to the title, as "No, exit" leaves the CLI.
+   */
+  async function trustThen(folder: string, go: () => void) {
+    const my = epoch
+    const ask = (t: 'trust_check' | 'trust_accept') => {
+      const reply = ctx.link.next((m): m is Extract<ServerMsg, { t: 'trust' }> => m.t === 'trust' && m.cwd === folder, TRUST_WAIT_MS)
+      ctx.link.send({ t, cwd: folder })
+      return reply
+    }
+    try {
+      let r = await ask('trust_check')
+      if (!r.trusted) {
+        const extra = r.concerns.length ? `\n\nThis folder's own settings ${r.concerns.join('; ')}. These apply without asking.` : ''
+        const yes = await ctx.confirm(
+          'Accessing workspace',
+          `${folder}\n\nQuick safety check: Is this a project you created or one you trust? (Like your own code, a well-known ` +
+            `open source project, or work from your team.) If not, take a moment to review what's in this folder first.\n\n` +
+            `${charName()} will be able to read, edit, and execute files here.${extra}`,
+          'Yes, I trust this folder',
+          'No, exit',
+        )
+        if (epoch !== my) return
+        if (!yes) {
+          live = false
+          return ctx.router.go('title')
+        }
+        r = await ask('trust_accept')
+      }
+      if (epoch === my && r.trusted) go()
+    } catch {
+      if (epoch !== my) return
+      live = false
+      ctx.toast(`${charName()} couldn't check this folder. Try again in a moment.`)
+      ctx.router.go('title')
+    }
   }
 
   function restart() {
@@ -683,7 +740,10 @@ export function chatScreen(): Screen {
     }
     lastError = undefined
     saveAfterStats()
-    if (!m.interrupted) sendNext()
+    if (m.interrupted) return
+    // She is waiting for you now, unless a queued message goes out next.
+    if (!queued.length) callForAttention()
+    sendNext()
   }
 
   function onError(m: Extract<SessionEvent, { t: 'error' }>) {
@@ -802,6 +862,7 @@ export function chatScreen(): Screen {
       case 'ask_plan':
         asks.push(m)
         if (!visible) ctx.toast(`${charName()} needs your answer in the chat`, 4000)
+        callForAttention()
         return updateSpinner()
       case 'ask_cancel':
         asks.cancel(m.id)
@@ -1051,7 +1112,7 @@ export function chatScreen(): Screen {
       dialogue.setMuted(false)
       ctx.character.setPlacement('chat')
       const p = params as ChatParams | undefined
-      if (p?.cwd) return start({ cwd: p.cwd, resume: p.resume, title: p.title })
+      if (p?.cwd) return start({ cwd: p.cwd, resume: p.resume, title: p.title }, true)
       // Back from Settings: the session is still running.
       if (!live) return ctx.router.go('title')
       panels.identity(settings())

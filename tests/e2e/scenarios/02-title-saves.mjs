@@ -1,4 +1,6 @@
 // R1–R9: the title menu and the VN-style Save/Load page.
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   assert,
   eq,
@@ -88,7 +90,7 @@ export default {
       r: 'R3',
       name: 'New Game starts a session in the chosen folder',
       async run({ app, project }) {
-        assert(await app.visible(T('title-new')), 'title-new visible')
+        await app.waitVisible(T('title-new'))
         // The OS folder picker can't be driven; New Game hands the folder to the chat screen like this.
         const start = await newGame(app, project)
         eq(start.resume, undefined, 'a new game does not resume')
@@ -97,6 +99,40 @@ export default {
         const m = await say(app, 'hello there')
         await app.waitEvent('turn_end', {}, m, 30_000)
         await sleep(SAVE_SETTLE_MS)
+        await toTitle(app)
+      },
+    },
+    {
+      r: ['R3', 'R24'],
+      name: 'an untrusted folder asks first, like the terminal: No goes back to the title, Yes starts and is remembered',
+      async run({ app }) {
+        const project = makeProject('stranger-repo', { trusted: false })
+        mkdirSync(join(project, '.claude'), { recursive: true })
+        writeFileSync(join(project, '.claude', 'settings.json'), JSON.stringify({ hooks: { PreToolUse: [] }, permissions: { allow: ['Bash(npm *)'] } }))
+        await toTitle(app)
+        let m = await app.mark()
+        await app.go('chat', { cwd: project })
+        await app.waitVisible('#confirm')
+        const body = await app.text('#confirmBody')
+        assert(/Quick safety check/.test(body) && body.includes(project), `the CLI's trust question with the folder: ${body.slice(0, 120)}`)
+        assert(/hooks on PreToolUse/.test(body) && /pre-approves 1 tool permission/.test(body), `what the folder would apply: ${body}`)
+        await app.click('#confirmNo')
+        await waitScreen(app, 'title')
+        eq((await app.sent(m, 'start')).length, 0, 'no session starts after No')
+
+        m = await app.mark()
+        await app.go('chat', { cwd: project })
+        await app.waitVisible('#confirm')
+        await app.click('#confirmYes')
+        await app.waitSent('trust_accept', { cwd: project }, m)
+        const start = await app.waitSent('start', { cwd: project }, m)
+        await app.waitEvent('ready', { epoch: start.epoch }, m, 20_000)
+        await toTitle(app)
+
+        m = await app.mark()
+        await app.go('chat', { cwd: project })
+        await app.waitSent('start', { cwd: project }, m)
+        assert(!(await app.visible('#confirm')), 'a trusted folder does not ask again')
         await toTitle(app)
       },
     },

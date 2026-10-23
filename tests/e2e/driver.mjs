@@ -21,6 +21,8 @@ import { defaultModelsDir } from '../../link/src/settings.ts'
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 export const OUT = join(ROOT, 'tests', 'e2e', 'out')
+/** Where lib.mjs makeProject() puts projects. The app is told this folder is trusted (WC_TRUST_FOLDERS). */
+export const PROJECTS_ROOT = join(tmpdir(), 'wc-e2e-projects')
 const APP_DIR = join(ROOT, 'app')
 const LINK_DIR = join(ROOT, 'link')
 const EXE = process.env.WC_E2E_EXE || join(APP_DIR, 'src-tauri', 'target', 'debug', 'waifufy-code.exe')
@@ -794,7 +796,8 @@ export async function launch(options = {}) {
     const seed = seedSettings(wizard ? merge(settings, { onboarded: false }) : settings)
     writeFileSync(join(dataDir, 'settings.json'), JSON.stringify(seed, null, 2))
   }
-  const env = { ...process.env, ...extra, WC_DATA_DIR: dataDir, WC_CDP_PORT: String(CDP_PORT) }
+  // Test projects (lib.mjs makeProject) count as trusted, as a folder you already trusted in the terminal would.
+  const env = { ...process.env, WC_TRUST_FOLDERS: PROJECTS_ROOT, ...extra, WC_DATA_DIR: dataDir, WC_CDP_PORT: String(CDP_PORT) }
   if (mock) env.WC_MOCK = '1'
   else delete env.WC_MOCK
   await ensureVite()

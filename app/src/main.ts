@@ -146,6 +146,26 @@ const router: Router = {
 const ctx: Ctx = { link, store, character, router, toast, confirm: confirmDialog, pickFolder, pickImages }
 for (const [name, screen] of Object.entries(screens)) screen.mount(document.getElementById(`screen-${name}`)!, ctx)
 
+// WebView2 keeps the browser's reload keys. Reloading would drop the page's session (the link closes it), so they
+// never reach the browser. Ctrl+R is the CLI's history search; the chat composer handles it when focused.
+addEventListener(
+  'keydown',
+  (e) => {
+    const k = e.key.toLowerCase()
+    if (e.key === 'F5' || (e.ctrlKey && !e.altKey && k === 'r')) {
+      if (!(e.target as HTMLElement | null)?.closest?.('[data-wc-input]')) e.preventDefault()
+    }
+  },
+  true,
+)
+
+// A file or link dropped anywhere outside the composer would navigate the window away from the app.
+for (const type of ['dragover', 'drop'] as const) {
+  addEventListener(type, (e) => {
+    if (!e.defaultPrevented) e.preventDefault()
+  })
+}
+
 // Esc: the confirm dialog first, then the screen on top (which closes its own overlays first).
 addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || e.defaultPrevented) return

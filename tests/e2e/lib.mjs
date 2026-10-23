@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
+import { PROJECTS_ROOT } from './driver.mjs'
 
 export { MOCK } from '../../link/src/mock.ts'
 export { EMOTIONS } from '../../link/src/protocol.ts'
@@ -77,9 +78,15 @@ export function removeTempDirs() {
   for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true })
 }
 
-/** A throwaway project folder (a git repo, so .gitignore applies) to start sessions in. */
-export function makeProject(name = 'booking-agent') {
-  const dir = join(tempDir('wc-e2e-proj-'), name)
+/**
+ * A throwaway project folder (a git repo, so .gitignore applies) to start sessions in. It is under
+ * PROJECTS_ROOT, which the app treats as trusted; `trusted: false` puts it elsewhere, so the trust dialog shows.
+ */
+export function makeProject(name = 'booking-agent', { trusted = true } = {}) {
+  mkdirSync(PROJECTS_ROOT, { recursive: true })
+  const base = trusted ? mkdtempSync(join(PROJECTS_ROOT, 'p-')) : mkdtempSync(join(tmpdir(), 'wc-e2e-untrusted-'))
+  made.push(base)
+  const dir = join(base, name)
   for (const [rel, body] of Object.entries(PROJECT_FILES)) {
     mkdirSync(dirname(join(dir, rel)), { recursive: true })
     writeFileSync(join(dir, rel), body)

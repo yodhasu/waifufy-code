@@ -15,6 +15,7 @@ import { deleteSave, errorText, getSave, isSaveId, listSaves, loadHistory, remem
 import type { SessionApi, SessionFactory } from './session-api.ts'
 import { createSession } from './session.ts'
 import { DATA_DIR, loadSettings, saveSettings } from './settings.ts'
+import { acceptTrust, isTrusted, trustConcerns } from './trust.ts'
 
 // The Tauri app starts this process with a free port and a token, and closes stdin when it quits.
 const PORT = Number(process.env.WC_PORT ?? 47900)
@@ -266,6 +267,8 @@ async function start(m: Extract<ClientMsg, { t: 'start' }>) {
   if (gen !== startGen) return
   const cwd = resolve(m.cwd)
   if (!isDir(cwd)) return sessionFailed(m.epoch, `The folder ${cwd} doesn't exist.`)
+  // The app shows the trust dialog first; this only stops a start that skipped it.
+  if (!isTrusted(cwd)) return sessionFailed(m.epoch, `The folder ${cwd} isn't trusted yet. Open it from New Game or Load to confirm you trust it.`)
   let live: Live | undefined
   // Whatever fails from here, the chat waiting on this epoch gets its error and `ended` instead of hanging (R24).
   try {
@@ -406,6 +409,14 @@ async function handle(ws: WebSocket, m: ClientMsg) {
     case 'costumes': {
       const r = await listCostumes(isStr(m.dir) ? m.dir : undefined)
       return sendTo(ws, { t: 'costumes', ...r })
+    }
+    case 'trust_check':
+    case 'trust_accept': {
+      need(isStr(m.cwd) && m.cwd.trim(), 'cwd')
+      const cwd = resolve(m.cwd)
+      if (m.t === 'trust_accept') await acceptTrust(cwd)
+      const trusted = isTrusted(cwd)
+      return sendTo(ws, { t: 'trust', cwd: m.cwd, trusted, concerns: trusted || !isDir(cwd) ? [] : await trustConcerns(cwd) })
     }
     case 'start':
       need(isStr(m.cwd) && m.cwd.trim() && Number.isFinite(m.epoch) && (m.resume === undefined || isSaveId(m.resume)), 'cwd, epoch, resume')
