@@ -238,8 +238,13 @@ export type ClientMsg =
   /** The user accepted the trust dialog for `cwd`; answered with `trust`. */
   | { t: 'trust_accept'; cwd: string }
   /** `epoch` is chosen by the app; every session event carries it back, so stale events can be dropped. Refused for an untrusted `cwd`. */
-  | { t: 'start'; epoch: number; cwd: string; resume?: string }
-  | { t: 'say'; text: string; images?: Image[] }
+  /**
+   * `resumeAt` (with `resume`): rewind the conversation, keeping the transcript up to and including that entry.
+   * `dropsTurn`: the prompt whose turn the rewind discards, so the CLI can check nothing else is lost.
+   */
+  | { t: 'start'; epoch: number; cwd: string; resume?: string; resumeAt?: string; dropsTurn?: string }
+  /** `now`: Ctrl+Enter, the CLI's "send now": delivered to the running turn at once instead of after it. */
+  | { t: 'say'; text: string; images?: Image[]; now?: boolean }
   /** `!cmd`: runs in the session folder; output is appended to context without starting a turn. */
   | { t: 'shell'; command: string }
   | { t: 'files'; query: string }
@@ -248,7 +253,7 @@ export type ClientMsg =
   | { t: 'mode'; mode: PermissionModeName }
   | { t: 'model'; model: string }
   /** 'deny' stops the turn (CLI "No"); 'feedback' denies with `message` and lets the character continue. */
-  | { t: 'permission'; id: string; decision: 'allow' | 'always' | 'deny' | 'feedback'; message?: string }
+  | { t: 'permission'; id: string; decision: 'allow' | 'always' | 'deny' | 'feedback'; message?: string; option?: string }
   | { t: 'answer'; id: string; answers: Record<string, string> }
   /** Plan approval. 'auto' approves and switches to acceptEdits; 'manual' approves in default mode. */
   | { t: 'plan'; id: string; decision: 'auto' | 'manual' | 'keep'; message?: string }
@@ -271,14 +276,14 @@ export type ClientMsg =
  * `usage` is the SDK's experimental data call behind `/usage`. `mcpLogin` and `mcpLogout` have no SDK control: the link
  * runs `claude mcp login|logout <name>` for them. `cli` runs a slash command such as
  * `/config key=value` silently and answers with its text output. `settingsFiles`, `editSettings`, `cliExec` and
- * `readText` are link-side file and CLI helpers (link/src/config-files.ts) for the panels the SDK has no control for.
+ * `readText` / `createText` are link-side file and CLI helpers (link/src/config-files.ts) for the panels the SDK has no control for.
  */
 export const CTL_OPS = [
   'mcpServerStatus', 'reconnectMcpServer', 'toggleMcpServer', 'setMcpPermissionModeOverride', 'readMcpResource',
   'supportedAgents', 'supportedCommands', 'supportedModels', 'initializationResult', 'accountInfo',
   'getContextUsage', 'usage', 'reloadPlugins', 'reloadSkills', 'reloadOutputStyles',
   'applyFlagSettings', 'updateSettings', 'setMaxThinkingTokens', 'rewindFiles', 'stopTask',
-  'mcpLogin', 'mcpLogout', 'cli', 'settingsFiles', 'editSettings', 'cliExec', 'readText',
+  'mcpLogin', 'mcpLogout', 'cli', 'rewindPoints', 'backgroundTasks', 'settingsFiles', 'editSettings', 'cliExec', 'readText', 'createText', 'gitDiff',
 ] as const
 
 export type CtlOp = (typeof CTL_OPS)[number]
@@ -307,7 +312,7 @@ export type SessionEvent =
    * `input`: the call's full parameters (pretty JSON, clipped) for tools without a diff or command, so nothing is
    * approved unseen. `always`: what "don't ask again" saves, like the CLI's label ("npm run test:* commands in …").
    */
-  | { t: 'ask_permission'; id: string; tool: string; title: string; detail: string; diffs: Diff[]; canAlways: boolean; danger: boolean; defaultToNo: boolean; reason?: string; input?: string; always?: string }
+  | { t: 'ask_permission'; id: string; tool: string; title: string; detail: string; diffs: Diff[]; canAlways: boolean; danger: boolean; defaultToNo: boolean; reason?: string; input?: string; always?: string; question?: string; choices?: PermChoice[] }
   | { t: 'ask_question'; id: string; questions: Question[] }
   | { t: 'ask_plan'; id: string; plan: string; planFile?: string }
   /**
@@ -325,6 +330,14 @@ export type SessionEvent =
   | { t: 'turn_end'; ok: boolean; interrupted: boolean; error?: string; seconds: number }
   | { t: 'error'; message: string; kind: 'auth' | 'api' | 'process' | 'internal' }
   | { t: 'ended'; reason: 'closed' | 'crashed' }
+  /** A CLI notification (an MCP server needs auth, a plugin update, a context warning…), by priority. */
+  | { t: 'notify'; key: string; text: string; priority: 'low' | 'medium' | 'high' | 'immediate' }
+  /** Every background task the CLI tracks (agents, shells, monitors), whole: the /tasks panel and Ctrl+B. */
+  | { t: 'bg_tasks'; tasks: BgTask[] }
+  /** The CLI's greyed next-prompt suggestion, after a turn. */
+  | { t: 'suggestion'; text: string }
+  /** A hook running (PreToolUse, Stop…): the spinner names it; a failure is logged. */
+  | { t: 'hook'; id: string; name: string; event: string; state: 'running' | 'ok' | 'error' | 'cancelled'; output?: string }
 
 export type ServerMsg =
   | { t: 'hello'; version: string; settings: Settings; auth: Auth; dataDir: string }
@@ -362,3 +375,29 @@ export type ElicitField = {
 }
 
 export type ElicitValue = string | number | boolean | string[]
+
+/**
+ * One row of a permission prompt, worded as the CLI words it ("Yes, and don't ask again for npm run commands in
+ * ~/app"). The app answers with its `decision` and `id` (as `option`). `mode`: the row switches the session's
+ * permission mode, which Shift+Tab picks in the CLI.
+ */
+export type PermChoice = { id: string; label: string; decision: 'allow' | 'always' | 'deny' | 'feedback'; mode?: boolean }
+
+/** A background task, as the CLI's Background panel lists it. `toolUseId`: the Bash or Agent call that started it. */
+export type BgTask = {
+  id: string
+  type: string
+  description: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'killed' | 'paused'
+  subagent?: string
+  toolUseId?: string
+  summary?: string
+  lastTool?: string
+  tokens?: number
+  toolUses?: number
+  ms?: number
+  error?: string
+}
+
+/** A user prompt the conversation can be rewound to (Esc Esc / /rewind). `before`: the last entry it keeps. */
+export type RewindPoint = { uuid: string; text: string; before?: string }

@@ -199,28 +199,40 @@ export function createAsks(
       : m.input ? `<pre class="cmd">${esc(clip(m.input))}</pre>`
       : m.detail ? `<pre class="cmd${m.danger ? ' danger' : ''}">${esc(clip(m.detail))}</pre>` : ''
     const lead = m.danger ? `${name} is worried · this cannot be undone` : `${name} asks for permission`
+    // The CLI's own rows when the link worded them (one per "don't ask again" scope), else the generic three.
+    // data-v is the decision, data-option the row: two "always" rows differ only in what they save.
+    const rows = m.choices?.length
+      ? m.choices.map((c) => choice(c.decision, c.label, '', c.decision === 'deny' ? 'deny' : '').replace('data-v=', `data-option="${esc(c.id)}"${c.mode ? ' data-mode="1"' : ''} data-v=`)).join('')
+      : choice('allow', 'Yes', 'Allow once')
+        + (m.canAlways ? choice('always', "Yes, and don't ask again", m.always ? `Saves: ${m.always}` : 'Saves a permission rule') : '')
+        + choice('deny', 'No', `${name} stops and waits for you`, 'deny')
     root.innerHTML = `<div class="ask${m.danger ? ' danger' : ''}">
       <div class="t">${caption(lead)}${esc(m.title || m.tool)}</div>
       ${m.reason ? `<div class="reason">${esc(m.reason)}</div>` : ''}
       ${body}
+      ${m.question ? `<div class="q" data-test="ask-question">${esc(m.question)}</div>` : ''}
       <div class="choices">
-        ${choice('allow', 'Yes', 'Allow once')}
-        ${m.canAlways ? choice('always', "Yes, and don't ask again", m.always ? `Saves: ${m.always}` : 'Saves a permission rule') : ''}
-        ${choice('deny', 'No', `${name} stops and waits for you`, 'deny')}
-        <input class="other field" data-test="ask-other" placeholder="…or tell ${esc(name)} what to do instead (Enter)">
+        ${rows}
+        <input class="other field" data-test="ask-other" placeholder="…or tell ${esc(name)} what to do differently (Enter)">
       </div>
     </div>`
-    const answer = (decision: 'allow' | 'always' | 'deny' | 'feedback', message?: string) => {
-      send({ t: 'permission', id: m.id, decision, message })
-      const verb = { allow: 'Allowed', always: 'Always allowed', deny: 'Denied', feedback: 'Denied with a note' }[decision]
+    const answer = (decision: 'allow' | 'always' | 'deny' | 'feedback', message?: string, option?: string) => {
+      send({ t: 'permission', id: m.id, decision, ...(message ? { message } : {}), ...(option ? { option } : {}) })
+      const label = option ? m.choices?.find((c) => c.id === option)?.label : undefined
+      const verb = label ?? { allow: 'Allowed', always: 'Always allowed', deny: 'Denied', feedback: 'Denied with a note' }[decision]
       deps.log(`▸ ${verb}: ${m.title || m.tool}${message ? ` · “${message}”` : ''}`)
       done()
     }
     root.querySelector('.choices')!.addEventListener('click', (ev) => {
       const b = (ev.target as HTMLElement).closest<HTMLElement>('.choice')
-      if (b && armed()) answer(b.dataset.v as 'allow' | 'always' | 'deny')
+      if (b && armed()) answer(b.dataset.v as 'allow' | 'always' | 'deny' | 'feedback', undefined, b.dataset.option)
     })
     onOther((text) => answer('feedback', text))
+  }
+
+  /** Shift+Tab on a permission prompt: the CLI's "accept and switch mode", the row that switches the session's mode. */
+  function modeRow() {
+    return root.querySelector<HTMLElement>('.choice[data-mode="1"]')
   }
 
   function question(e: Entry, m: Extract<AskMsg, { t: 'ask_question' }>) {
@@ -446,6 +458,10 @@ export function createAsks(
         return true
       }
       if (inInput) return false
+      if (e.key === 'Tab' && e.shiftKey && head()?.m.t === 'ask_permission') {
+        modeRow()?.click()
+        return true
+      }
       if (/^[1-9]$/.test(e.key) && !e.ctrlKey && !e.altKey && !e.metaKey) {
         const b = choices()[Number(e.key) - 1]
         // A risky prompt has no one-key approve (the CLI's defaultToNo): approving takes a click, or ↑↓ and Enter.

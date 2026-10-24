@@ -6,6 +6,10 @@ export type SessionOptions = {
   epoch: number
   cwd: string
   resume?: string
+  /** With `resume`: keep the transcript up to and including this entry (a rewind). */
+  resumeAt?: string
+  /** With `resumeAt`: the prompt whose turn the rewind drops. */
+  dropsTurn?: string
   settings: Settings
   /** Full path to the Claude Code executable (bundled claude.exe in release); undefined = SDK default lookup. */
   claudePath?: string
@@ -19,7 +23,8 @@ export interface SessionApi {
   sessionId(): string | undefined
   /** Starts the CLI and completes the handshake; emits `ready` (and `stats`). Never throws: failures are emitted as `error` + `ended`. */
   start(): Promise<void>
-  say(text: string, images?: Image[]): void
+  /** `now`: while a turn runs, deliver it to that turn at once (the CLI's Ctrl+Enter) instead of after it. */
+  say(text: string, images?: Image[], now?: boolean): void
   /** `!cmd`: runs it in `cwd`, emits `shell_result`, and appends input+output to context without a turn. */
   shell(command: string): Promise<void>
   interrupt(): Promise<void>
@@ -27,7 +32,7 @@ export interface SessionApi {
   close(): void
   setMode(mode: PermissionModeName): Promise<void>
   setModel(model: string): Promise<void>
-  answerPermission(id: string, decision: 'allow' | 'always' | 'deny' | 'feedback', message?: string): void
+  answerPermission(id: string, decision: 'allow' | 'always' | 'deny' | 'feedback', message?: string, option?: string): void
   answerQuestion(id: string, answers: Record<string, string>): void
   /** Calls an SDK session control (CTL_OPS); rejects with its error. */
   control(op: CtlOp, args: unknown[]): Promise<unknown>

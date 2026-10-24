@@ -57,16 +57,17 @@ export default {
     },
     {
       r: 'R23',
-      name: 'LOG (Ctrl+L) shows every line, tool calls with results and command output; it can be searched and copied',
+      name: 'LOG (Ctrl+O) shows every line, tool calls with results and command output; it can be searched and copied',
       timeout: 60_000,
       async run({ app, project }) {
         await freshChat(app, project)
         let m = await say(app, 'use some tools please')
         await turnEnd(app, m)
-        m = await say(app, '/context')
+        // An SDK command (V0.5: /context is the app's own panel now; /compact still goes to the CLI).
+        m = await say(app, '/compact')
         await turnEnd(app, m)
         await readAll(app)
-        await app.key('Ctrl+L')
+        await app.key('Ctrl+O')
         await app.waitVisible(T('log'))
         const who = new Set(await app.attrs(T('log-entry'), 'data-who'))
         for (const w of ['user', 'char', 'tool']) assert(who.has(w), `LOG has ${w} entries (has ${[...who]})`)
@@ -74,7 +75,7 @@ export default {
         assert(all.includes('use some tools please'), 'my line')
         assert(all.includes('All three quests are done'), 'her line')
         assert(all.includes('42 passed'), 'a tool result')
-        assert(all.includes('Context Usage'), 'command output')
+        assert(/compacted/i.test(all), 'command output')
         const total = await app.count(T('log-entry'))
         await app.click(T('log-search'))
         await app.type('loader')
@@ -115,7 +116,7 @@ export default {
         await app.click(login)
         // The harness blocks `login` so no console opens during tests.
         await app.waitSent('login', {}, before)
-        await app.key('Ctrl+L')
+        await app.key('Ctrl+O')
         await app.waitVisible(T('log'))
         assert((await app.texts(T('log-entry'))).join('\n').includes(MOCK.authMessage), 'LOG has the error')
         await app.key('Escape')
@@ -128,7 +129,7 @@ export default {
         await freshChat(app, project)
         const m = await say(app, 'please crash')
         await app.waitEvent('ended', { reason: 'crashed' }, m)
-        await app.key('Ctrl+L')
+        await app.key('Ctrl+O')
         await app.waitVisible(T('log'))
         assert((await app.texts(T('log-entry'))).join('\n').includes(MOCK.crashMessage), 'LOG has the crash')
         await app.key('Escape')

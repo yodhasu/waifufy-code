@@ -40,16 +40,24 @@ export type MenuScreen = {
   search?: boolean
   /**
    * What picking a row does. Return a screen to open it on top (Esc comes back here), 'refresh' to redraw this
-   * screen from `reload`, 'close' to close the whole menu, or nothing to stay.
+   * screen from `reload`, 'back' to return to the screen below (rebuilt from its `reload`), 'close' to close the
+   * whole menu, or nothing to stay.
    */
   pick?(row: MenuRow): MenuResult | Promise<MenuResult>
   /** Rebuilds this screen (after an action changed what it shows). */
   reload?(): Promise<MenuScreen>
   /** Keys this screen handles itself before the list (a picker's ←/→ for effort, Space to toggle). */
   key?(e: KeyboardEvent, row: MenuRow | undefined): MenuResult | boolean | Promise<MenuResult>
+  /**
+   * A tab strip above the list (the CLI's Settings and Plugins dialogs): `tab` is the current one. Clicking a tab,
+   * Tab / Shift+Tab, or ←/→ outside a text field calls `switchTab`, whose screen replaces this one in place.
+   */
+  tabs?: { id: string; label: string }[]
+  tab?: string
+  switchTab?(id: string): MenuScreen | Promise<MenuScreen>
 }
 
-export type MenuResult = MenuScreen | 'refresh' | 'close' | void
+export type MenuResult = MenuScreen | 'refresh' | 'back' | 'close' | void
 
 export type MenuHost = {
   modal(o: { test: string; title: string; cls?: string; body: string; key?(e: KeyboardEvent): boolean; back?(): boolean; onClose?(): void }): {
@@ -72,13 +80,14 @@ export function openMenu(host: MenuHost, test: string, first: MenuScreen | Promi
     test,
     title: loadingTitle,
     cls: 'menu',
-    body: '<div class="menu-sub"></div><div class="menu-body"></div><div class="menu-list" role="listbox"></div><footer class="menu-foot"></footer>',
+    body: '<nav class="mtabs" role="tablist" data-test="menu-tabs"></nav><div class="menu-sub"></div><div class="menu-body"></div><div class="menu-list" role="listbox"></div><footer class="menu-foot"></footer>',
     key: onKey,
     back,
     onClose: () => done(),
   })
   const el = m.el
   const titleEl = el.querySelector<HTMLElement>('header h2')!
+  const tabsEl = el.querySelector<HTMLElement>('.mtabs')!
   const sub = el.querySelector<HTMLElement>('.menu-sub')!
   const body = el.querySelector<HTMLElement>('.menu-body')!
   const list = el.querySelector<HTMLElement>('.menu-list')!
@@ -100,6 +109,10 @@ export function openMenu(host: MenuHost, test: string, first: MenuScreen | Promi
     if (!t) return
     const s = t.screen
     titleEl.textContent = s.title
+    tabsEl.hidden = !s.tabs?.length
+    tabsEl.innerHTML = (s.tabs ?? [])
+      .map((x) => `<button type="button" role="tab" class="mtab${x.id === s.tab ? ' on' : ''}" data-test="menu-tab" data-tab="${esc(x.id)}" aria-selected="${x.id === s.tab}" tabindex="-1">${esc(x.label)}</button>`)
+      .join('')
     sub.textContent = s.subtitle ?? ''
     sub.hidden = !s.subtitle
     body.innerHTML = s.body ?? ''
@@ -149,6 +162,12 @@ export function openMenu(host: MenuHost, test: string, first: MenuScreen | Promi
   async function apply(r: MenuResult) {
     if (!r) return
     if (r === 'close') return m.close()
+    if (r === 'back') {
+      if (stack.length > 1) stack.pop()
+      const t = top()!
+      if (t.screen.reload) t.screen = await t.screen.reload()
+      return draw()
+    }
     if (r === 'refresh') {
       const t = top()!
       if (!t.screen.reload) return draw()
@@ -213,6 +232,14 @@ export function openMenu(host: MenuHost, test: string, first: MenuScreen | Promi
       if (r === true) return true
       if (r) return void run(() => r), true
     }
+    // Tabs: Tab / Shift+Tab always, ←/→ unless the caret is in a text field.
+    const typing = document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement
+    if (t.screen.tabs?.length && t.screen.switchTab && (e.key === 'Tab' || (!typing && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')))) {
+      const ids = t.screen.tabs.map((x) => x.id)
+      const step = e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey) ? -1 : 1
+      const at = Math.max(0, ids.indexOf(t.screen.tab ?? ids[0]))
+      return void switchTo(ids[(at + step + ids.length) % ids.length]), true
+    }
     if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) return move(1), true
     if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) return move(-1), true
     if (e.key === 'Home' || e.key === 'End') {
@@ -231,6 +258,24 @@ export function openMenu(host: MenuHost, test: string, first: MenuScreen | Promi
     }
     return false
   }
+
+  /** Replaces the top screen with its `switchTab` screen, keeping the stack below. */
+  function switchTo(id: string) {
+    const t = top()
+    if (!t?.screen.switchTab || id === t.screen.tab) return
+    const fn = t.screen.switchTab
+    void run(async () => {
+      t.screen = await fn(id)
+      t.focus = undefined
+      t.query = ''
+      draw()
+    })
+  }
+
+  tabsEl.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLElement>('.mtab')
+    if (b) switchTo(b.dataset.tab!)
+  })
 
   list.addEventListener('click', (e) => {
     const b = (e.target as HTMLElement).closest<HTMLElement>('.mrow')

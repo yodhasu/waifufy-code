@@ -434,11 +434,14 @@ async function beforeCompaction(id: string, cwd: string, chain: SessionMessage[]
  * The conversation so far for the backlog (R23): both sides' lines, tool calls with their results, slash
  * command and `!` output, compactions and interruptions. Emotion tags are stripped; harness text is skipped.
  */
-export async function loadHistory(id: string, cwd: string): Promise<HistoryEntry[]> {
-  const chain: SessionMessage[] = await getSessionMessages(id, { dir: cwd }).catch((e) => {
+/** The save's conversation for the backlog. `upTo`: stop after that entry (a rewind keeps no more). */
+export async function loadHistory(id: string, cwd: string, upTo?: string): Promise<HistoryEntry[]> {
+  const full: SessionMessage[] = await getSessionMessages(id, { dir: cwd }).catch((e) => {
     console.warn(`[saves] getSessionMessages ${id}: ${errorText(e)}`)
     return []
   })
+  const cut = upTo ? full.findIndex((m) => m.uuid === upTo) : -1
+  const chain = cut >= 0 ? full.slice(0, cut + 1) : full
   const messages = [...(await beforeCompaction(id, cwd, chain)), ...chain]
   const out: HistoryEntry[] = []
   const tools = new Map<string, ToolEntry>()

@@ -147,6 +147,58 @@ export function fileControl(op: string, args: unknown[], cwd: string, claudePath
       return cliExec((Array.isArray(args[0]) ? args[0] : []) as string[], cwd, claudePath)
     case 'readText':
       return readText(String(args[0]), cwd)
+    case 'gitDiff':
+      return gitDiff(cwd)
+    case 'createText':
+      return createText(String(args[0]), String(args[1] ?? ''), cwd)
   }
   return undefined
+}
+
+/**
+ * Creates a Markdown or text file a panel offers to make (/memory's missing CLAUDE.md, an /export), with `text`.
+ * Only inside the session folder or the Claude config folder, and never over an existing file.
+ */
+export async function createText(path: string, text: string, cwd: string) {
+  const full = resolve(cwd, path.replace(/^~(?=[\/]|$)/, homedir()))
+  if (!(inside(full, cwd) || inside(full, claudeDir()))) throw new Error(`${path} is outside this project and the Claude config folder`)
+  if (!/\.(md|txt)$/i.test(full)) throw new Error('Only Markdown and text files can be created here')
+  await mkdir(dirname(full), { recursive: true })
+  // 'wx' fails when the file exists, so a file made in the meantime is never overwritten.
+  await writeFile(full, text, { encoding: 'utf8', flag: 'wx' })
+  return full
+}
+
+const GIT_TIMEOUT_MS = 20_000
+const GIT_MAX_BYTES = 8 * 1024 * 1024
+
+function git(args: string[], cwd: string): Promise<{ code: number; out: string; err: string }> {
+  return new Promise((done) => {
+    execFile('git', args, { cwd, timeout: GIT_TIMEOUT_MS, windowsHide: true, maxBuffer: GIT_MAX_BYTES }, (e, out, err) => {
+      done({ code: e ? (typeof (e as { code?: unknown }).code === 'number' ? (e as unknown as { code: number }).code : 1) : 0, out, err })
+    })
+  })
+}
+
+/**
+ * The working tree's uncommitted changes, as the CLI's /diff shows them: `git diff HEAD` (staged and unstaged) plus
+ * the untracked files. `repo: false` outside a git repository.
+ */
+export async function gitDiff(cwd: string) {
+  const inside = await git(['rev-parse', '--is-inside-work-tree'], cwd)
+  if (inside.code !== 0 || inside.out.trim() !== 'true') return { repo: false as const }
+  const head = await git(['rev-parse', '--verify', '-q', 'HEAD'], cwd)
+  const base = head.code === 0 ? ['HEAD'] : []
+  const [patch, untracked, branch] = await Promise.all([
+    git(['diff', '--no-color', '--no-ext-diff', ...base], cwd),
+    git(['ls-files', '--others', '--exclude-standard'], cwd),
+    git(['branch', '--show-current'], cwd),
+  ])
+  return {
+    repo: true as const,
+    branch: branch.out.trim(),
+    patch: patch.out,
+    truncated: patch.out.length >= GIT_MAX_BYTES - 1024,
+    untracked: untracked.out.split(/\r?\n/).filter(Boolean),
+  }
 }

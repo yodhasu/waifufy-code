@@ -21,10 +21,13 @@ import {
 import { mcpLogin, mcpLogout } from './auth.ts'
 import { fileControl } from './config-files.ts'
 import { elicitContent, elicitFields } from './elicit.ts'
+import { permissionOptions, type PermOptions } from './perm-options.ts'
 import { buildPersona } from './persona.ts'
 import {
   EMOTIONS,
+  type BgTask,
   type CtlOp,
+  type RewindPoint,
   type ElicitField,
   type Emotion,
   type Image,
@@ -100,7 +103,7 @@ const NOT_A_PROMPT = /^\s*<(bash-|local-command-|command-name>)/
 type Phase = Extract<SessionEvent, { t: 'progress' }>['phase']
 type AskOptions = Parameters<CanUseTool>[2]
 type AskKind = 'permission' | 'question' | 'plan'
-type Pending = { kind: AskKind; input: Record<string, unknown>; suggestions?: PermissionUpdate[]; canAlways: boolean; resolve(r: PermissionResult): void }
+type Pending = { kind: AskKind; input: Record<string, unknown>; suggestions?: PermissionUpdate[]; canAlways: boolean; choices?: PermOptions['choices']; resolve(r: PermissionResult): void }
 type AgentStatus = Extract<SessionEvent, { t: 'agent' }>['status']
 type ContextUsage = Awaited<ReturnType<Query['getContextUsage']>>
 type ToolResult = { type: 'tool_result'; tool_use_id: string; content?: unknown; is_error?: boolean }
@@ -354,6 +357,8 @@ class Session implements SessionApi {
   private stats: Stats = freshStats()
   private models: ModelInfo[] = []
   private pending = new Map<string, Pending>()
+  /** Background tasks by task id, as the CLI's Background panel shows them. */
+  private bg = new Map<string, BgTask>()
   /** Open MCP elicitations, by the id the app answers with. */
   private elicits = new Map<string, { fields: ElicitField[]; elicitationId?: string; finish(r: ElicitationResult): void }>()
   private tags: TagParser
@@ -464,6 +469,7 @@ class Session implements SessionApi {
     return {
       cwd: this.cwd,
       ...(this.opts.resume ? { resume: this.opts.resume } : { sessionId: this.sid }),
+      ...(this.opts.resume && this.opts.resumeAt ? { resumeSessionAt: this.opts.resumeAt, ...(this.opts.dropsTurn ? { resumeDropsTurn: this.opts.dropsTurn } : {}) } : {}),
       systemPrompt: { type: 'preset', preset: 'claude_code', append: buildPersona(s) },
       // The same CLAUDE.md, skills, MCP servers, hooks and permission rules as the terminal.
       settingSources: c.settingSources,
@@ -474,6 +480,10 @@ class Session implements SessionApi {
       includePartialMessages: true,
       // As in the terminal: file snapshots per message, so /rewind (in the terminal, for now) can restore code.
       enableFileCheckpointing: true,
+      // The CLI's greyed next-prompt suggestion after a turn.
+      promptSuggestions: true,
+      // Esc stops her turn but leaves background shells and agents running, as Esc does in the terminal.
+      perTaskStopAffordance: true,
       ...(this.opts.claudePath ? { pathToClaudeCodeExecutable: this.opts.claudePath } : {}),
       // Without the first variable the SDK swallows session_state_changed. childEnv() leaves out the
       // link's credentials, which every command the model runs would otherwise see.
@@ -484,7 +494,7 @@ class Session implements SessionApi {
     }
   }
 
-  say(text: string, images: Image[] = []) {
+  say(text: string, images: Image[] = [], now = false) {
     if (this.ended) {
       return this.emit({ t: 'error', kind: 'process', message: 'This session has ended. Resume it or start a new one to keep going.' })
     }
@@ -497,11 +507,12 @@ class Session implements SessionApi {
             ...(text ? [{ type: 'text' as const, text }] : []),
           ]
         : text,
+      now,
     )
   }
 
   /** Sends a user message as a turn, or as the next one when a turn is running. */
-  private send(content: SDKUserMessage['message']['content']) {
+  private send(content: SDKUserMessage['message']['content'], now = false) {
     const busy = this.running
     if (!busy) this.beginTurn()
     if (this.quiet) {
@@ -516,7 +527,8 @@ class Session implements SessionApi {
       parent_tool_use_id: null,
       origin: { kind: 'human' },
       uuid: randomUUID(),
-      ...(busy ? { priority: 'next' as const } : {}),
+      // While she works a message waits for her next step ('next'); Ctrl+Enter's goes in at once ('now').
+      ...(busy ? { priority: now ? ('now' as const) : ('next' as const) } : {}),
     })
   }
 
@@ -618,7 +630,9 @@ class Session implements SessionApi {
 
   /** One of the SDK's session controls (CTL_OPS), for the app's versions of the CLI's interactive panels. */
   async control(op: CtlOp, args: unknown[]) {
-    if (op === 'cli') return this.cliCommand(String(args[0]))
+    // A panel's /model, /fast or /config can change what the stats line shows; a silent append refreshes nothing itself.
+    if (op === 'cli') return this.cliCommand(String(args[0])).finally(() => this.scheduleContextRefresh())
+    if (op === 'rewindPoints') return this.rewindPoints()
     const files = fileControl(op, args, this.cwd, this.opts.claudePath)
     if (files) return files
     if (op === 'mcpLogin') return mcpLogin(String(args[0]), this.cwd, this.opts.claudePath)
@@ -634,9 +648,13 @@ class Session implements SessionApi {
     return data
   }
 
-  answerPermission(id: string, decision: 'allow' | 'always' | 'deny' | 'feedback', note?: string) {
+  answerPermission(id: string, decision: 'allow' | 'always' | 'deny' | 'feedback', note?: string, option?: string) {
     const p = this.take(id)
     if (!p) return
+    // A worded row applies only the suggestions it names (a rule, or a mode switch), or its own message.
+    const row = option ? p.choices?.find((c) => c.id === option) : undefined
+    if (row?.message && decision === 'feedback') return p.resolve({ behavior: 'deny', message: row.message })
+    if (row?.updates && decision === 'always') return p.resolve({ behavior: 'allow', updatedInput: p.input, updatedPermissions: row.updates })
     if (decision === 'deny') return p.resolve({ behavior: 'deny', message: DENY_MESSAGE, interrupt: true })
     if (decision === 'feedback') return p.resolve({ behavior: 'deny', message: FEEDBACK_MESSAGE + (note?.trim() || '(no details)') })
     const always = decision === 'always' && p.canAlways && p.suggestions
@@ -1128,6 +1146,51 @@ class Session implements SessionApi {
         const why = m.decision_reason || m.message
         return this.notice(`${toolLabel(m.tool_name)} was denied${why ? `: ${why}` : '.'}`, 'info')
       }
+      case 'notification':
+        return this.emit({ t: 'notify', key: m.key, text: m.text.replace(ANSI, ''), priority: m.priority })
+      case 'background_tasks_changed': {
+        const keep = new Map(m.tasks.map((t) => [t.task_id, t]))
+        for (const id of [...this.bg.keys()]) if (!keep.has(id) && this.bg.get(id)!.status === 'running') this.bg.get(id)!.status = 'completed'
+        for (const t of m.tasks) {
+          const prev = this.bg.get(t.task_id)
+          this.bg.set(t.task_id, { ...prev, id: t.task_id, type: t.task_type, description: t.description, status: prev?.status ?? 'running', ...(t.subagent_type ? { subagent: t.subagent_type } : {}) })
+        }
+        return this.emitTasks()
+      }
+      case 'task_updated': {
+        const t = this.bg.get(m.task_id)
+        if (!t) return
+        if (m.patch.status) t.status = m.patch.status
+        if (m.patch.description) t.description = m.patch.description
+        if (m.patch.error) t.error = m.patch.error
+        return this.emitTasks()
+      }
+      case 'task_progress': {
+        const t = this.bg.get(m.task_id) ?? { id: m.task_id, type: 'local_agent', description: m.description, status: 'running' as const }
+        Object.assign(t, {
+          ...(m.tool_use_id ? { toolUseId: m.tool_use_id } : {}),
+          ...(m.summary ? { summary: m.summary } : {}),
+          ...(m.last_tool_name ? { lastTool: m.last_tool_name } : {}),
+          tokens: m.usage.total_tokens,
+          toolUses: m.usage.tool_uses,
+          ms: m.usage.duration_ms,
+        })
+        this.bg.set(m.task_id, t)
+        return this.emitTasks()
+      }
+      case 'hook_started':
+        return this.emit({ t: 'hook', id: m.hook_id, name: m.hook_name, event: m.hook_event, state: 'running' })
+      case 'hook_response':
+        return this.emit({
+          t: 'hook',
+          id: m.hook_id,
+          name: m.hook_name,
+          event: m.hook_event,
+          state: m.outcome === 'success' ? 'ok' : m.outcome,
+          ...(m.outcome !== 'success' ? { output: (m.stderr || m.output || m.stdout).replace(ANSI, '').trim().slice(0, 4000) } : {}),
+        })
+      case 'model_refusal_fallback':
+        return this.notice(m.content.replace(ANSI, ''), 'info')
       case 'informational':
         if (m.level === 'warning' || m.level === 'notice') this.notice(m.content.replace(ANSI, ''), 'info')
         return
@@ -1276,6 +1339,9 @@ class Session implements SessionApi {
       // Nothing is approved unseen: a tool without a diff or a command (MCP tools above all) shows all its parameters.
       const full = !shellTool && !diffs.length ? prettyInput(input) : ''
       const always = canAlways ? describeAlways(o.suggestions ?? []) : ''
+      const worded = permissionOptions(name, input, o.suggestions, canAlways, this.cwd, this.opts.settings.waifu.name.trim() || 'Claude')
+      const pend = this.pending.get(id)
+      if (pend) pend.choices = worded.choices
       this.emit({
         t: 'ask_permission',
         id,
@@ -1290,6 +1356,8 @@ class Session implements SessionApi {
         ...(reason ? { reason } : {}),
         ...(full ? { input: full } : {}),
         ...(always ? { always } : {}),
+        question: worded.question,
+        choices: worded.choices.map(({ id: cid, label, decision, mode }) => ({ id: cid, label, decision, ...(mode ? { mode } : {}) })),
       })
     })
   }
@@ -1355,6 +1423,32 @@ class Session implements SessionApi {
     if (!e) return
     if (action !== 'accept' || !e.fields.length) return e.finish({ action })
     e.finish({ action, content: elicitContent(e.fields, content ?? {}) })
+  }
+
+  private emitTasks() {
+    this.emit({ t: 'bg_tasks', tasks: [...this.bg.values()] })
+  }
+
+  /**
+   * The prompts this conversation can be rewound to, newest first: each main-chain prompt the user typed, with
+   * the last transcript entry before it (what a rewind keeps). Read from the transcript, so it covers a loaded save.
+   */
+  private async rewindPoints(): Promise<RewindPoint[]> {
+    const id = this.sid
+    if (!id) return []
+    const chain = await getSessionMessages(id, { dir: this.cwd }).catch(() => [])
+    const points: RewindPoint[] = []
+    let before: string | undefined
+    for (const m of chain) {
+      if (m.parent_tool_use_id) continue
+      const f = m as typeof m & { isMeta?: boolean; is_meta?: boolean; origin?: { kind?: string } }
+      const text = m.type === 'user' ? textOf((m.message as { content?: unknown })?.content) : ''
+      const prompt = m.type === 'user' && !f.isMeta && !f.is_meta && (!f.origin?.kind || f.origin.kind === 'human')
+        && text.trim() && !NOT_A_PROMPT.test(text)
+      if (prompt) points.push({ uuid: m.uuid, text: text.trim(), ...(before ? { before } : {}) })
+      before = m.uuid
+    }
+    return points.reverse()
   }
 
   private take(id: string) {

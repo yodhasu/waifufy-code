@@ -12,9 +12,53 @@ async function elicitOpen(app, from) {
   await app.waitFor(() => document.querySelector('[data-test="ask"]')?.dataset.armed === '1', { label: 'menu armed' })
 }
 
+async function permissionOpen(app, from) {
+  await app.waitEvent('ask_permission', {}, from, 20_000)
+  await app.waitVisible(T('ask', { kind: 'permission' }))
+  await app.waitFor(() => document.querySelector('[data-test="ask"]')?.dataset.armed === '1', { label: 'menu armed' })
+}
+
+const rowLabels = (app) => app.eval(() => [...document.querySelectorAll('[data-test="ask-option"]')].map((b) => b.querySelector('span').textContent))
+
 export default {
-  name: 'Dialogs: MCP elicitation',
+  name: 'Dialogs: permission wording, MCP elicitation',
   tests: [
+    {
+      r: 'R60',
+      name: 'an edit prompt asks the CLI question and offers "switch to Accept edits"; Shift+Tab picks it',
+      timeout: 60_000,
+      async run({ app, project }) {
+        await freshChat(app, project)
+        const m = await say(app, 'ask permission to edit')
+        await permissionOpen(app, m)
+        await app.waitText(T('ask-question'), 'Do you want to make this edit to loader.ts?')
+        const labels = await rowLabels(app)
+        eq(labels[0], 'Yes', 'Yes first')
+        eq(labels[1], 'Yes, and switch to Accept edits for this session (shift+tab)', 'the mode row')
+        assert(labels.at(-1).startsWith('No, and tell '), `No last: ${labels.at(-1)}`)
+        await app.key('Shift+Tab')
+        const sent = await app.waitSent('permission', { decision: 'always' }, m)
+        assert(sent.option?.startsWith('mode-'), `the mode row's option: ${sent.option}`)
+        await turnEnd(app, m)
+      },
+    },
+    {
+      r: 'R60',
+      name: 'a fetch prompt offers "don\'t ask again" for its host',
+      timeout: 60_000,
+      async run({ app, project }) {
+        await freshChat(app, project)
+        const m = await say(app, 'fetch the docs')
+        await permissionOpen(app, m)
+        await app.waitText(T('ask-question'), 'to fetch this content?')
+        const labels = await rowLabels(app)
+        assert(labels.some((l) => /^Yes, and don't ask again for \S+\.\S+$/.test(l)), `a host row in ${JSON.stringify(labels)}`)
+        await app.click(T('ask-option', { v: 'always' }))
+        const sent = await app.waitSent('permission', { decision: 'always' }, m)
+        assert(sent.option?.startsWith('rule-'), `the rule row's option: ${sent.option}`)
+        await turnEnd(app, m)
+      },
+    },
     {
       r: 'R59',
       name: 'elicitation form: required fields are checked in place, then the answers reach the server',

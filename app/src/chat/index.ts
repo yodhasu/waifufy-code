@@ -2,12 +2,14 @@
 // lifecycle and wires the link's events to the dialogue, the panels, the choice menus and the input.
 
 import { getCurrentWindow, UserAttentionType } from '@tauri-apps/api/window'
-import type { Command, HistoryEntry, Image, ModelChoice, PermissionModeName, ServerMsg, SessionEvent, Stats } from '../../../link/src/protocol.ts'
+import type { BgTask, Command, HistoryEntry, Image, ModelChoice, PermissionModeName, ServerMsg, SessionEvent, Stats } from '../../../link/src/protocol.ts'
 import type { ChatParams, Ctx, Gesture, Screen } from '../contracts'
 import { addressOf } from '../screens/title'
 import { esc, fmtK } from '../ui'
 import { createAsks, type Asks } from './asks'
-import { findAppCommand, runCli, type CommandHost } from './commands'
+import { APP_COMMANDS, findAppCommand, runCli, type CommandHost } from './commands'
+import { openPalette, openShortcuts } from './commands/palette'
+import { control } from './control'
 import './chat.css'
 import {
   cleanText, createDialogue, createPager, lastEmotion, markdown, pagesForMono, pagesForText, type Dialogue, type DisplayPage,
@@ -19,6 +21,8 @@ import {
 
 /** A finished turn this long earns her "success" gesture. */
 const SUCCESS_MIN_SECONDS = 20
+/** Two Esc presses this close together on an idle prompt open the rewind menu. */
+const DOUBLE_ESC_MS = 800
 const THUMB_W = 320
 const THUMB_H = 180
 const TICK_MS = 1000
@@ -106,6 +110,10 @@ export function chatScreen(): Screen {
   let cwd = ''
   let title = ''
   let sessionId: string | undefined
+  /** The first Esc of an Esc Esc (rewind). */
+  let lastEscAt = 0
+  /** The CLI's background tasks (shells, agents, monitors), as the last bg_tasks listed them. */
+  let bgTasks: BgTask[] = []
   let commands: Command[] = []
   let models: ModelChoice[] = []
   let stats: Stats | undefined
@@ -123,6 +131,8 @@ export function chatScreen(): Screen {
   let outTokens = 0
   let phase: Phase = 'thinking'
   let note: string | undefined
+  /** A hook running right now, for the spinner. */
+  let hookNote: string | undefined
   let lastLine = ''
   let authFailed = false
   /** The error reported during this turn (or right before a crash), so turn_end and ended don't repeat it. */
@@ -202,7 +212,41 @@ export function chatScreen(): Screen {
   }
 
   /** What the CLI-style menus (/mcp…) need from the chat: its modal layer, toasts, the link and the session folder. */
-  const menuHost = (): CommandHost => ({ modal, toast: ctx.toast, ctx, link: ctx.link, cwd: () => cwd, charName, cli: (text) => runCli(ctx.link, text) })
+  const menuHost = (): CommandHost => ({
+    modal,
+    toast: ctx.toast,
+    ctx,
+    link: ctx.link,
+    cwd: () => cwd,
+    charName,
+    cli: (text) => runCli(ctx.link, text),
+    sessionId: () => sessionId,
+    tasks: () => bgTasks,
+    onTasks(fn) {
+      taskWatchers.add(fn)
+      return () => void taskWatchers.delete(fn)
+    },
+    rewind(o) {
+      // The conversation restarts from the save, cut at the kept entry; the dropped prompt comes back as the draft.
+      if (!sessionId) return
+      start({ cwd, resume: sessionId, title, ...o })
+      if (o.draft) pendingDraft = o.draft
+    },
+    setDraft: (text) => input.restore(text),
+    run: (text) => input.run(text),
+    commands: () => commands,
+    toolRecords: () => [...tools.values()],
+    transcript: () => {
+      const n = names()
+      return log.map((e) => ({ who: e.who === 'char' ? n.char : e.who === 'user' ? n.user : e.who, text: entryText(e) }))
+    },
+    replies: () => log.flatMap((e) => (e.who === 'char' ? [e.text] : [])).reverse(),
+    copy,
+  })
+  const taskWatchers = new Set<(t: BgTask[]) => void>()
+  /** A rewound prompt, put back in the composer once the restarted session is ready. */
+  let pendingDraft: string | undefined
+
 
   /** ↑↓ between the picker's items; Enter clicks the focused one natively. */
   const listKeys = (el: HTMLElement) => (e: KeyboardEvent) => {
@@ -411,18 +455,20 @@ export function chatScreen(): Screen {
 
   function openHelp() {
     const keys: [string, string][] = [
-      ['Enter', 'Send (queues while she works)'], ['Shift+Enter', 'New line'], ['↑ / ↓', 'Input history'],
-      ['/', 'Commands'], ['@', 'Mention a file'], ['!', 'Run a shell command'], ['Esc', 'Close a menu · interrupt'],
-      ['Shift+Tab', 'Cycle permission mode'], ['Ctrl+L · Ctrl+O', 'Backlog (the full trace)'], ['Click · Space · Enter', 'Next page'],
-      ['Hold Ctrl', 'Skip dialogue'], ['1–9 · ↑↓ · Enter', 'Answer a choice menu'],
+      ['Enter', 'Send (queues while she works)'], ['Ctrl+Enter', 'Send now, into her running turn'],
+      ['Shift+Enter · Ctrl+J · \\+Enter', 'New line'], ['↑ / ↓', 'Input history'], ['Ctrl+R', 'Search history'],
+      ['/', 'Commands'], ['@', 'Mention a file'], ['!', 'Run a shell command'], ['Ctrl+V · Alt+V', 'Paste an image'],
+      ['Esc', 'Close a menu · interrupt'], ['Esc Esc', 'Rewind to an earlier message'], ['Shift+Tab', 'Cycle permission mode'],
+      ['Ctrl+O', 'Backlog (the full trace)'], ['Ctrl+B', 'Send the running command to the background'],
+      ['Ctrl+L', 'Clear the prompt'], ['Ctrl+C', 'Clear the prompt · interrupt'], ['Tab', 'Take her suggestion'],
+      ['Click · Space · Enter', 'Next page'], ['Hold Ctrl', 'Skip dialogue'], ['1–9 · ↑↓ · Enter', 'Answer a choice menu'],
     ]
-    const app: [string, string][] = [
-      ['/model', 'Pick the model'], ['/clear', 'Start fresh in this folder'], ['/resume', 'Load another save'],
-      ['/config', 'Settings'], ['/costume', 'Change her costume'], ['/login', 'Log in to Claude'], ['/help', 'This page'],
-      ['/exit', 'Back to the title'],
-    ]
+    // Every command the app answers itself, from the registry: the CLI's panels and the app's own.
+    const app: [string, string][] = APP_COMMANDS.map((c) => [`/${c.name}${c.aliases.length ? ` (/${c.aliases.join(', /')})` : ''}`, c.describe(charName())])
     const row = ([k, v]: [string, string]) => `<div class="hk"><kbd>${esc(k)}</kbd><span>${esc(v)}</span></div>`
-    const cli = commands.length ? commands.map((c) => row([`/${c.name}`, c.description])).join('') : '<p class="empty">Loading…</p>'
+    const own = new Set(APP_COMMANDS.flatMap((c) => [c.name, ...c.aliases]))
+    const rest = commands.filter((c) => !own.has(c.name))
+    const cli = rest.length ? rest.map((c) => row([`/${c.name}`, c.description])).join('') : '<p class="empty">Loading…</p>'
     const body = `<div class="help">
       <section><h3>Keys</h3>${keys.map(row).join('')}</section>
       <section><h3>App commands</h3>${app.map(row).join('')}<h3>Claude Code commands</h3>${cli}</section>
@@ -439,12 +485,35 @@ export function chatScreen(): Screen {
     if (t) ribbonEl.innerHTML = doing(charName(), t.name, t.detail)
   }
 
+  /**
+   * A CLI notification: always in the LOG; medium and above also as a toast, held back while you are typing so it
+   * never lands mid-sentence (the CLI shows them in its footer).
+   */
+  function onNotify(m: Extract<SessionEvent, { t: 'notify' }>) {
+    addLog({ who: 'system', text: m.text })
+    if (m.priority === 'low') return
+    const show = () => ctx.toast(m.text, m.priority === 'high' || m.priority === 'immediate' ? 6000 : 3500)
+    if (m.priority === 'immediate' || !input.isTyping()) return show()
+    input.whenIdle(show)
+  }
+
+  /** A hook: the spinner names it while it runs, and a failed one is logged with its output. */
+  function onHook(m: Extract<SessionEvent, { t: 'hook' }>) {
+    if (m.state === 'running') {
+      hookNote = `running ${m.event} hook${m.name && m.name !== m.event ? ` · ${m.name}` : ''}`
+      return updateSpinner()
+    }
+    hookNote = undefined
+    updateSpinner()
+    if (m.state === 'error') addLog({ who: 'error', text: `${m.event} hook ${m.name} failed${m.output ? `:\n${m.output}` : ''}` })
+  }
+
   function updateSpinner() {
     spinnerEl.classList.toggle('show', running)
     if (!running) return
     const secs = Math.floor((Date.now() - turnStart) / 1000)
     const verb = asks.isOpen() ? 'waiting for your answer' : PHASE_VERBS[phase]
-    const extra = note ? ` · ${esc(note)}` : ''
+    const extra = (note ? ` · ${esc(note)}` : '') + (hookNote ? ` · ${esc(hookNote)}` : '')
     spinnerEl.innerHTML = `<b>${esc(charName())} is ${verb}…</b> <span>${secs}s · ↑ ${fmtK(outTokens)} tokens${extra}</span>`
   }
 
@@ -552,7 +621,7 @@ export function chatScreen(): Screen {
   // ---------------------------------------------------------------- lifecycle
 
   /** `checkTrust`: a folder opened from the title or Load; a restart or /clear reuses a folder already trusted. */
-  function start(o: { cwd: string; resume?: string; title?: string }, checkTrust = false) {
+  function start(o: { cwd: string; resume?: string; title?: string; resumeAt?: string; dropsTurn?: string }, checkTrust = false) {
     nextEpoch()
     live = true
     ready = false
@@ -592,7 +661,8 @@ export function chatScreen(): Screen {
     updateRibbon()
     dialogue.show({ kind: 'narration', text: `${charName()} is getting ready…` })
     input.setEnabled(false, `${charName()} is getting ready…`)
-    const send = () => ctx.link.send({ t: 'start', epoch, cwd: o.cwd, resume: o.resume })
+    bgTasks = []
+    const send = () => ctx.link.send({ t: 'start', epoch, cwd: o.cwd, resume: o.resume, ...(o.resumeAt ? { resumeAt: o.resumeAt } : {}), ...(o.dropsTurn ? { dropsTurn: o.dropsTurn } : {}) })
     if (checkTrust) void trustThen(o.cwd, send)
     else send()
   }
@@ -871,6 +941,8 @@ export function chatScreen(): Screen {
         panels.model(model)
         panels.mode(m.mode)
         input.setEnabled(true, placeholder())
+        if (pendingDraft) input.restore(pendingDraft)
+        pendingDraft = undefined
         if (visible && !layers.length) input.focus()
         // Messages typed while she was getting ready go out now.
         if (!running) sendNext()
@@ -906,6 +978,16 @@ export function chatScreen(): Screen {
       case 'ask_cancel':
         asks.cancel(m.id)
         return updateSpinner()
+      case 'bg_tasks':
+        bgTasks = m.tasks
+        for (const fn of taskWatchers) fn(bgTasks)
+        return
+      case 'notify':
+        return onNotify(m)
+      case 'suggestion':
+        return input.suggest(m.text)
+      case 'hook':
+        return onHook(m)
       case 'state':
         if (m.state === 'running') setRunning(true)
         return updateSpinner()
@@ -951,10 +1033,22 @@ export function chatScreen(): Screen {
     const handled = () => (e.preventDefault(), e.stopPropagation())
     const top = layers.at(-1)
     if (top?.key?.(e)) return handled()
-    // Ctrl+L opens the backlog; Ctrl+O too, the CLI's key for the full transcript.
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && ['l', 'o'].includes(e.key.toLowerCase())) return void (handled(), openLog())
+    // Ctrl+O opens the backlog, the CLI's key for the full transcript (Ctrl+L clears the prompt, as in the CLI).
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') return void (handled(), openLog())
     if (top) return
     if (e.key === 'Tab' && e.shiftKey && !e.ctrlKey && !e.altKey) return void (handled(), cycleMode())
+    // Ctrl+K: the command palette, every command and action with its key.
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') return void (handled(), openPalette(menuHost()))
+    // `?` on an empty prompt: the shortcut sheet, as in the CLI.
+    if (e.key === '?' && !e.ctrlKey && !e.altKey && fromInput(e) && !(e.target as HTMLTextAreaElement).value) return void (handled(), openShortcuts(menuHost()))
+    // Ctrl+B: the CLI's "run in background" for the Bash command or agent she is waiting on.
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b' && running) {
+      handled()
+      void control<boolean>(ctx.link, 'backgroundTasks')
+        .then((moved) => ctx.toast(moved ? 'Moved to the background · /tasks to manage' : 'Nothing to send to the background'))
+        .catch((x: Error) => ctx.toast(x.message))
+      return
+    }
     const target = e.target as HTMLElement
     // Ctrl+C interrupts her, as in the CLI. While the composer has text it is the composer's (copy, or clear the
     // draft), and a selection anywhere else is copied instead.
@@ -1049,6 +1143,12 @@ export function chatScreen(): Screen {
         commands: () => commands,
         cwd: () => cwd,
         busy: () => running,
+        submitNow(text, images) {
+          if (!live || ended || !ready || !running) return say(text, images)
+          ctx.link.send({ t: 'say', text, images, now: true })
+          addLog({ who: 'user', text })
+          ctx.toast(`Sent now · ${charName()} reads it at her next step`)
+        },
         submit(text, images) {
           if (!live || ended) {
             input.restore(text)
@@ -1178,7 +1278,18 @@ export function chatScreen(): Screen {
       const top = layers.at(-1)
       if (top) return top.close(), true
       if (interrupt()) return true
-      return restoreQueue()
+      if (restoreQueue()) return true
+      // Esc Esc on an idle, empty prompt opens the rewind menu, as in the CLI.
+      if (ready && !running && !input.isTyping()) {
+        const now = performance.now()
+        if (now - lastEscAt < DOUBLE_ESC_MS) {
+          lastEscAt = 0
+          findAppCommand('rewind')?.run?.(menuHost(), '', 'rewind')
+          return true
+        }
+        lastEscAt = now
+      }
+      return false
     },
   }
 }

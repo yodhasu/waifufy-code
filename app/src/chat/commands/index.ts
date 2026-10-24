@@ -1,15 +1,21 @@
+import type { BgTask, Command } from '../../../../link/src/protocol.ts'
+import type { ToolRecord } from '../panels'
 import type { Ctx } from '../../contracts'
 import { control } from '../control'
 import type { MenuHost } from '../menu'
 import { contextCommand } from './context'
+import { diffCommand } from './diff'
+import { exportCommand } from './export'
 import { hooksCommand } from './hooks'
 import { mcpCommand } from './mcp'
 import { memoryCommand } from './memory'
 import { modelCommand } from './model'
 import { permissionsCommand } from './permissions'
 import { pluginCommand } from './plugin'
+import { rewindCommand } from './rewind'
 import { settingsCommand } from './settings-panel'
 import { skillsCommand } from './skills'
+import { tasksCommand } from './tasks'
 
 // The slash commands the app answers itself. They come first in the picker and replace SDK rows of the same
 // name (or alias): in headless mode the CLI's interactive panels only answer "opens an interactive panel".
@@ -25,6 +31,30 @@ export type CommandHost = MenuHost & {
   charName(): string
   /** Runs a CLI slash command silently (no turn shows) and resolves with its text output: `/config theme=dark`. */
   cli(text: string): Promise<string>
+  /** The SDK session id (the save), once the CLI has one. */
+  sessionId(): string | undefined
+  /** The CLI's background tasks right now, and a watch for changes (returns its unsubscribe). */
+  tasks(): BgTask[]
+  onTasks(fn: (tasks: BgTask[]) => void): () => void
+  /**
+   * Rewinds the conversation: restarts this save cut after `resumeAt` (dropping `dropsTurn`'s turn), then puts
+   * `draft` (the dropped prompt) back in the composer, as the CLI does. Restore code first, with rewindFiles.
+   */
+  rewind(o: { resumeAt?: string; dropsTurn?: string; draft?: string }): void
+  /** Replaces the composer's text. */
+  setDraft(text: string): void
+  /** Runs a line as if typed and sent: a slash command (app or CLI), `!cmd`, or a message. */
+  run(text: string): void
+  /** The CLI's slash commands (skills, custom commands) from the session. */
+  commands(): Command[]
+  /** Every tool call this session so far, oldest first (input is pretty JSON; output once done). */
+  toolRecords(): ToolRecord[]
+  /** The backlog as text: who said what, oldest first (tool calls as "Tool detail"). */
+  transcript(): { who: string; text: string }[]
+  /** Her replies, newest first: /copy N. */
+  replies(): string[]
+  /** Copies to the clipboard, with the app's toast. */
+  copy(text: string): Promise<void>
 }
 
 export type AppCommand = {
@@ -60,6 +90,11 @@ export const APP_COMMANDS: AppCommand[] = [
   { name: 'skills', aliases: [], hint: '', describe: () => 'List available skills', run: skillsCommand },
   { name: 'hooks', aliases: [], hint: '', describe: () => 'View hook configurations for tool events', run: hooksCommand },
   { name: 'memory', aliases: [], hint: '', describe: () => 'Edit CLAUDE.md files and memory settings', run: memoryCommand },
+  { name: 'rewind', aliases: ['checkpoint', 'undo'], hint: '', describe: () => 'Restore the code and/or conversation to a previous point', run: rewindCommand },
+  { name: 'tasks', aliases: ['bashes'], hint: '', describe: () => 'View and manage everything running in the background', run: tasksCommand },
+  { name: 'diff', aliases: [], hint: '', describe: () => 'View uncommitted changes and what each turn changed', run: diffCommand },
+  { name: 'export', aliases: [], hint: '[filename]', describe: () => 'Export the current conversation to a file or clipboard', run: exportCommand },
+  { name: 'copy', aliases: [], hint: '[N]', describe: (w) => `Copy ${w}'s last response to clipboard (or /copy N for the Nth-latest)`, run: exportCommand },
   { name: 'costume', aliases: ['outfit'], hint: '', describe: (w) => `Change ${w}'s outfit` },
   { name: 'help', aliases: [], hint: '', describe: () => 'Commands and keyboard shortcuts' },
   { name: 'exit', aliases: ['quit'], hint: '', describe: () => 'Back to the title screen' },

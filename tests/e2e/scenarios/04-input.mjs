@@ -2,8 +2,9 @@
 import { assert, eq, fastText, focusInput, makeProject, newGame, readAll, say, sleep, T, turnEnd, waitScreen } from '../lib.mjs'
 
 const VISIBLE_SLASH_ROWS = 5
-const APP_COMMANDS = ['model', 'clear', 'resume', 'config', 'costume', 'help', 'exit']
-const SDK_COMMANDS = ['compact', 'context', 'cost', 'triage-workflow']
+// V0.5: the CLI's interactive panels (/model, /config, /context, /usage…) are the app's own (docs/V0.5.md).
+const APP_COMMANDS = ['model', 'clear', 'resume', 'config', 'context', 'usage', 'mcp', 'costume', 'help', 'exit']
+const SDK_COMMANDS = ['compact', 'triage-workflow']
 const MODE_PRESSES = 4
 const SAME_TICK_MS = 50
 /** Long enough for a removed chip's message to have gone out, had it not been removed. */
@@ -141,7 +142,7 @@ export default {
         await freshChat(app, project)
         const m = await say(app, 'use some tools please')
         await app.waitEvent('tool', {}, m, 15_000)
-        await app.key('Ctrl+L')
+        await app.key('Ctrl+O')
         await app.waitVisible(T('log'))
         await app.key('Escape')
         await app.waitHidden(T('log'))
@@ -235,31 +236,30 @@ export default {
     },
     {
       r: 'R14',
-      name: 'Tab completes; Enter runs /context and its output is shown',
+      name: 'Tab completes; Enter runs an SDK command (/compact) and its notice is shown',
       async run({ app, project }) {
         await freshChat(app, project)
-        await app.typeKeys('/cont')
+        await app.typeKeys('/comp')
         await app.waitVisible(T('slash-popup'))
         const names = await app.eval(() =>
           [...document.querySelectorAll('[data-test="slash-item"]')].filter((el) => window.__e2e.isVisible(el)).map((el) => el.dataset.name),
         )
-        assert(names.includes('context'), `filtered list has context: ${names}`)
+        assert(names.includes('compact'), `filtered list has compact: ${names}`)
         await app.key('Tab')
-        assert((await inputValue(app)).trim() === '/context', `Tab completed to "${await inputValue(app)}"`)
+        assert((await inputValue(app)).trim() === '/compact', `Tab completed to "${await inputValue(app)}"`)
         const m = await app.mark()
         await app.key('Enter')
-        await app.waitFor((f) => window.__e2e.sent.slice(f).some((s) => s.t === 'say' && s.text.trim() === '/context'), {
+        await app.waitFor((f) => window.__e2e.sent.slice(f).some((s) => s.t === 'say' && s.text.trim() === '/compact'), {
           args: [m.sent],
-          label: 'say /context',
+          label: 'say /compact',
         })
-        const notice = await app.waitEvent('notice', { kind: 'command' }, m)
-        assert(notice.text.includes('Context Usage'), 'the SDK command answered')
-        await app.waitFor(() => document.getElementById('stage').innerText.includes('Context Usage'), { label: '/context output on screen' })
+        const notice = await app.waitEvent('notice', { kind: 'compact' }, m)
+        assert(/compacted/i.test(notice.text), 'the SDK command answered')
       },
     },
     {
       r: 'R14',
-      name: 'app commands: /help, /costume, /model, /clear, /resume, /config, /exit',
+      name: 'app commands: /help, /costume, /model, /context, /config, /clear, /resume, /exit',
       timeout: 120_000,
       async run({ app, project }) {
         await freshChat(app, project)
@@ -270,14 +270,15 @@ export default {
           await app.waitHidden(T(hook))
         }
 
-        await slash(app, 'model')
-        await app.waitVisible(T('model-picker'))
-        const values = await app.attrs(T('model-item'), 'data-v')
-        for (const v of ['default', 'opus', 'sonnet', 'haiku']) assert(values.includes(v), `model ${v} listed`)
-        let m = await app.mark()
-        await app.click(T('model-item', { v: 'haiku' }))
-        await app.waitSent('model', { model: 'haiku' }, m)
-        await app.waitFor(() => /haiku/i.test(document.querySelector('[data-test="badge-model"]')?.textContent ?? ''), { label: 'badge-model shows haiku' })
+        // The CLI's panels open as menus (their own scenarios cover them in depth).
+        for (const cmd of ['model', 'context', 'config']) {
+          await slash(app, cmd)
+          await app.waitVisible(T(cmd === 'config' ? 'settings' : cmd))
+          await app.waitFor((c) => document.querySelector(`[data-test="${c}"] header h2`)?.textContent !== 'Loading…', { args: [cmd === 'config' ? 'settings' : cmd], label: `${cmd} loaded` })
+          await app.key('Escape')
+          await app.waitHidden(T(cmd === 'config' ? 'settings' : cmd))
+        }
+        let m
 
         m = await app.mark()
         await slash(app, 'clear')
@@ -291,9 +292,6 @@ export default {
 
         await slash(app, 'resume')
         await waitScreen(app, 'saves')
-        await freshChat(app, project)
-        await slash(app, 'config')
-        await waitScreen(app, 'settings')
         await freshChat(app, project)
         await slash(app, 'exit')
         await waitScreen(app, 'title')
@@ -341,7 +339,7 @@ export default {
         eq(sent.command.replace(/^!/, ''), 'git status', 'shell command')
         await app.waitEvent('shell_result', {}, m)
         await app.waitFor(() => document.getElementById('stage').innerText.includes('On branch main'), { label: 'shell output on screen' })
-        await app.key('Ctrl+L')
+        await app.key('Ctrl+O')
         await app.waitVisible(T('log'))
         const log = (await app.texts(T('log-entry'))).join('\n')
         assert(log.includes('git status') && log.includes('On branch main'), 'command and output in LOG')

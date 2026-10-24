@@ -276,7 +276,8 @@ async function start(m: Extract<ClientMsg, { t: 'start' }>) {
   // Whatever fails from here, the chat waiting on this epoch gets its error and `ended` instead of hanging (R24).
   try {
     if (m.resume) await unhide(m.resume)
-    const [history, save] = m.resume ? await Promise.all([loadHistory(m.resume, cwd), getSave(m.resume, cwd)]) : [[], undefined]
+    // A rewind shows the conversation only up to the point it keeps.
+    const [history, save] = m.resume ? await Promise.all([loadHistory(m.resume, cwd, m.resumeAt), getSave(m.resume, cwd)]) : [[], undefined]
     if (gen !== startGen) return
     // Read inside the settings queue, so a settings_set sent just before (the profile, saved before New Game) is in the persona.
     const settings = await rememberDir(cwd)
@@ -284,7 +285,7 @@ async function start(m: Extract<ClientMsg, { t: 'start' }>) {
     // From here to `current = live` nothing awaits, so no other start can slip in between.
     live = makeLive(m.epoch, cwd)
     current = live
-    live.session = factory({ epoch: m.epoch, cwd, resume: m.resume, settings, claudePath, emit: live.emit })
+    live.session = factory({ epoch: m.epoch, cwd, resume: m.resume, resumeAt: m.resumeAt, dropsTurn: m.dropsTurn, settings, claudePath, emit: live.emit })
     console.log(`[session] epoch ${m.epoch} ${m.resume ? `resume ${m.resume}` : 'new'} in ${cwd}${MOCK ? ' (mock)' : ''}`)
     broadcast({ t: 'started', cwd, cwdShort: shortPath(cwd), resumed: !!m.resume, history, save, epoch: m.epoch })
     await live.session.start()
@@ -435,14 +436,14 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       return sendTo(ws, { t: 'trust', cwd: m.cwd, trusted, concerns: trusted || !isDir(cwd) ? [] : await trustConcerns(cwd) })
     }
     case 'start':
-      need(isStr(m.cwd) && m.cwd.trim() && Number.isFinite(m.epoch) && (m.resume === undefined || isSaveId(m.resume)), 'cwd, epoch, resume')
+      need(isStr(m.cwd) && m.cwd.trim() && Number.isFinite(m.epoch) && (m.resume === undefined || isSaveId(m.resume)) && optStr(m.resumeAt) && optStr(m.dropsTurn), 'cwd, epoch, resume, resumeAt, dropsTurn')
       return start(m)
     case 'end':
       ++startGen
       return closeCurrent()
     case 'say':
       need(isStr(m.text), 'text')
-      return live().say(m.text, Array.isArray(m.images) ? m.images : undefined)
+      return live().say(m.text, Array.isArray(m.images) ? m.images : undefined, m.now === true)
     case 'shell':
       need(isStr(m.command), 'command')
       return live().shell(m.command)
@@ -464,8 +465,8 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       }
     }
     case 'permission':
-      need(isStr(m.id) && PERMISSION_DECISIONS.includes(m.decision) && optStr(m.message), 'id, decision, message')
-      return live().answerPermission(m.id, m.decision, m.message)
+      need(isStr(m.id) && PERMISSION_DECISIONS.includes(m.decision) && optStr(m.message) && optStr(m.option), 'id, decision, message, option')
+      return live().answerPermission(m.id, m.decision, m.message, m.option)
     case 'answer':
       need(isStr(m.id) && (m.answers === undefined || isAnswers(m.answers)), 'id, answers')
       return live().answerQuestion(m.id, m.answers ?? {})

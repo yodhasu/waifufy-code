@@ -17,6 +17,8 @@ export type InputHost = {
   busy(): boolean
   /** A normal message (may contain @paths; the CLI expands them). */
   submit(text: string, images: Image[]): void
+  /** Ctrl+Enter while she works: the CLI's "send now", delivered at once instead of after her turn. */
+  submitNow(text: string, images: Image[]): void
   /** `!cmd` */
   shell(command: string): void
   /** App-native commands: model, clear, resume, config, costume, help, exit, login. Return true if handled. */
@@ -48,6 +50,14 @@ export type InputApi = {
   restore(text: string): void
   /** True while the slash / @ picker is open; Esc closes it first. */
   closePopups(): boolean
+  /** True while you are typing: the composer has text, or a key went down in the last TYPING_IDLE_MS. */
+  isTyping(): boolean
+  /** Runs `fn` once you stop typing (at once if you aren't): toasts and gestures never land mid-sentence. */
+  whenIdle(fn: () => void): void
+  /** The CLI's greyed next-prompt suggestion on an empty composer; Tab takes it. Typing or sending clears it. */
+  suggest(text: string): void
+  /** Sends `text` as if typed: the command palette's way to run a command or a message. */
+  run(text: string): void
 }
 
 /** True for events that come from the composer (see InputApi). */
@@ -84,6 +94,8 @@ const ESC_CLEAR_MS = 900
 const HINT_MS = 2400
 const QUEUE_CHIP_CHARS = 60
 const DROP_LINGER_MS = 160
+/** Keys this recent count as still typing: toasts and gestures wait (docs/research/ux-research.md P0-8). */
+const TYPING_IDLE_MS = 2000
 
 
 type SlashItem = { name: string; description: string; hint: string; tag: 'app' | 'built-in' | 'custom'; alias?: string }
@@ -228,6 +240,10 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
 
   let enabled = true
   let placeholderOverride: string | undefined
+  let suggestion = ''
+  let lastKeyAt = 0
+  const idleWaiters: (() => void)[] = []
+  let idleTimer: number | undefined
   let images: Image[] = []
   let queueRemove: (id: string) => void = () => {}
 
@@ -250,7 +266,18 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
   }
 
   function updatePlaceholder() {
-    ta.placeholder = placeholderOverride ?? `Speak to ${waifu()}…   ( / commands · @ files · ! bash · Shift+Enter newline )`
+    ta.placeholder = placeholderOverride ?? (suggestion ? `${suggestion}   (Tab)` : `Speak to ${waifu()}…   ( / commands · @ files · ! bash · Shift+Enter newline )`)
+    box.classList.toggle('suggesting', !placeholderOverride && !!suggestion)
+  }
+
+  const typing = () => document.activeElement === ta && (!!ta.value.trim() || performance.now() - lastKeyAt < TYPING_IDLE_MS)
+
+  /** Flushes the whenIdle queue once the composer has been quiet (or emptied) for TYPING_IDLE_MS. */
+  function checkIdle() {
+    clearTimeout(idleTimer)
+    if (!idleWaiters.length) return
+    if (typing()) return void (idleTimer = window.setTimeout(checkIdle, TYPING_IDLE_MS))
+    for (const fn of idleWaiters.splice(0)) fn()
   }
 
   /** Replaces the whole text programmatically (history, completion, restore): caret at the end. */
@@ -548,12 +575,14 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
     if (popup === 'slash') {
       const c = slashItems[i]
       if (!c) return false
+      // The alias as typed, when that is what matched: /stats opens the usage panel on its Stats tab.
+      const word = c.alias ?? c.name
       if (run && !requiresArg(c.hint)) {
         setValue('')
-        runCommand(`/${c.name}`)
+        runCommand(`/${word}`)
         return true
       }
-      setValue(`/${c.name} `)
+      setValue(`/${word} `)
       ta.focus()
       if (c.hint) hint(`/${c.name} ${c.hint}`)
       return true
@@ -603,7 +632,8 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
     host.submit(text, takeImages())
   }
 
-  function send() {
+  function send(now = false) {
+    if (suggestion) (suggestion = ''), updatePlaceholder()
     // Bash mode only when `!` is the very first character, matching the visual mode (refreshMode).
     const bash = ta.value.startsWith('!')
     const text = ta.value.trim()
@@ -618,6 +648,7 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
     }
     if (/^\/\S/.test(text)) return runCommand(text)
     if (text) remember(text)
+    if (now && host.busy()) return host.submitNow(text, takeImages())
     host.submit(text, takeImages())
   }
 
@@ -654,16 +685,34 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
       if (closePopups()) return e.preventDefault(), e.stopPropagation()
       return escToClear(e)
     }
+    lastKeyAt = performance.now()
+    if (suggestion && e.key === 'Tab' && plain && !ta.value) {
+      e.preventDefault()
+      const s = suggestion
+      suggestion = ''
+      updatePlaceholder()
+      return setValue(s)
+    }
     if (ctrlOnly(e, 'r')) return e.preventDefault(), openSearch()
+    // Ctrl+J is the CLI's newline; WebView2 would open the downloads otherwise.
+    if (ctrlOnly(e, 'j')) return e.preventDefault(), insertText('\n')
+    // Ctrl+L is the CLI's "clear the prompt".
+    if (ctrlOnly(e, 'l')) return e.preventDefault(), setValue('')
+    // Alt+V is the CLI's image paste on Windows.
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && shortcutLetter(e) === 'v') {
+      e.preventDefault()
+      return void pasteClipboardImage()
+    }
     if (ctrlOnly(e, 'c') && ta.selectionStart === ta.selectionEnd && ta.value) {
       e.preventDefault()
       return setValue('')
     }
     if (e.key === 'Enter') {
-      // Shift+Enter is the textarea's own newline; Alt/Ctrl+Enter get one too instead of sending.
+      // Shift+Enter is the textarea's own newline; Alt/Meta+Enter get one too. Ctrl+Enter is the CLI's "send now".
       if (e.shiftKey) return
       e.preventDefault()
-      if (e.altKey || e.ctrlKey || e.metaKey) return insertText('\n')
+      if (e.altKey || e.metaKey) return insertText('\n')
+      if (e.ctrlKey) return send(true)
       // `\` + Enter is the CLI's portable newline.
       const caret = ta.selectionStart
       if (caret === ta.selectionEnd && ta.value[caret - 1] === '\\') {
@@ -684,6 +733,7 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
 
   ta.addEventListener('input', () => {
     histIdx = -1
+    if (suggestion && ta.value) (suggestion = ''), updatePlaceholder()
     grow()
     refreshMode()
     updatePopups()
@@ -719,6 +769,19 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
     renderImages()
     ta.focus()
   })
+
+  /** Alt+V: the clipboard's image, if it holds one (the same path as Ctrl+V paste). */
+  async function pasteClipboardImage() {
+    try {
+      const items = await navigator.clipboard.read()
+      const blobs: Blob[] = []
+      for (const it of items) for (const type of it.types) if (type.startsWith('image/')) blobs.push(await it.getType(type))
+      if (!blobs.length) return ctx.toast('No image on the clipboard')
+      await addImages(blobs)
+    } catch {
+      ctx.toast('Could not read the clipboard')
+    }
+  }
 
   async function addImages(files: Blob[]) {
     if (!enabled) return
@@ -855,5 +918,18 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
       ta.focus()
     },
     closePopups,
+    isTyping: typing,
+    whenIdle(fn) {
+      idleWaiters.push(fn)
+      checkIdle()
+    },
+    suggest(text) {
+      suggestion = text.trim()
+      updatePlaceholder()
+    },
+    run(text) {
+      setValue(text)
+      send()
+    },
   }
 }

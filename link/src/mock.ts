@@ -2,10 +2,15 @@ import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileControl } from './config-files.ts'
+import { elicitContent, elicitFields } from './elicit.ts'
+import { permissionOptions } from './perm-options.ts'
+import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
 import {
   EMOTIONS,
   type Command,
+  type BgTask,
   type CtlOp,
+  type RewindPoint,
   type Diff,
   type Emotion,
   type Image,
@@ -116,6 +121,9 @@ const COMMANDS: Command[] = [
     argumentHint: '',
     builtin: false,
   },
+  // Two more skills for /skills (W6): a project skill and a plugin skill (plugin skills are locked by their plugin).
+  { name: 'release-notes', description: 'Draft release notes from the commits since the last tag (project)', argumentHint: '[tag]', builtin: false },
+  { name: 'commit-commands:commit', description: 'Create a git commit with a conventional message (plugin:commit-commands)', argumentHint: '', builtin: false },
   { name: 'init', description: 'Initialize a new CLAUDE.md file with codebase documentation', argumentHint: '', builtin: true },
   { name: 'mcp', description: 'Manage MCP servers', argumentHint: '[reconnect|enable|disable] [server]', builtin: true },
   { name: 'model', description: 'Set the AI model for Claude Code', argumentHint: '[model]', builtin: true },
@@ -210,7 +218,9 @@ type Outcome = { ok: boolean; interrupted?: boolean; error?: string; crashed?: b
 type PermissionAnswer = { kind: 'permission'; decision: 'allow' | 'always' | 'deny' | 'feedback'; message?: string }
 type QuestionAnswer = { kind: 'question'; answers: Record<string, string> }
 type PlanAnswer = { kind: 'plan'; decision: 'auto' | 'manual' | 'keep'; message?: string }
-type Answer = PermissionAnswer | QuestionAnswer | PlanAnswer
+// `message` never set: other scenarios read it off any non-question answer.
+type ElicitAnswer = { kind: 'elicit'; action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown>; message?: undefined }
+type Answer = PermissionAnswer | QuestionAnswer | PlanAnswer | ElicitAnswer
 type Waiting = { resolve(a: Answer): void }
 
 /** How session.ts reads another kind of answer to a permission ask: a plan's 'keep' refuses, anything else allows. */
@@ -229,6 +239,10 @@ class MockSession implements SessionApi {
   private readonly opts: SessionOptions
   private id: string
   private stats: Stats
+  /** Prompts sent, oldest first: the rewind menu's points. */
+  private prompts: RewindPoint[] = []
+  /** Background tasks the mock's `background` scenario starts. */
+  private bg: (BgTask & { backgrounded?: boolean })[] = []
   /** The MCP servers /mcp shows; toggling and reconnecting change them. */
   private mcp: MockMcp[] = mockMcpServers()
   private turn?: Turn
@@ -286,8 +300,10 @@ class MockSession implements SessionApi {
     this.emitStats()
   }
 
-  say(text: string, images: Image[] = []) {
+  say(text: string, images: Image[] = [], _now = false) {
     if (this.closed) return
+    // What the rewind menu lists: each prompt, with the entry before it that a rewind keeps.
+    if (text.trim() && !text.startsWith('/')) this.prompts.push({ uuid: randomUUID(), text: text.trim(), ...(this.prompts.at(-1) ? { before: `${this.prompts.at(-1)!.uuid}-reply` } : {}) })
     // Like the CLI, a message sent mid-turn waits for the running turn to finish.
     if (this.turn) return void this.queue.push({ text, images })
     void this.run(text, images)
@@ -327,12 +343,37 @@ class MockSession implements SessionApi {
 
   /** SDK-shaped answers for the panels' controls (see mockControl), so the E2E suite can drive /mcp, /agents… */
   async control(op: CtlOp, args: unknown[]) {
+    if (op === 'rewindPoints') return [...this.prompts].reverse()
+    if (op === 'backgroundTasks') {
+      // Ctrl+B: the running mock build moves to the background and the turn ends without it.
+      const t = this.bg.find((x) => x.status === 'running' && !x.backgrounded)
+      if (t) t.backgrounded = true
+      this.emitTasks()
+      return !!t
+    }
+    if (op === 'stopTask') {
+      const t = this.bg.find((x) => x.id === args[0])
+      if (!t) throw new Error(`No task ${String(args[0])}`)
+      t.status = 'killed'
+      this.emitTasks()
+      return undefined
+    }
     // Settings files, CLI subcommands and text reads are real, against the test's own folders (see MOCK_CLAUDE_DIR).
     if (op !== 'cliExec') {
       const files = fileControl(op, args, this.opts.cwd)
       if (files) return files
     }
+    // /context reads the CLI's current model; a silent `/model x` changes it CLI-side without a stats event, as in the real link.
+    if (op === 'getContextUsage') return { ...mockContextUsage(), model: this.stats.model }
+    const pick = op === 'cli' && /^\/model\s+(\S+)/.exec(String(args[0]).trim())?.[1]
+    if (pick && MODELS.some((m) => m.value === pick || m.resolved === pick)) this.stats.model = resolveModel(pick)
     return mockControl(this.mcp, op, args)
+  }
+
+  answerElicit(id: string, action: ElicitAnswer['action'], content?: Record<string, unknown>) {
+    // The same check as session.ts: a form that doesn't fit its schema is refused and stays open.
+    if (action === 'accept') elicitContent(elicitFields(MOCK_ELICIT_SCHEMA), content ?? {})
+    this.answer(id, { kind: 'elicit', action, content })
   }
 
   answerPermission(id: string, decision: PermissionAnswer['decision'], message?: string) {
@@ -521,6 +562,8 @@ class MockSession implements SessionApi {
     if (/\bdanger|\breset\b/.test(k)) return this.danger(turn)
     if (/\bfetch\b/.test(k)) return this.fetch(turn)
     if (/\bpermission/.test(k)) return this.permission(turn)
+    if (/\belicit|\bmcp input/.test(k)) return this.elicitation(turn)
+    if (/\bbackground\b/.test(k)) return this.background(turn)
     if (/\bquestion/.test(k)) return this.question(turn)
     if (/\bplan\b/.test(k)) return this.plan(turn)
     if (/\bpush\b/.test(k)) return this.push(turn)
@@ -530,6 +573,12 @@ class MockSession implements SessionApi {
     if (/\bmarkdown\b/.test(k)) return this.markdown(turn)
     if (/\bemotion/.test(k)) return this.emotions(turn)
     return this.echo(turn, t, images)
+  }
+
+  /** The CLI's question line and rows for a prompt, as session.ts words them from the SDK's suggestions. */
+  private worded(tool: string, input: Record<string, unknown>, suggestions: PermissionUpdate[]) {
+    const o = permissionOptions(tool, input, suggestions, true, this.cwd, this.opts.settings.waifu.name.trim() || 'Claude')
+    return { question: o.question, choices: o.choices.map(({ id, label, decision, mode }) => ({ id, label, decision, ...(mode ? { mode } : {}) })) }
   }
 
   private get addr() {
@@ -648,6 +697,7 @@ class MockSession implements SessionApi {
       canAlways: true,
       danger: false,
       defaultToNo: false,
+      ...this.worded('Edit', input, [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }]),
     })))
     if (a.decision === 'deny') {
       // The CLI's "No": the tool fails and the turn stops, like an interrupt.
@@ -715,6 +765,9 @@ class MockSession implements SessionApi {
       canAlways: true,
       danger: false,
       defaultToNo: false,
+      ...this.worded('WebFetch', input, [
+        { type: 'addRules', rules: [{ toolName: 'WebFetch', ruleContent: `domain:${new URL(MOCK.fetchUrl).hostname}` }], behavior: 'allow', destination: 'localSettings' },
+      ]),
     })))
     if (a.decision === 'deny') {
       this.toolDone(id, REJECTED, false)
@@ -728,6 +781,43 @@ class MockSession implements SessionApi {
     await sleep(TOOL_MS, turn.signal)
     this.toolDone(id, 'The current booking template is v14 (since 2026-10-01). Opening hours: 09:00–21:00, every day.')
     await this.speak(turn, '[smile] The docs agree: v14 is current, open from nine to nine.')
+    return { ok: true }
+  }
+
+  private emitTasks() {
+    this.emit({ t: 'bg_tasks', tasks: this.bg.map(({ backgrounded: _, ...t }) => t) })
+  }
+
+  /** A long build in a background shell plus a helper agent, and a CLI notification: the /tasks panel's data. */
+  private async background(turn: Turn): Promise<Outcome> {
+    await this.think(turn)
+    const shell: BgTask = { id: `task-${this.bg.length + 1}`, type: 'local_bash', description: 'npm run build -- --watch', status: 'running' }
+    const agent: BgTask = { id: `task-${this.bg.length + 2}`, type: 'local_agent', subagent: 'Explore', description: 'Find every caller of loadTemplate', status: 'running', toolUses: 3, tokens: 4100, ms: 9000, lastTool: 'Grep' }
+    this.bg.push(shell, agent)
+    this.emitTasks()
+    this.emit({ t: 'notify', key: 'bg', text: 'Background tasks running · ctrl+b to manage', priority: 'low' })
+    await this.speak(turn, `[nod] The build is watching in the background, ${this.addr}, and a helper is looking for callers.`)
+    await sleep(TOOL_MS, turn.signal)
+    agent.status = 'completed'
+    Object.assign(agent, { summary: 'Found 4 callers in src/prompts', toolUses: 7 })
+    this.emitTasks()
+    return { ok: true }
+  }
+
+  /** An MCP server asks for a form (elicitation), as a deploy tool asking which environment and why. */
+  private async elicitation(turn: Turn): Promise<Outcome> {
+    await this.think(turn)
+    const id = this.toolStart(turn, 'mcp__deployer__deploy', { service: 'booking-agent' })
+    const fields = elicitFields(MOCK_ELICIT_SCHEMA)
+    const a = await this.ask(turn, (askId) => ({ t: 'ask_elicit', id: askId, server: 'deployer', mode: 'form', message: 'Deploy booking-agent: confirm the target', fields }))
+    if (a.kind !== 'elicit' || a.action !== 'accept') {
+      this.toolDone(id, `The user chose to ${a.kind === 'elicit' ? a.action : 'cancel'} the deploy form.`, false)
+      await this.speak(turn, `[nod] All right, ${this.addr}. I won't deploy.`)
+      return { ok: true }
+    }
+    const c = a.content ?? {}
+    this.toolDone(id, `Deployed to ${String(c.environment)}`, true)
+    await this.speak(turn, `[happy] Deployed to ${String(c.environment)}, ${this.addr}.`)
     return { ok: true }
   }
 
@@ -1141,6 +1231,108 @@ const MOCK_AGENTS = [
   { name: 'code-reviewer', description: 'Reviews a diff for bugs.', model: 'sonnet' },
 ]
 
+/** supportedModels(): the SDK's ModelInfo rows for the MODELS the picker shows (/model, /effort, /fast). */
+const MOCK_MODEL_INFO = MODELS.map((m) => ({
+  value: m.value,
+  resolvedModel: m.resolved,
+  displayName: m.displayName,
+  description: m.description,
+  supportsEffort: true,
+  supportedEffortLevels: m.value === 'haiku' ? ['low', 'medium', 'high'] : ['low', 'medium', 'high', 'xhigh', 'max'],
+  supportsAdaptiveThinking: m.value !== 'haiku',
+  supportsFastMode: m.value !== 'haiku',
+  supportsAutoMode: m.value !== 'haiku',
+}))
+
+/** What the mock's silent `/fast on|off` and `/effort <level>` have set. */
+const mockFast = { on: false, effort: 'auto' }
+
+/**
+ * getContextUsage({ detail: 'full' }) in the SDK's SDKControlGetContextUsageResponse shape, with the CLI's 10×10
+ * gridRows: each square is 1% of the window, used categories first, the autocompact buffer last, free space between.
+ */
+function mockContextUsage() {
+  const max = 200_000
+  const cats = [
+    { id: 'system_prompt', name: 'System prompt', tokens: 3100, color: 'promptBorder', kind: 'used' },
+    { id: 'system_tools', name: 'System tools', tokens: 11_800, color: 'inactive', kind: 'used' },
+    { id: 'mcp_tools', name: 'MCP tools', tokens: 2400, color: 'cyan_FOR_SUBAGENTS_ONLY', kind: 'used' },
+    { id: 'custom_agents', name: 'Custom agents', tokens: 600, color: 'permission', kind: 'used' },
+    { id: 'memory_files', name: 'Memory files', tokens: 900, color: 'claude', kind: 'used' },
+    { id: 'skills', name: 'Skills', tokens: 1500, color: 'warning', kind: 'used' },
+    { id: 'messages', name: 'Messages', tokens: 6400, color: 'purple_FOR_SUBAGENTS_ONLY', kind: 'used' },
+    { id: 'mcp_tools_deferred', name: 'MCP tools (deferred)', tokens: 4100, color: 'cyan_FOR_SUBAGENTS_ONLY', kind: 'deferred', isDeferred: true },
+  ] as const
+  const used = cats.filter((c) => c.kind === 'used').reduce((n, c) => n + c.tokens, 0)
+  const buffer = { id: 'autocompact_buffer', name: 'Autocompact buffer', tokens: 33_000, color: 'inactive', kind: 'buffer' } as const
+  const free = { id: 'free_space', name: 'Free space', tokens: max - used - buffer.tokens, color: 'promptBorder', kind: 'free' } as const
+  const per = max / 100
+  type Square = { color: string; isFilled: boolean; categoryName: string; tokens: number; percentage: number; squareFullness: number }
+  const square = (c: { name: string; color: string; tokens: number }, fullness: number, filled = true): Square =>
+    ({ color: c.color, isFilled: filled, categoryName: c.name, tokens: c.tokens, percentage: (c.tokens / max) * 100, squareFullness: fullness })
+  const squares: Square[] = []
+  for (const c of cats.filter((x) => x.kind === 'used')) {
+    const exact = c.tokens / per
+    for (let i = 0; i < Math.floor(exact); i++) squares.push(square(c, 1))
+    if (exact % 1 > 0) squares.push(square(c, exact % 1))
+  }
+  const tail = Array.from({ length: Math.round(buffer.tokens / per) }, () => square(buffer, 1))
+  while (squares.length < 100 - tail.length) squares.push(square(free, 0, false))
+  squares.push(...tail)
+  const gridRows = Array.from({ length: 10 }, (_, r) => squares.slice(r * 10, r * 10 + 10))
+  return {
+    categories: [...cats, free, buffer],
+    totalTokens: used,
+    maxTokens: max,
+    rawMaxTokens: max,
+    percentage: Math.round((used / max) * 100),
+    gridRows,
+    model: 'claude-opus-5-5',
+    memoryFiles: [
+      { path: 'C:\\Users\\dev\\.claude\\CLAUDE.md', type: 'User', tokens: 400 },
+      { path: 'CLAUDE.md', type: 'Project', tokens: 500 },
+    ],
+    mcpTools: [
+      { name: 'mcp__graft__graft_find_code', serverName: 'graft', tokens: 1300, isLoaded: true },
+      { name: 'mcp__graft__graft_trace_calls', serverName: 'graft', tokens: 1100, isLoaded: true },
+      { name: 'mcp__claude_ai_Slack__slack_send_message', serverName: 'claude_ai_Slack', tokens: 2100, isLoaded: false },
+      { name: 'mcp__claude_ai_Slack__slack_read_channel', serverName: 'claude_ai_Slack', tokens: 2000, isLoaded: false },
+    ],
+    agents: [
+      { agentType: 'code-reviewer', source: 'projectSettings', tokens: 250 },
+      { agentType: 'general-purpose', source: 'built-in', tokens: 180 },
+      { agentType: 'Explore', source: 'built-in', tokens: 170 },
+    ],
+    skills: {
+      totalSkills: 3,
+      includedSkills: 3,
+      tokens: 1500,
+      skillFrontmatter: [
+        { name: 'triage-workflow', source: 'userSettings', tokens: 700 },
+        { name: 'simplify', source: 'built-in', tokens: 420 },
+        { name: 'code-review', source: 'built-in', tokens: 380 },
+      ],
+    },
+    autoCompactThreshold: max - buffer.tokens,
+    isAutoCompactEnabled: true,
+    messageBreakdown: {
+      toolCallTokens: 900,
+      toolResultTokens: 3100,
+      attachmentTokens: 0,
+      assistantMessageTokens: 1500,
+      userMessageTokens: 900,
+      redirectedContextTokens: 0,
+      unattributedTokens: 0,
+      toolCallsByType: [
+        { name: 'Read', callTokens: 400, resultTokens: 2300 },
+        { name: 'Bash', callTokens: 500, resultTokens: 800 },
+      ],
+      attachmentsByType: [],
+    },
+    apiUsage: { input_tokens: 12, output_tokens: 900, cache_creation_input_tokens: 2100, cache_read_input_tokens: 21_000 },
+  }
+}
+
 function mockControl(mcp: MockMcp[], op: CtlOp, args: unknown[]): unknown {
   const server = (name: unknown) => {
     const s = mcp.find((x) => x.name === name)
@@ -1173,28 +1365,31 @@ function mockControl(mcp: MockMcp[], op: CtlOp, args: unknown[]): unknown {
     case 'supportedAgents':
       return MOCK_AGENTS
     case 'accountInfo':
-      return { email: 'dev@example.com', organization: 'Example Org', subscriptionType: 'max', tokenSource: 'claude.ai', apiProvider: 'firstParty' }
+      return MOCK_ACCOUNT
     case 'getContextUsage':
+      return mockContextUsage()
+    case 'supportedModels':
+      return MOCK_MODEL_INFO
+    case 'initializationResult':
       return {
-        categories: [
-          { name: 'System prompt', tokens: 3100, color: 'promptBorder' },
-          { name: 'System tools', tokens: 11800, color: 'inactive' },
-          { name: 'MCP tools', tokens: 2400, color: 'cyan_FOR_SUBAGENTS_ONLY' },
-          { name: 'Memory files', tokens: 900, color: 'claude' },
-          { name: 'Messages', tokens: 6400, color: 'purple_FOR_SUBAGENTS_ONLY' },
-          { name: 'Free space', tokens: 175400, color: 'promptBorder' },
-        ],
-        totalTokens: 24600,
-        maxTokens: 200000,
-        rawMaxTokens: 200000,
-        percentage: 12,
-        model: 'claude-sonnet-5-5',
-        memoryFiles: [{ path: 'CLAUDE.md', type: 'Project', tokens: 900 }],
-        mcpTools: [{ name: 'mcp__graft__find', serverName: 'graft', tokens: 2400 }],
-        agents: [],
+        commands: COMMANDS,
+        agents: MOCK_AGENTS,
+        output_style: 'default',
+        available_output_styles: ['default', 'Explanatory', 'Learning'],
+        models: MOCK_MODEL_INFO,
+        account: MOCK_ACCOUNT,
+        claude_code_version: '2.1.309',
+        fast_mode_state: mockFast.on ? 'on' : 'off',
       }
-    case 'reloadPlugins':
+    case 'usage':
+      return mockUsage()
+    case 'supportedCommands':
+      return COMMANDS
     case 'reloadSkills':
+      return { skills: COMMANDS.filter((c) => !c.builtin) }
+    case 'cliExec':
+      return mockPluginCli((Array.isArray(args[0]) ? args[0] : []).map(String))
+    case 'reloadPlugins':
     case 'reloadOutputStyles':
       return {}
     case 'rewindFiles':
@@ -1210,23 +1405,230 @@ function mockControl(mcp: MockMcp[], op: CtlOp, args: unknown[]): unknown {
   }
 }
 
+const MOCK_ACCOUNT = { email: 'dev@example.com', organization: 'Example Org', subscriptionType: 'max', tokenSource: 'claude.ai', apiProvider: 'firstParty' }
+
+/** The SDK's experimental `/usage` data (SDKControlGetUsageResponse) for a Max plan, as the Settings Usage tab reads it. */
+function mockUsage() {
+  const at = (ms: number) => new Date(Date.now() + ms).toISOString()
+  return {
+    session: {
+      total_cost_usd: 0.0412,
+      total_api_duration_ms: 8_400,
+      total_duration_ms: 64_000,
+      total_lines_added: 3,
+      total_lines_removed: 1,
+      model_usage: {
+        'claude-opus-5-5': {
+          inputTokens: 1_200, outputTokens: 640, cacheReadInputTokens: 18_000, cacheCreationInputTokens: 4_100,
+          webSearchRequests: 0, costUSD: 0.0412, contextWindow: 200_000, maxOutputTokens: 32_000,
+        },
+      },
+    },
+    subscription_type: 'max',
+    rate_limits_available: true,
+    rate_limits: {
+      five_hour: { utilization: FIVE_HOUR_PCT, resets_at: at(FIVE_HOUR_RESET_MS) },
+      seven_day: { utilization: WEEKLY_PCT, resets_at: at(WEEKLY_RESET_MS) },
+      seven_day_sonnet: { utilization: 3, resets_at: at(WEEKLY_RESET_MS) },
+      seven_day_opus: { utilization: WEEKLY_OPUS_PCT, resets_at: at(WEEKLY_RESET_MS) },
+      model_scoped: [{ display_name: 'Fable', utilization: 21, resets_at: at(WEEKLY_RESET_MS) }],
+      extra_usage: { is_enabled: false, monthly_limit: null, used_credits: null, utilization: null, currency: 'USD' },
+    },
+    behaviors: null,
+  }
+}
+
+/** The /config rows the mock CLI offers headless (id → its usage options), with the CLI's labels for "Set … to …". */
+const MOCK_CONFIG_ROWS: Record<string, [label: string, options: string]> = {
+  theme: ['Theme', 'auto|dark|light|light-daltonized|dark-daltonized|light-ansi|dark-ansi'],
+  notifChannel: ['Local notifications', 'auto|iterm2|terminal_bell|iterm2_with_bell|kitty|ghostty|notifications_disabled'],
+  autoCompact: ['Auto-compact', 'true|false'],
+  autoContinueAtUsageLimit: ['Continue automatically at usage limit', 'true|false'],
+  tips: ['Show tips', 'true|false'],
+  reduceMotion: ['Reduce motion', 'true|false'],
+  thinking: ['Thinking mode', 'true|false'],
+  fast: ['Fast mode (Opus 5.5)', 'true|false'],
+  promptSuggestionEnabled: ['Prompt suggestions', 'true|false'],
+  recap: ['Session recap', 'true|false'],
+  checkpoints: ['Rewind code (checkpoints)', 'true|false'],
+  verbose: ['Verbose output', 'true|false'],
+  progressBar: ['Terminal progress bar', 'true|false'],
+  precomputeCompactionEnabled: ['Precompute compaction', 'true|false'],
+  timeFormat: ['Time format', 'auto|12-hour|24-hour|24-hour-utc'],
+  permissionMode: ['Default permission mode', 'default|plan|acceptEdits|auto|dontAsk'],
+  worktreeBaseRef: ['Worktree base ref', 'fresh|head'],
+  useAutoModeDuringPlan: ['Use auto mode during plan', 'true|false'],
+  gitignore: ['Respect .gitignore in file picker', 'true|false'],
+  outputStyle: ['Output style', 'default|Explanatory|Learning'],
+  language: ['Language', '<value>'],
+  editor: ['Editor mode', 'normal|vim'],
+  modelProposedGoals: ['Claude-proposed goals', 'auto|alwaysAsk|disabled'],
+  model: ['Model', 'default|opus|sonnet|haiku'],
+}
+
 /** What the mock's `/config key=value` has set, so a panel that reads back sees its change. */
 export const mockConfig = new Map<string, string>()
+
+/** The CLI's headless `/config` answers: the usage list, or one "Set <label> to <value>" line (or refusal) per pair. */
+function mockConfigCli(pairs: string[]) {
+  if (!pairs.length) {
+    const lines = Object.entries(MOCK_CONFIG_ROWS).map(([id, [, opts]]) => `  ${id}=${opts}`).sort()
+    return `Usage: /config key=value [key=value ...]\n${lines.join('\n')}`
+  }
+  return pairs
+    .map((pair) => {
+      const i = pair.indexOf('=')
+      if (i <= 0) return `Expected key=value, got "${pair}". Run /config to see what's available.`
+      const k = pair.slice(0, i)
+      const v = pair.slice(i + 1)
+      const id = Object.keys(MOCK_CONFIG_ROWS).find((x) => x.toLowerCase() === k.toLowerCase())
+      if (!id) return `${k} isn't a /config setting. Run /config to see what's available.`
+      const [label, opts] = MOCK_CONFIG_ROWS[id]
+      if (opts === 'true|false') {
+        const b = ['true', '1', 'on', 'yes'].includes(v.toLowerCase()) ? 'true' : ['false', '0', 'off', 'no'].includes(v.toLowerCase()) ? 'false' : undefined
+        if (!b) return `${label} takes true or false, not "${v}".`
+        mockConfig.set(id, b)
+        return `Set ${label} to ${b}`
+      }
+      const opt = opts === '<value>' ? v : opts.split('|').find((o) => o.toLowerCase() === v.toLowerCase())
+      if (!opt) return `${label} takes one of: ${opts.split('|').join(', ')}.`
+      mockConfig.set(id, opt)
+      return `Set ${label} to ${opt}`
+    })
+    .join('\n')
+}
 
 /** The CLI's text answers to the slash commands panels run silently (`/config`, `/effort`, `/fast`). */
 function mockCli(text: string): string {
   const [name, ...rest] = text.trim().slice(1).split(/\s+/)
-  if (name === 'config') {
-    if (!rest.length) return 'Usage: /config key=value [key=value ...]'
-    return rest
-      .map((pair) => {
-        const [k, v = ''] = pair.split('=')
-        mockConfig.set(k, v)
-        return `Set ${k} to ${v}`
-      })
-      .join('\n')
+  if (name === 'config') return mockConfigCli(rest)
+  if (name === 'effort') {
+    const level = rest[0]
+    if (!level || level === 'current' || level === 'status')
+      return mockFast.effort === 'auto' ? 'Effort level: auto (currently high)' : `Current effort level: ${mockFast.effort} (${mockFast.effort})`
+    mockFast.effort = level
+    if (level === 'auto') return 'Effort level set to auto'
+    return `Set effort level to ${level} ${level === 'max' ? '(this session only)' : '(saved as your default for new sessions)'}`
   }
-  if (name === 'effort') return rest[0] ? `Set effort level to ${rest[0]}` : 'Effort level: auto'
-  if (name === 'fast') return `Fast mode ${rest[0] === 'off' ? 'OFF' : 'ON'}`
+  if (name === 'fast') {
+    mockFast.on = rest[0] ? rest[0] !== 'off' : !mockFast.on
+    return `Fast mode ${mockFast.on ? 'ON' : 'OFF'}`
+  }
+  if (name === 'model') {
+    const m = MODELS.find((x) => x.value === rest[0] || x.resolved === rest[0])
+    if (!m) return `Usage: /model <name>. Available: ${MODELS.map((x) => x.value).filter((v) => v !== 'default').join(', ')}, default, or a full model ID.`
+    return `Set model to ${m.displayName === 'Default (recommended)' ? `Default (${m.description.split(' · ')[0]})` : m.description.split(' · ')[0]}`
+  }
+  // The CLI's headless /add-dir (session only). A path with "missing" in it doesn't exist.
+  if (name === 'add-dir') {
+    const dir = rest.join(' ')
+    if (!dir) return 'Usage: /add-dir <path>'
+    return /missing/i.test(dir) ? `Path ${dir} was not found.` : `Added ${dir} as a working directory for this session`
+  }
   return `Ran /${name}`
+}
+
+// ---------------------------------------------------------------- `claude plugin …` (the /plugin panel, W6)
+
+type MockPlugin = { name: string; marketplace: string; description: string; version: string; installs: number }
+type MockInstalled = { id: string; scope: string; enabled: boolean; version: string; errors?: string[] }
+
+/** Two marketplaces with a small catalog, one plugin installed and one that fails to load. Shared by every mock session. */
+const mockPlugins = {
+  marketplaces: [
+    { name: 'claude-plugins-official', source: 'github', repo: 'anthropics/claude-plugins-official' },
+    { name: 'acme-tools', source: 'github', repo: 'acme/claude-plugins' },
+  ],
+  catalog: [
+    { name: 'commit-commands', marketplace: 'claude-plugins-official', description: 'Commands for git commit workflows', version: '1.0.0', installs: 48210 },
+    { name: 'code-review', marketplace: 'claude-plugins-official', description: 'Automated code review for pull requests', version: '1.2.0', installs: 35120 },
+    { name: 'pr-review-toolkit', marketplace: 'claude-plugins-official', description: 'Specialized agents for reviewing pull requests', version: '0.4.1', installs: 9120 },
+    { name: 'broken-hooks', marketplace: 'acme-tools', description: 'Example hooks (fails to load)', version: '0.1.0', installs: 12 },
+    { name: 'acme-lint', marketplace: 'acme-tools', description: 'Lint fixes on save', version: '2.0.0', installs: 830 },
+  ] as MockPlugin[],
+  installed: [
+    { id: 'commit-commands@claude-plugins-official', scope: 'user', enabled: true, version: '1.0.0' },
+    { id: 'broken-hooks@acme-tools', scope: 'project', enabled: true, version: '0.1.0', errors: ['Hook load failed: hooks/hooks.json is not valid JSON'] },
+  ] as MockInstalled[],
+}
+
+/** `claude plugin <args>` answered like the CLI 2.1.309's `--json` output (one JSON document, or one result line). */
+function mockPluginCli(args: string[]): { code: number; stdout: string; stderr: string } {
+  const ok = (v: unknown) => ({ code: 0, stdout: `${JSON.stringify(v, null, 2)}\n`, stderr: '' })
+  const line = (v: Record<string, unknown>) => ({ code: v.outcome === 'failed' ? 1 : 0, stdout: `${JSON.stringify(v)}\n`, stderr: '' })
+  const flag = (f: string) => args.includes(f)
+  const opt = (f: string, f2?: string) => {
+    const i = args.findIndex((a) => a === f || a === f2)
+    return i >= 0 ? args[i + 1] : undefined
+  }
+  const st = mockPlugins
+  const [, verb, arg] = args
+  const find = (p: string) => st.installed.find((x) => x.id === p || x.id.split('@')[0] === p)
+  if (args[0] !== 'plugin') return { code: 1, stdout: '', stderr: `claude ${args.join(' ')}: not in the mock` }
+  if (verb === 'list') {
+    const installed = st.installed.map((x) => ({
+      id: x.id, version: x.version, scope: x.scope, enabled: x.enabled,
+      installPath: `~/.claude/plugins/cache/${x.id.replace('@', '/')}/${x.version}`,
+      installedAt: '2026-10-01T09:00:00.000Z', lastUpdated: '2026-10-01T09:00:00.000Z', errors: x.errors,
+    }))
+    if (!flag('--available')) return ok(installed)
+    const available = st.catalog
+      .filter((p) => !find(`${p.name}@${p.marketplace}`))
+      .map((p) => ({ pluginId: `${p.name}@${p.marketplace}`, name: p.name, description: p.description, marketplaceName: p.marketplace, version: p.version, installCount: p.installs }))
+    return ok({ installed, available })
+  }
+  if (verb === 'marketplace') {
+    const name = args[3]
+    switch (arg) {
+      case 'list':
+        return ok(st.marketplaces.map((m) => ({ ...m, installLocation: `~/.claude/plugins/marketplaces/${m.name}` })))
+      case 'add': {
+        const src = name ?? ''
+        if (!/^[\w.-]+\/[\w.-]+$|^https?:|^\.{0,2}[\\/]/.test(src)) return line({ command: 'marketplace-add', outcome: 'failed', message: 'Invalid marketplace source format. Try: owner/repo, https://..., or ./path' })
+        const mname = src.split(/[\\/]/).filter(Boolean).at(-1)!.replace(/\.git$|\.json$/, '')
+        if (!st.marketplaces.some((m) => m.name === mname)) st.marketplaces.push({ name: mname, source: 'github', repo: src })
+        return line({ command: 'marketplace-add', outcome: 'ok', marketplace: mname, message: `Successfully added marketplace: ${mname}` })
+      }
+      case 'remove': {
+        if (!st.marketplaces.some((m) => m.name === name)) return line({ command: 'marketplace-remove', outcome: 'failed', marketplace: name, message: `Marketplace '${name}' not found` })
+        st.marketplaces = st.marketplaces.filter((m) => m.name !== name)
+        st.installed = st.installed.filter((x) => !x.id.endsWith(`@${name}`))
+        return line({ command: 'marketplace-remove', outcome: 'ok', marketplace: name, message: `Successfully removed marketplace: ${name}` })
+      }
+      case 'update':
+        return line({ command: 'marketplace-update', outcome: 'ok', marketplace: name, message: `Successfully updated marketplace: ${name}` })
+    }
+  }
+  const scope = opt('-s', '--scope')
+  if (verb === 'install') {
+    const [pname, mkt] = (arg ?? '').split('@')
+    const p = st.catalog.find((x) => x.name === pname && (!mkt || x.marketplace === mkt))
+    if (!p) return line({ command: 'install', outcome: 'failed', plugin: arg, scope: scope ?? 'user', message: `Plugin "${arg}" not found in any marketplace`, failureCode: 'plugin_not_found' })
+    const id = `${p.name}@${p.marketplace}`
+    if (!find(id)) st.installed.push({ id, scope: scope ?? 'user', enabled: true, version: p.version })
+    return line({ command: 'install', outcome: 'ok', plugin: arg, pluginId: id, scope: scope ?? 'user', message: `Successfully installed plugin: ${id} (scope: ${scope ?? 'user'})`, installedVersion: p.version })
+  }
+  if (verb === 'uninstall' || verb === 'enable' || verb === 'disable' || verb === 'update') {
+    const x = find(arg ?? '')
+    if (!x) return line({ command: verb, outcome: 'failed', plugin: arg, message: `Plugin "${arg}" is not installed` })
+    if (verb === 'uninstall') st.installed = st.installed.filter((y) => y !== x)
+    if (verb === 'enable' || verb === 'disable') {
+      if (x.enabled === (verb === 'enable')) return line({ command: verb, outcome: 'failed', plugin: arg, pluginId: x.id, message: `Plugin "${x.id}" is already ${verb}d` })
+      x.enabled = verb === 'enable'
+    }
+    const past = verb === 'update' ? 'updated' : `${verb}${verb.endsWith('e') ? 'd' : 'ed'}`
+    return line({ command: verb, outcome: 'ok', plugin: arg, pluginId: x.id, scope: x.scope, message: `Successfully ${past} plugin: ${x.id} (scope: ${x.scope})` })
+  }
+  return { code: 1, stdout: '', stderr: `error: unknown command '${verb}'` }
+}
+
+/** The deploy form the mock's elicitation scenario asks for: a choice, a required text and a boolean. */
+export const MOCK_ELICIT_SCHEMA = {
+  type: 'object',
+  properties: {
+    environment: { type: 'string', title: 'Environment', enum: ['staging', 'production'], enumNames: ['Staging', 'Production'] },
+    reason: { type: 'string', title: 'Reason', description: 'Shown in the deploy log', minLength: 3 },
+    notify: { type: 'boolean', title: 'Notify the channel', default: true },
+  },
+  required: ['environment', 'reason'],
 }

@@ -49,7 +49,7 @@ async function tourTheme(theme) {
   await shot(`${theme}-06-long-collapsed`)
   await readAll(app)
 
-  await app.key('Ctrl+L')
+  await app.key('Ctrl+O')
   await app.waitVisible(T('log'))
   await shot(`${theme}-07-log`)
   await app.key('Escape')

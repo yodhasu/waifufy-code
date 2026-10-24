@@ -187,7 +187,7 @@ export default {
         await turnEnd(app, m)
         await readAll(app)
         const names = (await app.dialogueLog(m)).map((d) => d.name)
-        await app.key('Ctrl+L')
+        await app.key('Ctrl+O')
         await app.waitVisible(T('log'))
         const log = (await app.texts(T('log-entry', { who: 'user' }))).join('\n')
         await app.key('Escape')

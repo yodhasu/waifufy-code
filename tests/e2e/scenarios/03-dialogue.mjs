@@ -191,7 +191,7 @@ export default {
         assert(!lines.some((d) => d.text.trim().endsWith('…')), 'a 3-item list is not collapsed')
         assert(!lines.some((d) => /^\s*- /m.test(d.text)), 'items show as bullets, not "- "')
         assert(lines.some((d) => /<(b|strong)\b[^>]*>template<\/(b|strong)>/.test(d.html)), 'bold is rendered')
-        await app.key('Ctrl+L')
+        await app.key('Ctrl+O')
         await app.waitVisible(T('log'))
         const log = (await app.texts(`${T('log')} ${T('log-entry', { who: 'char' })}`)).join('\n')
         assert(log.includes(MOCK.link.href), 'LOG shows where the link goes')
@@ -238,7 +238,7 @@ export default {
         const bullets = Math.max(...shown.map((t) => (t.match(/step\d+\.ts/g) ?? []).length))
         assert(bullets <= MAX_LIST_ITEMS_SHOWN + 1, `at most a few list items on the page (${bullets})`)
 
-        await app.key('Ctrl+L')
+        await app.key('Ctrl+O')
         await app.waitVisible(T('log'))
         const log = (await app.texts(`${T('log')} ${T('log-entry', { who: 'char' })}`)).join('\n')
         for (const needle of ['step10.ts', 'ctx.agent.run', '09:00–21:00', 'admin panel', MOCK.longSentenceTail]) {

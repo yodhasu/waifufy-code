@@ -324,6 +324,27 @@
 .chat .menu-foot { display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; color: var(--text-faint); border-top: 1px dashed var(--panel-line); padding-top: 8px; }
 .chat .menu-foot .mkeys { font-style: italic; }
 .chat .modal.menu .msearch { width: 280px; padding: 5px 12px; }
+.chat .mtabs { display: flex; gap: 6px; flex-wrap: wrap; margin-top: -4px; }
+.chat .mtabs[hidden] { display: none; }
+.chat .mtab { border: 1px solid var(--panel-line); background: var(--panel-inset); color: var(--text-soft); border-radius: 999px;
+  padding: 4px 16px; font: inherit; font-size: 13.5px; cursor: pointer; }
+.chat .mtab.on { border-color: var(--gold); color: var(--heading); font-weight: 700;
+  background: linear-gradient(180deg, var(--accent-pale), var(--panel-solid)); }
+
+/* ---------- MCP elicitation form, inside the choice menu ---------- */
+.chat .ask .eform { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 8px; }
+.chat .ask .efield { display: grid; grid-template-columns: 170px 1fr; gap: 2px 14px; align-items: center; }
+.chat .ask .efield .elabel { font-weight: 700; color: var(--heading); }
+.chat .ask .efield .elabel i { color: var(--bad); font-style: normal; }
+.chat .ask .efield small { grid-column: 2; color: var(--text-soft); font-size: 12.5px; }
+.chat .ask .efield .field { padding: 6px 12px; }
+.chat .ask .echips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chat .ask .echip { border: 1px solid var(--panel-line); background: var(--panel-inset); border-radius: 999px; padding: 4px 14px;
+  font: inherit; font-size: 13.5px; color: var(--text); cursor: pointer; }
+.chat .ask .echip.on { border-color: var(--accent); background: color-mix(in oklab, var(--accent) 18%, var(--panel-inset)); color: var(--heading); font-weight: 700; }
+.chat .ask .echip:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-glow); }
+.chat .ask .echeck { width: 20px; height: 20px; accent-color: var(--accent); justify-self: start; }
+.chat .ask .eerr { color: var(--bad); font-size: 13.5px; font-weight: 700; }
 
 .chat .log { display: flex; flex-direction: column; gap: 12px; padding-right: 8px; user-select: text; overflow-y: auto; }
 .chat .log .e { display: grid; grid-template-columns: 96px 1fr 28px; gap: 14px; font-size: 15.5px; line-height: 1.55; align-items: start; }
@@ -377,3 +398,97 @@
 .chat .help kbd { font-family: var(--font-mono); font-size: 12px; color: var(--heading); white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; }
 .chat .help span { color: var(--text-soft); }
+
+/* ---------- /permissions and /add-dir (commands/permissions.ts): the tab strip and the rule / path field ---------- */
+.chat .ptabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.chat .ptab { border: 1px solid var(--panel-line); background: var(--panel-inset); border-radius: 999px; padding: 3px 14px;
+  font: inherit; font-size: 13px; color: var(--text-soft); cursor: pointer; }
+.chat .ptab:hover, .chat .ptab:focus-visible { border-color: var(--accent); outline: none; }
+.chat .ptab.on { color: var(--text); font-weight: 700; border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 14%, var(--panel-inset)); }
+.chat .menu-body .pinput { width: 100%; margin-top: 10px; font-family: var(--font-mono); font-size: 13.5px; }
+
+/* ---------- /hooks and /memory (commands/hooks.ts, commands/memory.ts): notes, banners, the event text, the file preview ---------- */
+.chat .menu-body .mhook-note, .chat .menu-body .mmem-note { margin: 8px 0 0; color: var(--text-soft); font-size: 13px; }
+.chat .menu-body .mhook-banner { margin: 0 0 8px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--panel-line);
+  background: var(--panel-inset); font-size: 13px; }
+.chat .menu-body .mhook-banner.warn { color: var(--warn); border-color: var(--warn); }
+.chat .menu-body .mhook-banner.bad { color: var(--bad); border-color: var(--bad); }
+.chat .menu-body .mhook-desc { margin: 0; white-space: pre-line; color: var(--text-soft); font-size: 13px; font-family: var(--font-mono); }
+.chat .menu-body .mmem-preview { margin: 10px 0 0; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: var(--font-mono); font-size: 12.5px; padding: 10px 14px; border-radius: 10px; background: var(--panel-inset);
+  border: 1px solid var(--panel-line); color: var(--text); }
+
+/* ---------- Settings dialog (commands/settings-panel.ts): Status · Config · Usage · Stats tabs, limit bars ---------- */
+.chat .sp-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.chat .sp-tab { border: 1px solid var(--panel-line); background: var(--panel-inset); border-radius: 999px; padding: 3px 16px;
+  font: inherit; font-size: 13px; color: var(--text-soft); cursor: pointer; }
+.chat .sp-tab:hover, .chat .sp-tab:focus-visible { border-color: var(--accent); outline: none; }
+.chat .sp-tab.on { color: var(--text); font-weight: 700; border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 14%, var(--panel-inset)); }
+.chat .sp-pane { max-height: calc(100vh - 330px); overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.chat .sp-h { margin: 6px 0 0; font-family: var(--font-title); letter-spacing: .12em; font-size: 14px; color: var(--heading); }
+.chat .sp-note { margin: 0; color: var(--text-soft); font-size: 13px; }
+.chat .sp-limit { display: flex; flex-direction: column; gap: 3px; padding: 4px 16px; }
+.chat .sp-limit small { color: var(--text-soft); font-size: 12.5px; }
+.chat .sp-meter { height: 10px; border-radius: 999px; background: var(--panel-inset); border: 1px solid var(--panel-line); overflow: hidden; }
+.chat .sp-meter i { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
+.chat .sp-meter.warn i { background: var(--warn); }
+.chat .sp-meter.bad i { background: var(--bad); }
+
+/* ---------- /model, /effort, /fast (commands/model.ts) and /context (commands/context.ts) ---------- */
+/* /effort: the level rows drawn as the CLI's Faster ↔ Smarter slider, ▲ under the focused stop, its description below. */
+.chat [data-test='effort'] .eff-ends { display: flex; justify-content: space-between; padding: 0 18px; color: var(--text-soft);
+  font-family: var(--font-title); font-weight: 700; letter-spacing: .1em; }
+.chat [data-test='effort'] .mgroup:first-child { position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+  gap: 6px; padding: 0 0 46px; }
+.chat [data-test='effort'] .mgroup:first-child::before { content: ''; position: absolute; left: 10%; right: 10%; top: 19px; height: 4px;
+  border-radius: 999px; background: linear-gradient(90deg, var(--warn), var(--ok), var(--accent), var(--c-tools), var(--c-messages)); opacity: .55; }
+.chat [data-test='effort'] .mgroup:first-child .mrow { position: static; display: flex; flex-direction: column; align-items: center;
+  gap: 2px; padding: 6px 4px; text-align: center; }
+.chat [data-test='effort'] .mgroup:first-child .mrow::before { content: none; }
+.chat [data-test='effort'] .mgroup:first-child .mrow::after { content: '▲'; color: var(--gold); font-weight: 800; visibility: hidden; }
+.chat [data-test='effort'] .mgroup:first-child .mrow:focus::after { visibility: visible; }
+.chat [data-test='effort'] .mgroup:first-child .mi { position: relative; z-index: 1; width: 30px; height: 30px; display: grid; place-items: center;
+  border-radius: 50%; background: var(--panel-solid); border: 1px solid var(--panel-line); font-size: 17px; }
+.chat [data-test='effort'] .mgroup:first-child .mrow:focus .mi { box-shadow: 0 0 0 3px var(--accent-glow); border-color: var(--accent); }
+.chat [data-test='effort'] .mgroup:first-child .ml { align-items: center; }
+.chat [data-test='effort'] .mgroup:first-child .ml small { display: none; position: absolute; left: 0; right: 0; bottom: 0; text-align: center;
+  white-space: normal; }
+.chat [data-test='effort'] .mgroup:first-child .mrow:focus .ml small { display: block; }
+.chat [data-test='effort'] .mgroup:first-child .mi.accent { color: var(--accent); }
+.chat [data-test='effort'] .mgroup:first-child [data-id='xhigh'] .mi { color: var(--c-tools); }
+.chat [data-test='effort'] .mgroup:first-child [data-id='max'] .mi { background: linear-gradient(135deg, var(--c-messages), var(--gold), var(--ok), var(--c-mcp), var(--c-tools));
+  -webkit-background-clip: text; background-clip: text; color: transparent; border-color: var(--c-tools); }
+
+/* /context: the CLI's grid of squares (⛁ full, ⛀ partial, ⛶ free, ⛝ buffer) beside its legend. */
+.chat .ctx { display: flex; gap: 26px; align-items: flex-start; padding: 12px 16px; border-radius: 14px; background: var(--panel-inset);
+  border: 1px solid var(--panel-line); }
+.chat .cx-grid { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+.chat .cx-row { display: flex; gap: 4px; }
+.chat .cx { width: 18px; height: 18px; border-radius: 4px; display: block; background: var(--cc); box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .12); }
+.chat .cx.part { background: linear-gradient(to top, var(--cc) calc(var(--f) * 100%), color-mix(in oklab, var(--cc) 22%, transparent) 0); }
+.chat .cx.free { background: none; box-shadow: none; border: 1px dashed color-mix(in oklab, var(--text-faint) 55%, transparent); }
+.chat .cx.buf { background: repeating-linear-gradient(135deg, var(--c-buffer) 0 2px, transparent 2px 4px); box-shadow: none;
+  outline: 1px solid var(--c-buffer); outline-offset: -1px; }
+.chat .cx-legend { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; font-size: 13.5px; }
+.chat .cx-model b { color: var(--heading); font-family: var(--font-mono); font-size: 13px; }
+.chat .cx-total { color: var(--text-soft); font-family: var(--font-mono); font-size: 12.5px; }
+.chat .cx-meter { height: 6px; border-radius: 999px; background: var(--chip); border: 1px solid var(--panel-line); overflow: hidden; margin: 2px 0 4px; }
+.chat .cx-meter i { display: block; height: 100%; background: linear-gradient(90deg, var(--c-system), var(--c-tools), var(--c-messages)); }
+.chat .cx-est { margin: 4px 0 2px; font-style: italic; color: var(--text-faint); font-size: 12.5px; }
+.chat .cx-legend ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.chat .cx-legend li { display: grid; grid-template-columns: 14px auto 1fr; gap: 8px; align-items: center; }
+.chat .cx-legend li b { width: 12px; height: 12px; border-radius: 3px; background: var(--cc); }
+.chat .cx-legend li.free b { background: none; border: 1px dashed var(--text-faint); }
+.chat .cx-legend li.buf b { background: repeating-linear-gradient(135deg, var(--c-buffer) 0 2px, transparent 2px 4px); outline: 1px solid var(--c-buffer); }
+.chat .cx-legend li em { font-style: normal; color: var(--text-faint); font-family: var(--font-mono); font-size: 12px; }
+
+/* /plugin (W6): the Plugins panel's tab bar, its trust warning and the Add Marketplace field. */
+.chat [data-test='plugin'] .ptabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.chat [data-test='plugin'] .ptab { padding: 5px 14px; border-radius: 999px; border: 1px solid var(--panel-line); background: var(--panel-inset);
+  color: var(--text-soft); font: inherit; font-size: 13px; cursor: pointer; }
+.chat [data-test='plugin'] .ptab.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+.chat [data-test='plugin'] .mwarn { color: var(--warn); font-size: 13px; margin: 0 0 8px; }
+.chat [data-test='plugin'] .psource { width: 100%; font-family: var(--font-mono); }
+.chat [data-test='plugin'] .pex { color: var(--text-faint); font-size: 12.5px; margin: 6px 0 0; }
