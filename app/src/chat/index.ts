@@ -7,7 +7,7 @@ import type { ChatParams, Ctx, Gesture, Screen } from '../contracts'
 import { addressOf } from '../screens/title'
 import { esc, fmtK } from '../ui'
 import { createAsks, type Asks } from './asks'
-import { mcpCommand } from './commands/mcp'
+import { findAppCommand, runCli, type CommandHost } from './commands'
 import './chat.css'
 import {
   cleanText, createDialogue, createPager, lastEmotion, markdown, pagesForMono, pagesForText, type Dialogue, type DisplayPage,
@@ -202,7 +202,7 @@ export function chatScreen(): Screen {
   }
 
   /** What the CLI-style menus (/mcp…) need from the chat: its modal layer, toasts, the link and the session folder. */
-  const menuHost = () => ({ modal, toast: ctx.toast, link: ctx.link, cwd: () => cwd })
+  const menuHost = (): CommandHost => ({ modal, toast: ctx.toast, ctx, link: ctx.link, cwd: () => cwd, charName, cli: (text) => runCli(ctx.link, text) })
 
   /** ↑↓ between the picker's items; Enter clicks the focused one natively. */
   const listKeys = (el: HTMLElement) => (e: KeyboardEvent) => {
@@ -1074,6 +1074,8 @@ export function chatScreen(): Screen {
           runShell(command)
         },
         local(name, args) {
+          const own = findAppCommand(name)
+          if (own?.run) return own.run(menuHost(), args), true
           switch (name) {
             case 'model':
               if (args.trim()) setModel(args.trim())
@@ -1093,9 +1095,6 @@ export function chatScreen(): Screen {
               return true
             case 'costume':
               openCostumes()
-              return true
-            case 'mcp':
-              mcpCommand(menuHost(), args)
               return true
             case 'help':
               openHelp()

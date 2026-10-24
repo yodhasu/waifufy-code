@@ -6,6 +6,7 @@ import type { Command, FileHit, Image } from '../../../link/src/protocol.ts'
 import type { Ctx } from '../contracts'
 import { esc } from '../ui'
 import './input.css'
+import { APP_COMMANDS } from './commands'
 
 export type InputHost = {
   ctx: Ctx
@@ -84,23 +85,6 @@ const HINT_MS = 2400
 const QUEUE_CHIP_CHARS = 60
 const DROP_LINGER_MS = 160
 
-type AppCommand = { name: string; aliases: string[]; hint: string; describe(waifu: string): string }
-
-/**
- * Commands the app answers itself. They come first in the picker and replace SDK rows of the same name (or alias):
- * in headless mode the CLI's own /resume, /help, /exit, /login… only answer "opens an interactive panel".
- */
-const APP_COMMANDS: AppCommand[] = [
-  { name: 'model', aliases: [], hint: '[model]', describe: (w) => `Choose the model ${w} thinks with` },
-  { name: 'clear', aliases: ['reset', 'new'], hint: '', describe: () => 'Fresh session in this folder (the old one stays in Load)' },
-  { name: 'resume', aliases: [], hint: '', describe: () => 'Open the Save/Load page' },
-  { name: 'config', aliases: ['settings', 'theme'], hint: '', describe: () => 'Open Settings' },
-  { name: 'costume', aliases: ['outfit'], hint: '', describe: (w) => `Change ${w}'s outfit` },
-  { name: 'mcp', aliases: [], hint: '[reconnect|enable|disable [<server>|all]]', describe: () => 'Manage MCP servers' },
-  { name: 'help', aliases: [], hint: '', describe: () => 'Commands and keyboard shortcuts' },
-  { name: 'exit', aliases: ['quit'], hint: '', describe: () => 'Back to the title screen' },
-  { name: 'login', aliases: [], hint: '', describe: () => 'Log in to Claude Code (opens a console window)' },
-]
 
 type SlashItem = { name: string; description: string; hint: string; tag: 'app' | 'built-in' | 'custom'; alias?: string }
 

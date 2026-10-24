@@ -265,14 +265,16 @@ export type ClientMsg =
  * The running session's SDK controls the app may call directly: `Query` methods, by name. They back the in-app
  * versions of the CLI's interactive panels (/mcp, /agents, /context, /usage, /status, /effort, /rewind, /tasks).
  * `usage` is the SDK's experimental data call behind `/usage`. `mcpLogin` and `mcpLogout` have no SDK control: the link
- * runs `claude mcp login|logout <name>` for them.
+ * runs `claude mcp login|logout <name>` for them. `cli` runs a slash command such as
+ * `/config key=value` silently and answers with its text output. `settingsFiles`, `editSettings`, `cliExec` and
+ * `readText` are link-side file and CLI helpers (link/src/config-files.ts) for the panels the SDK has no control for.
  */
 export const CTL_OPS = [
   'mcpServerStatus', 'reconnectMcpServer', 'toggleMcpServer', 'setMcpPermissionModeOverride', 'readMcpResource',
   'supportedAgents', 'supportedCommands', 'supportedModels', 'initializationResult', 'accountInfo',
   'getContextUsage', 'usage', 'reloadPlugins', 'reloadSkills', 'reloadOutputStyles',
   'applyFlagSettings', 'updateSettings', 'setMaxThinkingTokens', 'rewindFiles', 'stopTask',
-  'mcpLogin', 'mcpLogout',
+  'mcpLogin', 'mcpLogout', 'cli', 'settingsFiles', 'editSettings', 'cliExec', 'readText',
 ] as const
 
 export type CtlOp = (typeof CTL_OPS)[number]

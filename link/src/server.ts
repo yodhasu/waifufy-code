@@ -21,6 +21,9 @@ import { acceptTrust, isTrusted, trustConcerns } from './trust.ts'
 const PORT = Number(process.env.WC_PORT ?? 47900)
 const TOKEN = process.env.WC_TOKEN ?? ''
 const MOCK = process.env.WC_MOCK === '1'
+// Mock sessions edit settings files for real (the /permissions and /skills panels), so their "user" settings
+// live in the test's data folder, never in the real ~/.claude.
+if (MOCK) process.env.CLAUDE_CONFIG_DIR = join(DATA_DIR, 'mock-claude')
 const claudePath = process.env.WC_CLAUDE || undefined
 const VERSION = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version
 

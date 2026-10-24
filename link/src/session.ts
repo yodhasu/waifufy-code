@@ -17,6 +17,7 @@ import {
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk'
 import { mcpLogin, mcpLogout } from './auth.ts'
+import { fileControl } from './config-files.ts'
 import { buildPersona } from './persona.ts'
 import {
   EMOTIONS,
@@ -38,6 +39,8 @@ import { ANSI, buildDiffs, clip, describeTool, isDestructive, prettyInput, str, 
 const STDERR_LINES = 40
 /** How many of them an error message quotes. */
 const STDERR_TAIL = 12
+/** How long a panel waits for a slash command it ran (cliCommand) to answer. */
+const CLI_COMMAND_TIMEOUT_MS = 20_000
 /** Token-count updates for the spinner are sent at most this often; phase changes go out at once. */
 const PROGRESS_MS = 250
 /** The context gauge is re-read this long after the last main-agent tool result. */
@@ -362,6 +365,10 @@ class Session implements SessionApi {
    * result and running/idle states; those are hidden, since nothing was asked.
    */
   private silent = new Set<string>()
+  /** A slash command a panel ran (cliCommand): its output is collected for the panel instead of shown. */
+  private capture?: { uuid: string; out: string[]; done(text: string): void }
+  /** cliCommand calls run one at a time, so each output lands with the call that asked for it. */
+  private cliChain: Promise<unknown> = Promise.resolve()
   /** The CLI reported 'running' for silent appends only, so its 'idle' is hidden too. */
   private quiet = false
   /** The user sent while an append ran: the append's own 'idle', if the CLI sends one before the user's turn, is hidden. */
@@ -574,8 +581,35 @@ class Session implements SessionApi {
     }
   }
 
+  /**
+   * Runs a CLI slash command for a panel (`/config theme=dark`, `/effort high`) and resolves with its text output.
+   * It is sent like a silent append, so no turn, spinner or notice shows. Refused while a turn runs: its output
+   * would come back mixed with hers.
+   */
+  cliCommand(text: string): Promise<string> {
+    const run = this.cliChain.then(() => {
+      if (this.running) throw new Error('Wait until she finishes this turn')
+      if (!this.q || this.ended) throw new Error('The session is not ready yet')
+      const uuid = randomUUID()
+      this.silent.add(uuid)
+      return new Promise<string>((done, fail) => {
+        const timer = setTimeout(() => {
+          if (this.capture?.uuid === uuid) this.capture = undefined
+          fail(new Error(`${text.split(' ')[0]} did not answer`))
+        }, CLI_COMMAND_TIMEOUT_MS)
+        this.capture = { uuid, out: [], done: (t) => (clearTimeout(timer), done(t)) }
+        this.inbox.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, uuid })
+      })
+    })
+    this.cliChain = run.catch(() => undefined)
+    return run
+  }
+
   /** One of the SDK's session controls (CTL_OPS), for the app's versions of the CLI's interactive panels. */
   async control(op: CtlOp, args: unknown[]) {
+    if (op === 'cli') return this.cliCommand(String(args[0]))
+    const files = fileControl(op, args, this.cwd, this.opts.claudePath)
+    if (files) return files
     if (op === 'mcpLogin') return mcpLogin(String(args[0]), this.cwd, this.opts.claudePath)
     if (op === 'mcpLogout') return mcpLogout(String(args[0]), this.cwd, this.opts.claudePath)
     const q = this.q
@@ -849,6 +883,7 @@ class Session implements SessionApi {
     if (!results.length) {
       // A local command's output can come back as a user message wrapped in <local-command-stdout>.
       const out = [...textOf(content).matchAll(LOCAL_OUTPUT)].map((x) => x[2]).join('\n')
+      if (this.capture && out.trim()) return void this.capture.out.push(commandText(out))
       if (!this.shown && out.trim()) this.notice(commandText(out), 'command')
       return
     }
@@ -933,6 +968,12 @@ class Session implements SessionApi {
   private onResult(m: Extract<SDKMessage, { type: 'result' }>) {
     const sent = m.user_message_uuids ?? (m.user_message_uuid ? [m.user_message_uuid] : [])
     const appendOnly = sent.length > 0 && sent.every((id) => this.silent.has(id))
+    if (this.capture && sent.includes(this.capture.uuid)) {
+      const c = this.capture
+      this.capture = undefined
+      // Output arrives as its own message before the result; a command with none answers in the result text.
+      c.done([...new Set(c.out)].join('\n') || commandText(m.subtype === 'success' ? m.result : ''))
+    }
     for (const id of sent) this.silent.delete(id)
     if (appendOnly) {
       // Appends queued behind a turn finish after it, so the last of them is what ends the CLI's run.
@@ -1035,6 +1076,7 @@ class Session implements SessionApi {
           commands: m.commands.map((x) => ({ name: x.name, description: x.description, argumentHint: x.argumentHint, builtin: x.builtin === true, ...(x.aliases?.length ? { aliases: x.aliases } : {}) })),
         })
       case 'local_command_output':
+        if (this.capture) return void this.capture.out.push(commandText(m.content))
         if (!this.shown) this.notice(commandText(m.content), 'command')
         return
       case 'compact_boundary': {

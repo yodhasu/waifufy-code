@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { fileControl } from './config-files.ts'
 import {
   EMOTIONS,
   type Command,
@@ -326,6 +327,11 @@ class MockSession implements SessionApi {
 
   /** SDK-shaped answers for the panels' controls (see mockControl), so the E2E suite can drive /mcp, /agents… */
   async control(op: CtlOp, args: unknown[]) {
+    // Settings files, CLI subcommands and text reads are real, against the test's own folders (see MOCK_CLAUDE_DIR).
+    if (op !== 'cliExec') {
+      const files = fileControl(op, args, this.opts.cwd)
+      if (files) return files
+    }
     return mockControl(this.mcp, op, args)
   }
 
@@ -1162,6 +1168,8 @@ function mockControl(mcp: MockMcp[], op: CtlOp, args: unknown[]): unknown {
     case 'mcpLogout':
       server(args[0]).status = 'needs-auth'
       return `Cleared credentials for ${String(args[0])}`
+    case 'cli':
+      return mockCli(String(args[0]))
     case 'supportedAgents':
       return MOCK_AGENTS
     case 'accountInfo':
@@ -1200,4 +1208,25 @@ function mockControl(mcp: MockMcp[], op: CtlOp, args: unknown[]): unknown {
     default:
       throw new Error(`The mock session has no ${op} control`)
   }
+}
+
+/** What the mock's `/config key=value` has set, so a panel that reads back sees its change. */
+export const mockConfig = new Map<string, string>()
+
+/** The CLI's text answers to the slash commands panels run silently (`/config`, `/effort`, `/fast`). */
+function mockCli(text: string): string {
+  const [name, ...rest] = text.trim().slice(1).split(/\s+/)
+  if (name === 'config') {
+    if (!rest.length) return 'Usage: /config key=value [key=value ...]'
+    return rest
+      .map((pair) => {
+        const [k, v = ''] = pair.split('=')
+        mockConfig.set(k, v)
+        return `Set ${k} to ${v}`
+      })
+      .join('\n')
+  }
+  if (name === 'effort') return rest[0] ? `Set effort level to ${rest[0]}` : 'Effort level: auto'
+  if (name === 'fast') return `Fast mode ${rest[0] === 'off' ? 'OFF' : 'ON'}`
+  return `Ran /${name}`
 }
