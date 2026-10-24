@@ -898,6 +898,7 @@ export function chatScreen(): Screen {
       case 'ask_permission':
       case 'ask_question':
       case 'ask_plan':
+      case 'ask_elicit':
         asks.push(m)
         if (!visible) ctx.toast(`${charName()} needs your answer in the chat`, 4000)
         callForAttention()

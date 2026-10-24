@@ -258,6 +258,10 @@ export type ClientMsg =
   | { t: 'research_cancel' }
   /** Opens a folder or file in the OS (Explorer). */
   | { t: 'reveal'; path: string }
+  /** Opens an http(s) URL in the browser, or a file with its default app (an MCP sign-in page, CLAUDE.md). */
+  | { t: 'open'; target: string }
+  /** The answer to an `ask_elicit`: accept with the form's `content`, decline, or cancel. */
+  | { t: 'elicit'; id: string; action: 'accept' | 'decline' | 'cancel'; content?: Record<string, ElicitValue> }
   /** Calls one of the running session's SDK controls (CTL_OPS) with positional `args`; answered with `ctl_result`. */
   | { t: 'ctl'; id: string; op: CtlOp; args?: unknown[] }
 
@@ -306,6 +310,11 @@ export type SessionEvent =
   | { t: 'ask_permission'; id: string; tool: string; title: string; detail: string; diffs: Diff[]; canAlways: boolean; danger: boolean; defaultToNo: boolean; reason?: string; input?: string; always?: string }
   | { t: 'ask_question'; id: string; questions: Question[] }
   | { t: 'ask_plan'; id: string; plan: string; planFile?: string }
+  /**
+   * An MCP server asks the user for input (elicitation): a form built from its JSON schema, or a URL to open
+   * (a sign-in). Answered with `elicit`; `ask_cancel` closes it when the server stops waiting.
+   */
+  | { t: 'ask_elicit'; id: string; server: string; mode: 'form' | 'url'; message: string; title?: string; url?: string; fields: ElicitField[] }
   | { t: 'ask_cancel'; id: string }
   | { t: 'state'; state: 'idle' | 'running' | 'requires_action' }
   | { t: 'stats'; stats: Stats }
@@ -335,3 +344,21 @@ export type ServerMsg =
   | { t: 'app_error'; message: string }
   /** The answer to a `ctl`: the SDK call's result, or its error message. */
   | { t: 'ctl_result'; id: string; ok: boolean; data?: unknown; error?: string }
+
+/** One input of an MCP elicitation form, from a property of its requested JSON schema. */
+export type ElicitField = {
+  name: string
+  title: string
+  description?: string
+  kind: 'text' | 'number' | 'integer' | 'boolean' | 'choice' | 'multi'
+  required: boolean
+  /** For choice and multi: the allowed values, with display labels when the schema has them. */
+  options?: { value: string; label: string }[]
+  default?: ElicitValue
+  /** For text: email, uri, date or date-time. */
+  format?: string
+  min?: number
+  max?: number
+}
+
+export type ElicitValue = string | number | boolean | string[]

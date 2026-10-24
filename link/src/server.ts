@@ -369,6 +369,19 @@ function reveal(path: string) {
   child.unref()
 }
 
+/** Opens an http(s) URL in the browser, or an existing file or folder with its default app. */
+function open(target: string) {
+  need(isStr(target) && target.trim(), 'target')
+  const url = /^https?:///i.test(target)
+  if (!url && !existsSync(resolve(target))) throw new BadRequest(`${target} doesn't exist.`)
+  const what = url ? target : resolve(target)
+  const child = process.platform === 'win32'
+    ? spawn('rundll32.exe', ['url.dll,FileProtocolHandler', what], { detached: true, stdio: 'ignore' })
+    : spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [what], { detached: true, stdio: 'ignore' })
+  child.on('error', (e) => console.error('[open]', e))
+  child.unref()
+}
+
 async function handle(ws: WebSocket, m: ClientMsg) {
   switch (m.t) {
     case 'hello':
@@ -475,6 +488,16 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       return researchCtl?.abort()
     case 'reveal':
       return reveal(m.path)
+    case 'open':
+      return open(m.target)
+    case 'elicit':
+      need(isStr(m.id) && ['accept', 'decline', 'cancel'].includes(m.action) && (m.content === undefined || (typeof m.content === 'object' && m.content !== null)), 'id, action, content')
+      try {
+        return live().answerElicit(m.id, m.action, m.content)
+      } catch (e) {
+        // A form that doesn't fit the schema stays open; the reason goes back to the app.
+        throw new BadRequest(e instanceof Error ? e.message : String(e))
+      }
     default:
       throw new BadRequest(`Unknown message type: ${String((m as { t?: unknown }).t)}`)
   }

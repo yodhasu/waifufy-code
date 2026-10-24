@@ -31,6 +31,8 @@ export interface SessionApi {
   answerQuestion(id: string, answers: Record<string, string>): void
   /** Calls an SDK session control (CTL_OPS); rejects with its error. */
   control(op: CtlOp, args: unknown[]): Promise<unknown>
+  /** The user's answer to an `ask_elicit`; throws when an accepted form doesn't fit the server's schema. */
+  answerElicit(id: string, action: 'accept' | 'decline' | 'cancel', content?: Record<string, unknown>): void
   answerPlan(id: string, decision: 'auto' | 'manual' | 'keep', message?: string): void
 }
 

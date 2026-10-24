@@ -11,6 +11,8 @@ import {
   type Options,
   type PermissionResult,
   type PermissionUpdate,
+  type ElicitationRequest,
+  type ElicitationResult,
   type Query,
   type SDKAssistantMessageError,
   type SDKMessage,
@@ -18,10 +20,12 @@ import {
 } from '@anthropic-ai/claude-agent-sdk'
 import { mcpLogin, mcpLogout } from './auth.ts'
 import { fileControl } from './config-files.ts'
+import { elicitContent, elicitFields } from './elicit.ts'
 import { buildPersona } from './persona.ts'
 import {
   EMOTIONS,
   type CtlOp,
+  type ElicitField,
   type Emotion,
   type Image,
   type Limit,
@@ -350,6 +354,8 @@ class Session implements SessionApi {
   private stats: Stats = freshStats()
   private models: ModelInfo[] = []
   private pending = new Map<string, Pending>()
+  /** Open MCP elicitations, by the id the app answers with. */
+  private elicits = new Map<string, { fields: ElicitField[]; elicitationId?: string; finish(r: ElicitationResult): void }>()
   private tags: TagParser
   private textOpen = false
   /** Content block types of the main agent's message being streamed, by index. */
@@ -474,6 +480,7 @@ class Session implements SessionApi {
       env: { ...childEnv(), CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1', CLAUDE_AGENT_SDK_CLIENT_APP: CLIENT_APP },
       stderr: (d) => this.onStderr(d),
       canUseTool: (name, input, o) => this.ask(name, input, o),
+      onElicitation: (request, o) => this.elicit(request, o.signal),
     }
   }
 
@@ -545,6 +552,10 @@ class Session implements SessionApi {
       p.resolve({ behavior: 'deny', message: DENY_MESSAGE, interrupt: true })
     }
     this.pending.clear()
+    for (const [id, e] of this.elicits) {
+      this.emit({ t: 'ask_cancel', id })
+      e.finish({ action: 'cancel' })
+    }
     await this.q?.interrupt().catch(() => undefined)
   }
 
@@ -1075,6 +1086,14 @@ class Session implements SessionApi {
           t: 'commands',
           commands: m.commands.map((x) => ({ name: x.name, description: x.description, argumentHint: x.argumentHint, builtin: x.builtin === true, ...(x.aliases?.length ? { aliases: x.aliases } : {}) })),
         })
+      case 'elicitation_complete':
+        // The server saw the URL flow finish (a sign-in in the browser): its dialog has nothing left to wait for.
+        for (const [id, e] of this.elicits) {
+          if (e.elicitationId !== m.elicitation_id) continue
+          this.emit({ t: 'ask_cancel', id })
+          e.finish({ action: 'accept' })
+        }
+        return
       case 'local_command_output':
         if (this.capture) return void this.capture.out.push(commandText(m.content))
         if (!this.shown) this.notice(commandText(m.content), 'command')
@@ -1299,6 +1318,43 @@ class Session implements SessionApi {
         ...(typeof x.preview === 'string' ? { preview: x.preview } : {}),
       })),
     }))
+  }
+
+  /** An MCP server asks for input: shown as a form or URL menu (ask_elicit) until answered or the server gives up. */
+  private elicit(r: ElicitationRequest, signal: AbortSignal): Promise<ElicitationResult> {
+    const id = randomUUID()
+    const fields = r.mode === 'url' ? [] : elicitFields(r.requestedSchema)
+    return new Promise((resolve) => {
+      const finish = (res: ElicitationResult) => {
+        if (!this.elicits.delete(id)) return
+        signal.removeEventListener('abort', onAbort)
+        resolve(res)
+      }
+      const onAbort = () => {
+        this.emit({ t: 'ask_cancel', id })
+        finish({ action: 'cancel' })
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+      this.elicits.set(id, { fields, finish, elicitationId: r.elicitationId })
+      this.emit({
+        t: 'ask_elicit',
+        id,
+        server: r.serverName,
+        mode: r.mode === 'url' ? 'url' : 'form',
+        message: r.message,
+        ...(r.title ? { title: r.title } : {}),
+        ...(r.url ? { url: r.url } : {}),
+        fields,
+      })
+    })
+  }
+
+  /** The user's answer to an elicitation. A form that doesn't fit its schema is refused with the reason. */
+  answerElicit(id: string, action: 'accept' | 'decline' | 'cancel', content?: Record<string, unknown>) {
+    const e = this.elicits.get(id)
+    if (!e) return
+    if (action !== 'accept' || !e.fields.length) return e.finish({ action })
+    e.finish({ action, content: elicitContent(e.fields, content ?? {}) })
   }
 
   private take(id: string) {

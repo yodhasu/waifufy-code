@@ -1,12 +1,13 @@
-// Choice menus the agent opens: permission prompts, AskUserQuestion and plan approval (R20, R21).
-// One is shown at a time; the rest wait in a FIFO queue, so a prompt from a background helper never
-// replaces (and strands) the one on screen.
+// Choice menus the agent opens: permission prompts, AskUserQuestion, plan approval (R20, R21) and MCP
+// elicitation forms. One is shown at a time; the rest wait in a FIFO queue, so a prompt from a background
+// helper never replaces (and strands) the one on screen.
 
-import type { Diff, Question, SessionEvent } from '../../../link/src/protocol.ts'
+import { elicitContent } from '../../../link/src/elicit.ts'
+import type { Diff, ElicitField, ElicitValue, Question, SessionEvent } from '../../../link/src/protocol.ts'
 import type { Ctx, Gesture } from '../contracts'
 import { esc } from '../ui'
 
-type AskMsg = Extract<SessionEvent, { t: 'ask_permission' } | { t: 'ask_question' } | { t: 'ask_plan' }>
+type AskMsg = Extract<SessionEvent, { t: 'ask_permission' } | { t: 'ask_question' } | { t: 'ask_plan' } | { t: 'ask_elicit' }>
 type Entry = { m: AskMsg; step: number; answers: Record<string, string>; picked: Set<string>; greeted: boolean }
 
 /**
@@ -153,9 +154,10 @@ export function createAsks(
       return deps.onChange(false)
     }
     root.dataset.test = 'ask'
-    root.dataset.kind = e.m.t === 'ask_permission' ? 'permission' : e.m.t === 'ask_question' ? 'question' : 'plan'
+    root.dataset.kind = { ask_permission: 'permission', ask_question: 'question', ask_plan: 'plan', ask_elicit: 'elicit' }[e.m.t]
     if (e.m.t === 'ask_permission') permission(e.m)
     else if (e.m.t === 'ask_question') question(e, e.m)
+    else if (e.m.t === 'ask_elicit') elicit(e.m)
     else plan(e.m)
     choices().forEach((b, i) => (b.querySelector('.n')!.textContent = i < 9 ? String(i + 1) : ''))
     updateMore()
@@ -303,6 +305,84 @@ export function createAsks(
     onOther((text) => answer('keep', text))
   }
 
+  /** An MCP server's form (from its JSON schema) or its URL step, with the CLI's Accept / Decline and Esc to cancel. */
+  function elicit(m: Extract<AskMsg, { t: 'ask_elicit' }>) {
+    const lead = `MCP server “${m.server}” ${m.mode === 'url' ? 'wants to open a URL' : 'requests your input'}`
+    const form = m.fields.map(fieldHtml).join('')
+    const buttons = m.mode === 'url'
+      ? choice('open', 'Open URL', m.url ?? '') + choice('accept', 'Continue without waiting', 'The server finishes on its own')
+        + choice('cancel', 'Cancel', '', 'deny')
+      : choice('accept', 'Accept', 'Send these answers') + choice('decline', 'Decline', `Tell ${m.server} no`, 'deny')
+    root.innerHTML = `<div class="ask elicit">
+      <div class="t">${caption(lead)}${esc(m.title || m.message)}</div>
+      ${m.title ? `<div class="reason">${esc(m.message)}</div>` : ''}
+      ${form ? `<form class="eform" data-test="elicit-form" novalidate>${form}</form>` : ''}
+      <div class="eerr" data-test="elicit-error" hidden></div>
+      <div class="choices">${buttons}</div>
+    </div>`
+    const err = root.querySelector<HTMLElement>('.eerr')!
+    const reply = (action: 'accept' | 'decline' | 'cancel', content?: Record<string, ElicitValue>) => {
+      send({ t: 'elicit', id: m.id, action, ...(content ? { content } : {}) })
+      deps.log(`▸ ${{ accept: 'Sent', decline: 'Declined', cancel: 'Cancelled' }[action]}: ${m.server} · ${m.title || m.message}`)
+      done()
+    }
+    root.querySelector('.choices')!.addEventListener('click', (ev) => {
+      const b = (ev.target as HTMLElement).closest<HTMLElement>('.choice')
+      if (!b || !armed()) return
+      const v = b.dataset.v as 'open' | 'accept' | 'decline' | 'cancel'
+      if (v === 'open') return void (m.url && send({ t: 'open', target: m.url }))
+      if (v !== 'accept' || m.mode === 'url') return reply(v)
+      // The link checks the same rules; checking here keeps the form open with the reason instead.
+      try {
+        reply('accept', elicitContent(m.fields, readForm(m.fields)))
+      } catch (x) {
+        err.textContent = (x as Error).message
+        err.hidden = false
+      }
+    })
+    // A choice or multi field is a row of chips: exactly one on, or any number on.
+    root.querySelector('.eform')?.addEventListener('click', (ev) => {
+      const chip = (ev.target as HTMLElement).closest<HTMLElement>('.echip')
+      if (!chip) return
+      const row = chip.closest<HTMLElement>('.efield')!
+      if (row.dataset.kind === 'choice') for (const c of row.querySelectorAll('.echip')) c.classList.toggle('on', c === chip)
+      else chip.classList.toggle('on')
+    })
+  }
+
+  function fieldHtml(f: ElicitField) {
+    const label = `<span class="elabel">${esc(f.title)}${f.required ? ' <i>*</i>' : ''}</span>`
+    const hint = f.description ? `<small>${esc(f.description)}</small>` : ''
+    let input: string
+    if (f.kind === 'boolean') {
+      input = `<input type="checkbox" class="echeck" name="${esc(f.name)}"${f.default === true ? ' checked' : ''}>`
+    } else if (f.kind === 'choice' || f.kind === 'multi') {
+      const on = (v: string) => (Array.isArray(f.default) ? f.default.includes(v) : f.default === v)
+      input = `<span class="echips">${(f.options ?? [])
+        .map((o) => `<button type="button" class="echip${on(o.value) ? ' on' : ''}" data-v="${esc(o.value)}">${esc(o.label)}</button>`)
+        .join('')}</span>`
+    } else {
+      const formats: Record<string, string> = { email: 'email', uri: 'url', date: 'date', 'date-time': 'datetime-local' }
+      const type = f.kind === 'text' ? formats[f.format ?? ''] ?? 'text' : 'number'
+      const def = f.default === undefined ? '' : ` value="${esc(String(f.default))}"`
+      input = `<input class="field" type="${type}" name="${esc(f.name)}"${def}${f.kind === 'integer' ? ' step="1"' : ''} spellcheck="false">`
+    }
+    return `<div class="efield" data-test="elicit-field" data-name="${esc(f.name)}" data-kind="${f.kind}">${label}${input}${hint}</div>`
+  }
+
+  function readForm(fields: ElicitField[]) {
+    const out: Record<string, unknown> = {}
+    for (const f of fields) {
+      const row = root.querySelector<HTMLElement>(`.efield[data-name="${CSS.escape(f.name)}"]`)
+      if (!row) continue
+      if (f.kind === 'boolean') out[f.name] = row.querySelector<HTMLInputElement>('input')!.checked
+      else if (f.kind === 'choice') out[f.name] = row.querySelector<HTMLElement>('.echip.on')?.dataset.v ?? ''
+      else if (f.kind === 'multi') out[f.name] = [...row.querySelectorAll<HTMLElement>('.echip.on')].map((c) => c.dataset.v!)
+      else out[f.name] = row.querySelector<HTMLInputElement>('input')!.value.trim()
+    }
+    return out
+  }
+
   return {
     push(m) {
       queue.push({ m, step: 0, answers: {}, picked: new Set(), greeted: false })
@@ -332,6 +412,9 @@ export function createAsks(
       } else if (e.m.t === 'ask_plan') {
         send({ t: 'plan', id: e.m.id, decision: 'keep' })
         deps.log('▸ Keep planning')
+      } else if (e.m.t === 'ask_elicit') {
+        send({ t: 'elicit', id: e.m.id, action: 'cancel' })
+        deps.log(`▸ Cancelled: ${e.m.server}`)
       } else {
         send({ t: 'permission', id: e.m.id, decision: 'feedback', message: DECLINE_QUESTION })
         deps.log('▸ Question dismissed')
@@ -343,6 +426,8 @@ export function createAsks(
       // Typing somewhere else (you clicked back into the composer) is not an answer.
       const focus = document.activeElement
       if (focus && focus !== document.body && !root.contains(focus)) return false
+      // Keys typed into an elicitation form belong to its fields; they never pick an answer.
+      if ((document.activeElement as HTMLElement | null)?.closest('.eform')) return false
       const input = other()
       const inInput = document.activeElement === input
       if (inInput && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return false

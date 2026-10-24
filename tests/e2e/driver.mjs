@@ -51,7 +51,7 @@ const RM_RETRIES = 10
 const RM_RETRY_MS = 200
 const EXIT_WAIT_MS = 5000
 /** Client messages the harness never forwards to the sidecar: they would open a console, Explorer, or spend plan budget. */
-const BLOCKED = ['login', 'research', 'reveal']
+const BLOCKED = ['login', 'research', 'reveal', 'open']
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
