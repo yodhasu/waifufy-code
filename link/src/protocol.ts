@@ -258,6 +258,24 @@ export type ClientMsg =
   | { t: 'research_cancel' }
   /** Opens a folder or file in the OS (Explorer). */
   | { t: 'reveal'; path: string }
+  /** Calls one of the running session's SDK controls (CTL_OPS) with positional `args`; answered with `ctl_result`. */
+  | { t: 'ctl'; id: string; op: CtlOp; args?: unknown[] }
+
+/**
+ * The running session's SDK controls the app may call directly: `Query` methods, by name. They back the in-app
+ * versions of the CLI's interactive panels (/mcp, /agents, /context, /usage, /status, /effort, /rewind, /tasks).
+ * `usage` is the SDK's experimental data call behind `/usage`. `mcpLogin` and `mcpLogout` have no SDK control: the link
+ * runs `claude mcp login|logout <name>` for them.
+ */
+export const CTL_OPS = [
+  'mcpServerStatus', 'reconnectMcpServer', 'toggleMcpServer', 'setMcpPermissionModeOverride', 'readMcpResource',
+  'supportedAgents', 'supportedCommands', 'supportedModels', 'initializationResult', 'accountInfo',
+  'getContextUsage', 'usage', 'reloadPlugins', 'reloadSkills', 'reloadOutputStyles',
+  'applyFlagSettings', 'updateSettings', 'setMaxThinkingTokens', 'rewindFiles', 'stopTask',
+  'mcpLogin', 'mcpLogout',
+] as const
+
+export type CtlOp = (typeof CTL_OPS)[number]
 
 // ---------------------------------------------------------------- link → client
 
@@ -313,3 +331,5 @@ export type ServerMsg =
   | (SessionEvent & { epoch: number })
   /** Errors not tied to a session (bad request, settings write failed). */
   | { t: 'app_error'; message: string }
+  /** The answer to a `ctl`: the SDK call's result, or its error message. */
+  | { t: 'ctl_result'; id: string; ok: boolean; data?: unknown; error?: string }

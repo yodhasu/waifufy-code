@@ -16,9 +16,11 @@ import {
   type SDKMessage,
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk'
+import { mcpLogin, mcpLogout } from './auth.ts'
 import { buildPersona } from './persona.ts'
 import {
   EMOTIONS,
+  type CtlOp,
   type Emotion,
   type Image,
   type Limit,
@@ -570,6 +572,21 @@ class Session implements SessionApi {
     } catch (e) {
       this.emit({ t: 'error', kind: 'internal', message: `Could not switch the model to ${model}: ${message(e)}` })
     }
+  }
+
+  /** One of the SDK's session controls (CTL_OPS), for the app's versions of the CLI's interactive panels. */
+  async control(op: CtlOp, args: unknown[]) {
+    if (op === 'mcpLogin') return mcpLogin(String(args[0]), this.cwd, this.opts.claudePath)
+    if (op === 'mcpLogout') return mcpLogout(String(args[0]), this.cwd, this.opts.claudePath)
+    const q = this.q
+    if (!q) throw new Error('The session is not ready yet')
+    const name = op === 'usage' ? 'usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET' : op
+    const fn = (q as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[name]
+    if (typeof fn !== 'function') throw new Error(`This Claude Code version has no ${op} control`)
+    const data = await fn.apply(q, args)
+    // A change the stats line shows (MCP servers, the effort level) is picked up on the next stats refresh.
+    if (op === 'reconnectMcpServer' || op === 'toggleMcpServer' || op === 'applyFlagSettings') this.scheduleContextRefresh()
+    return data
   }
 
   answerPermission(id: string, decision: 'allow' | 'always' | 'deny' | 'feedback', note?: string) {

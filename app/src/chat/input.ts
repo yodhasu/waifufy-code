@@ -96,6 +96,7 @@ const APP_COMMANDS: AppCommand[] = [
   { name: 'resume', aliases: [], hint: '', describe: () => 'Open the Save/Load page' },
   { name: 'config', aliases: ['settings', 'theme'], hint: '', describe: () => 'Open Settings' },
   { name: 'costume', aliases: ['outfit'], hint: '', describe: (w) => `Change ${w}'s outfit` },
+  { name: 'mcp', aliases: [], hint: '[reconnect|enable|disable [<server>|all]]', describe: () => 'Manage MCP servers' },
   { name: 'help', aliases: [], hint: '', describe: () => 'Commands and keyboard shortcuts' },
   { name: 'exit', aliases: ['quit'], hint: '', describe: () => 'Back to the title screen' },
   { name: 'login', aliases: [], hint: '', describe: () => 'Log in to Claude Code (opens a console window)' },

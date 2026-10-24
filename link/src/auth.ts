@@ -100,3 +100,36 @@ export function createAuth(claudePath: string | undefined, onChange: (a: Auth) =
     },
   }
 }
+
+/** Server names that can't break the cmd.exe line they are quoted into. */
+const SAFE_NAME = /^[^"%^&|<>\r\n]+$/
+
+/**
+ * Opens `claude mcp login <name>` in its own console window, in `cwd` so project servers resolve: the CLI's
+ * /mcp "Authenticate", which the SDK has no control for. The browser flow finishes there; the panel reconnects after.
+ */
+export function mcpLogin(name: string, cwd: string, claudePath?: string) {
+  if (!SAFE_NAME.test(name)) throw new Error(`Can't authenticate a server named ${name} from here; run claude mcp login in a terminal`)
+  const exe = claudeExecutable(claudePath)
+  const child =
+    process.platform === 'win32'
+      ? spawn('cmd.exe', ['/c', 'start', `"MCP login: ${name}"`, 'cmd.exe', '/c', `""${exe}" mcp login "${name}" || pause"`], {
+          cwd,
+          detached: true,
+          stdio: 'ignore',
+          windowsVerbatimArguments: true,
+        })
+      : spawn(exe, ['mcp', 'login', name], { cwd, detached: true, stdio: 'ignore' })
+  child.on('error', (e) => console.error(`[auth] could not open the MCP login window: ${e.message}`))
+  child.unref()
+}
+
+/** Runs `claude mcp logout <name>` (the CLI's "Clear authentication"); resolves with its output, rejects with its error. */
+export function mcpLogout(name: string, cwd: string, claudePath?: string): Promise<string> {
+  return new Promise((done, fail) => {
+    execFile(claudeExecutable(claudePath), ['mcp', 'logout', name], { cwd, timeout: STATUS_TIMEOUT_MS, windowsHide: true }, (err, stdout, stderr) => {
+      if (err) return fail(new Error((stderr.trim() || stdout.trim() || err.message).split('\n')[0]))
+      done(stdout.trim())
+    })
+  })
+}

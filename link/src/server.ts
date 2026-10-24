@@ -9,7 +9,7 @@ import { listCostumes, serveModel, serveThumb } from './assets.ts'
 import { createAuth } from './auth.ts'
 import { searchFiles } from './files.ts'
 import { buildPersona } from './persona.ts'
-import type { ClientMsg, PermissionModeName, ServerMsg, SessionEvent, Settings } from './protocol.ts'
+import { CTL_OPS, type ClientMsg, type PermissionModeName, type ServerMsg, type SessionEvent, type Settings } from './protocol.ts'
 import { research } from './research.ts'
 import { deleteSave, errorText, getSave, isSaveId, listSaves, loadHistory, remember, renameSave, saveMeta, shortPath, unhide } from './saves.ts'
 import type { SessionApi, SessionFactory } from './session-api.ts'
@@ -438,6 +438,15 @@ async function handle(ws: WebSocket, m: ClientMsg) {
     case 'model':
       need(isStr(m.model), 'model')
       return live().setModel(m.model)
+    case 'ctl': {
+      need(isStr(m.id) && CTL_OPS.includes(m.op) && (m.args === undefined || Array.isArray(m.args)), 'id, op, args')
+      // Answered on this socket even when it fails, so the panel that asked can show the error instead of waiting.
+      try {
+        return sendTo(ws, { t: 'ctl_result', id: m.id, ok: true, data: await live().control(m.op, m.args ?? []) })
+      } catch (e) {
+        return sendTo(ws, { t: 'ctl_result', id: m.id, ok: false, error: e instanceof Error ? e.message : String(e) })
+      }
+    }
     case 'permission':
       need(isStr(m.id) && PERMISSION_DECISIONS.includes(m.decision) && optStr(m.message), 'id, decision, message')
       return live().answerPermission(m.id, m.decision, m.message)

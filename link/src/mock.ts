@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import {
   EMOTIONS,
   type Command,
+  type CtlOp,
   type Diff,
   type Emotion,
   type Image,
@@ -227,6 +228,8 @@ class MockSession implements SessionApi {
   private readonly opts: SessionOptions
   private id: string
   private stats: Stats
+  /** The MCP servers /mcp shows; toggling and reconnecting change them. */
+  private mcp: MockMcp[] = mockMcpServers()
   private turn?: Turn
   private readonly queue: { text: string; images: Image[] }[] = []
   private readonly waiting = new Map<string, Waiting>()
@@ -319,6 +322,11 @@ class MockSession implements SessionApi {
   async setModel(model: string) {
     this.stats.model = resolveModel(model)
     this.emitStats()
+  }
+
+  /** SDK-shaped answers for the panels' controls (see mockControl), so the E2E suite can drive /mcp, /agents… */
+  async control(op: CtlOp, args: unknown[]) {
+    return mockControl(this.mcp, op, args)
   }
 
   answerPermission(id: string, decision: PermissionAnswer['decision'], message?: string) {
@@ -1093,4 +1101,103 @@ export async function mockResearch(o: ResearchOptions): Promise<PersonaPreset> {
   )
   o.onProgress('Done.')
   return preset
+}
+
+// ---------------------------------------------------------------- session controls (the CLI's panels)
+
+type MockMcp = {
+  name: string
+  status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled'
+  scope: string
+  config: Record<string, unknown>
+  tools: { name: string; description: string; annotations?: { readOnly?: boolean; destructive?: boolean } }[]
+  error?: string
+}
+
+/** One server per state and scope the CLI's /mcp groups: project, user, claude.ai and built-in. */
+function mockMcpServers(): MockMcp[] {
+  const tool = (name: string, description: string, readOnly = true) => ({ name, description, annotations: { readOnly } })
+  return [
+    { name: 'graft', status: 'connected', scope: 'project', config: { type: 'stdio', command: 'graft', args: ['serve'] }, tools: [] },
+    { name: 'pencil', status: 'failed', scope: 'user', config: { type: 'stdio', command: 'pencil-mcp' }, tools: [], error: 'Connection closed' },
+    { name: 'linear', status: 'needs-auth', scope: 'user', config: { type: 'http', url: 'https://mcp.linear.app/mcp' }, tools: [] },
+    {
+      name: 'claude.ai Slack', status: 'connected', scope: 'claudeai', config: { type: 'claudeai-proxy', url: 'https://mcp.slack.com', id: 'slack' },
+      tools: [tool('slack_send_message', 'Send a message to a channel', false), tool('slack_read_channel', 'Read recent messages in a channel')],
+    },
+    { name: 'claude-in-chrome', status: 'connected', scope: 'dynamic', config: { type: 'sdk', name: 'claude-in-chrome' }, tools: [tool('navigate', 'Open a URL in a tab', false)] },
+  ]
+}
+
+const MOCK_AGENTS = [
+  { name: 'general-purpose', description: 'General-purpose agent for researching complex questions and multi-step tasks.' },
+  { name: 'Explore', description: 'Fast read-only search agent for locating code.', model: 'haiku' },
+  { name: 'code-reviewer', description: 'Reviews a diff for bugs.', model: 'sonnet' },
+]
+
+function mockControl(mcp: MockMcp[], op: CtlOp, args: unknown[]): unknown {
+  const server = (name: unknown) => {
+    const s = mcp.find((x) => x.name === name)
+    if (!s) throw new Error(`No MCP server named ${String(name)}`)
+    return s
+  }
+  switch (op) {
+    case 'mcpServerStatus':
+      return mcp.map((s) => ({ ...s, source: s.scope, tools: s.status === 'connected' ? s.tools : undefined }))
+    case 'reconnectMcpServer': {
+      const s = server(args[0])
+      if (s.status === 'disabled') throw new Error(`${s.name} is disabled`)
+      s.status = 'connected'
+      s.error = undefined
+      return undefined
+    }
+    case 'toggleMcpServer': {
+      const s = server(args[0])
+      s.status = args[1] ? 'connected' : 'disabled'
+      return undefined
+    }
+    case 'mcpLogin':
+      server(args[0]).status = 'connected'
+      return undefined
+    case 'mcpLogout':
+      server(args[0]).status = 'needs-auth'
+      return `Cleared credentials for ${String(args[0])}`
+    case 'supportedAgents':
+      return MOCK_AGENTS
+    case 'accountInfo':
+      return { email: 'dev@example.com', organization: 'Example Org', subscriptionType: 'max', tokenSource: 'claude.ai', apiProvider: 'firstParty' }
+    case 'getContextUsage':
+      return {
+        categories: [
+          { name: 'System prompt', tokens: 3100, color: 'promptBorder' },
+          { name: 'System tools', tokens: 11800, color: 'inactive' },
+          { name: 'MCP tools', tokens: 2400, color: 'cyan_FOR_SUBAGENTS_ONLY' },
+          { name: 'Memory files', tokens: 900, color: 'claude' },
+          { name: 'Messages', tokens: 6400, color: 'purple_FOR_SUBAGENTS_ONLY' },
+          { name: 'Free space', tokens: 175400, color: 'promptBorder' },
+        ],
+        totalTokens: 24600,
+        maxTokens: 200000,
+        rawMaxTokens: 200000,
+        percentage: 12,
+        model: 'claude-sonnet-5-5',
+        memoryFiles: [{ path: 'CLAUDE.md', type: 'Project', tokens: 900 }],
+        mcpTools: [{ name: 'mcp__graft__find', serverName: 'graft', tokens: 2400 }],
+        agents: [],
+      }
+    case 'reloadPlugins':
+    case 'reloadSkills':
+    case 'reloadOutputStyles':
+      return {}
+    case 'rewindFiles':
+      return { canRewind: true, filesChanged: ['src/app.ts'], insertions: 3, deletions: 1 }
+    case 'applyFlagSettings':
+    case 'updateSettings':
+    case 'setMaxThinkingTokens':
+    case 'stopTask':
+    case 'setMcpPermissionModeOverride':
+      return undefined
+    default:
+      throw new Error(`The mock session has no ${op} control`)
+  }
 }

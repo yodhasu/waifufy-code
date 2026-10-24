@@ -1,4 +1,4 @@
-import type { Image, PermissionModeName, SessionEvent, Settings } from './protocol.ts'
+import type { CtlOp, Image, PermissionModeName, SessionEvent, Settings } from './protocol.ts'
 
 /** Contract between server.ts and a session implementation: session.ts (real SDK) or mock.ts (E2E tests). */
 export type SessionOptions = {
@@ -29,6 +29,8 @@ export interface SessionApi {
   setModel(model: string): Promise<void>
   answerPermission(id: string, decision: 'allow' | 'always' | 'deny' | 'feedback', message?: string): void
   answerQuestion(id: string, answers: Record<string, string>): void
+  /** Calls an SDK session control (CTL_OPS); rejects with its error. */
+  control(op: CtlOp, args: unknown[]): Promise<unknown>
   answerPlan(id: string, decision: 'auto' | 'manual' | 'keep', message?: string): void
 }
 

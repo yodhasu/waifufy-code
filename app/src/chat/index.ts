@@ -7,6 +7,7 @@ import type { ChatParams, Ctx, Gesture, Screen } from '../contracts'
 import { addressOf } from '../screens/title'
 import { esc, fmtK } from '../ui'
 import { createAsks, type Asks } from './asks'
+import { mcpCommand } from './commands/mcp'
 import './chat.css'
 import {
   cleanText, createDialogue, createPager, lastEmotion, markdown, pagesForMono, pagesForText, type Dialogue, type DisplayPage,
@@ -59,6 +60,8 @@ type ModalOptions = {
   body: string
   tools?: string
   key?(e: KeyboardEvent): boolean
+  /** Esc steps back inside the layer (a nested menu screen) while this returns true; otherwise Esc closes it. */
+  back?(): boolean
   onClose?(): void
 }
 
@@ -194,9 +197,12 @@ export function chatScreen(): Screen {
     }
     el.addEventListener('mousedown', (e) => e.target === el && close())
     el.querySelector<HTMLElement>('.close')!.onclick = close
-    pushLayer({ el, close, key: o.key })
+    pushLayer({ el, close: () => (o.back?.() ? undefined : close()), key: o.key })
     return { el, close }
   }
+
+  /** What the CLI-style menus (/mcp…) need from the chat: its modal layer, toasts, the link and the session folder. */
+  const menuHost = () => ({ modal, toast: ctx.toast, link: ctx.link, cwd: () => cwd })
 
   /** ↑↓ between the picker's items; Enter clicks the focused one natively. */
   const listKeys = (el: HTMLElement) => (e: KeyboardEvent) => {
@@ -1087,6 +1093,9 @@ export function chatScreen(): Screen {
               return true
             case 'costume':
               openCostumes()
+              return true
+            case 'mcp':
+              mcpCommand(menuHost(), args)
               return true
             case 'help':
               openHelp()

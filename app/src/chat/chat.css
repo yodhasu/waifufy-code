@@ -290,6 +290,41 @@
 .chat .modal .empty { color: var(--text-soft); font-style: italic; }
 .chat .btn.mini { padding: 1px 10px; font-size: 11.5px; border-radius: 8px; margin-left: 8px; }
 
+/* ---------- Menus: the CLI's interactive panels (/mcp, /agents, /hooks…) ---------- */
+.chat .chat-modal .modal.menu { inset: 56px 200px; gap: 10px; }
+.chat .modal.menu h2 { overflow: hidden; text-overflow: ellipsis; letter-spacing: .12em; }
+.chat .modal.menu .mbody { gap: 10px; }
+.chat .modal.menu.busy .menu-list { opacity: .6; pointer-events: none; }
+.chat .menu-sub { color: var(--text-soft); font-size: 14px; margin-top: -6px; }
+.chat .menu-body { font-size: 14px; }
+.chat .menu-body .bad { color: var(--bad); font-style: normal; }
+.chat .mdetail { display: grid; grid-template-columns: max-content 1fr; gap: 4px 18px; margin: 0; padding: 12px 16px;
+  border: 1px dashed var(--panel-line); border-radius: 12px; background: var(--panel-inset); }
+.chat .mdetail dt { font-weight: 700; color: var(--heading); }
+.chat .mdetail dd { margin: 0; font-family: var(--font-mono); font-size: 12.5px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.chat .menu-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 2px 6px 2px 18px; }
+.chat .mgroup h3 { margin: 0 0 4px; font-size: 14.5px; letter-spacing: .08em; color: var(--heading); font-family: var(--font-title); }
+.chat .mgroup h3 small { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-faint); letter-spacing: 0; font-weight: 400; }
+.chat .mrow { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: center; width: 100%; text-align: left;
+  padding: 6px 12px; border: 1px solid transparent; border-radius: 10px; background: none; font: inherit; color: var(--text);
+  cursor: pointer; position: relative; }
+.chat .mrow .ml { min-width: 0; display: flex; flex-direction: column; }
+.chat .mrow .ml b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat .mrow .ml small { color: var(--text-soft); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; }
+.chat .mrow .mm { color: var(--text-faint); font-size: 12.5px; font-family: var(--font-mono); white-space: nowrap; }
+.chat .mrow .mi { text-align: center; font-weight: 700; }
+.chat .mi.ok { color: var(--ok); } .chat .mi.bad { color: var(--bad); } .chat .mi.warn { color: var(--warn); }
+.chat .mi.muted { color: var(--text-faint); } .chat .mi.accent { color: var(--accent); }
+/* The VN selection marker: a gold ❯ and a soft highlight, like the CLI's ❯ cursor. */
+.chat .mrow:focus-visible, .chat .mrow:focus, .chat .mrow:hover { outline: none; background: var(--hover); border-color: var(--panel-line); }
+.chat .mrow:focus::before { content: '❯'; position: absolute; left: -12px; color: var(--gold); font-weight: 800; }
+.chat .mrow.on .ml b::after { content: ' ✔'; color: var(--accent); }
+.chat .mrow.off { opacity: .45; cursor: default; }
+.chat .mrow.danger .ml b { color: var(--bad); }
+.chat .menu-foot { display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; color: var(--text-faint); border-top: 1px dashed var(--panel-line); padding-top: 8px; }
+.chat .menu-foot .mkeys { font-style: italic; }
+.chat .modal.menu .msearch { width: 280px; padding: 5px 12px; }
+
 .chat .log { display: flex; flex-direction: column; gap: 12px; padding-right: 8px; user-select: text; overflow-y: auto; }
 .chat .log .e { display: grid; grid-template-columns: 96px 1fr 28px; gap: 14px; font-size: 15.5px; line-height: 1.55; align-items: start; }
 .chat .log .who { font-family: var(--font-title); font-weight: 800; color: var(--heading); text-align: right; overflow: hidden;
