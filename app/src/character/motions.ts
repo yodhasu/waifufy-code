@@ -34,7 +34,9 @@ export type Step = Pose & { ms?: number; fx?: Mark }
 export type Emote = { enter: Step[]; hold?: Pose }
 
 export const EMOTES: Record<Emotion, Emote> = {
-  normal: { enter: [], hold: { act: ['act_normal_w'] } },
+  // The model's own default face (no face motion, or face_normal_w, which is all zeros) reads as sad; at rest she
+  // keeps a small closed-mouth smile instead.
+  normal: { enter: [], hold: { act: ['act_normal_w'], face: ['face_hohoemu_w'] } },
   smile: {
     enter: [{ act: ['act_hohoemu', 'act_egao'] }],
     hold: { act: ['act_hohoemu_w', 'act_normal_w'], face: ['face_hohoemu_w'] },

@@ -247,6 +247,9 @@ async function rig(stage: Stage, model: Live2DModel, json: ModelJson, costume: s
         const hold = isHold(ref.suffix)
         m.setFadeInTime(isAddon ? ADDON_FADE : hold ? HOLD_FADE_IN : SHOT_FADE_IN)
         m.setFadeOutTime(isAddon ? ADDON_FADE : hold ? HOLD_FADE_OUT : SHOT_FADE_OUT)
+        // By default every loop restart fades the motion in again from zero, which snaps the head back toward
+        // the neutral pose once per loop (about every second on the short holds). Fade in once, then loop clean.
+        m.setLoopFadeIn(false)
         // getDuration() is -1 for looping motions, and every Rem motion is marked as looping in its file.
         return { durationMs: m.getLoopDuration() * 1000 }
       })
