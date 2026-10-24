@@ -33,6 +33,8 @@ export type Asks = {
   escape(): void
   /** Keys while the menu is the top layer (1–9, ↑↓, Enter). Returns true when handled. */
   key(e: KeyboardEvent): boolean
+  /** Takes the focus as the menu would on opening (after you stop typing). */
+  focus(): void
 }
 
 type Line = { op: ' ' | '-' | '+'; s: string }
@@ -114,6 +116,8 @@ export function createAsks(
     gesture(g: Gesture): void
     markdown(src: string): string
     onChange(open: boolean): void
+    /** True while you are typing in the composer: the menu then waits for you instead of taking the focus. */
+    typing?(): boolean
   },
 ): Asks {
   root.className = 'overlay chat-ask'
@@ -167,8 +171,9 @@ export function createAsks(
     delete root.dataset.armed
     clearTimeout(armTimer)
     armTimer = window.setTimeout(() => root.dataset.test && (root.dataset.armed = '1'), ARM_MS)
-    // Nothing is focused unless the safe answer is No, so a stray Enter never approves.
-    ;(cautious(e) ? root.querySelector<HTMLElement>('.choice[data-v="deny"]') : root)?.focus()
+    // Nothing is focused unless the safe answer is No, so a stray Enter never approves. Mid-sentence it takes no
+    // focus at all: the keys stay yours, and Tab or a click moves to the menu.
+    if (!deps.typing?.()) (cautious(e) ? root.querySelector<HTMLElement>('.choice[data-v="deny"]') : root)?.focus()
     if (!e.greeted) {
       e.greeted = true
       deps.gesture(e.m.t === 'ask_permission' && e.m.danger ? 'danger' : 'confirm')
@@ -413,6 +418,11 @@ export function createAsks(
       show()
     },
     isOpen: () => queue.length > 0,
+    focus() {
+      const e = head()
+      if (!e || root.contains(document.activeElement)) return
+      ;(cautious(e) ? root.querySelector<HTMLElement>('.choice[data-v="deny"]') : root)?.focus()
+    },
     escape() {
       const e = head()
       if (!e) return

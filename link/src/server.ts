@@ -9,7 +9,7 @@ import { listCostumes, serveModel, serveThumb } from './assets.ts'
 import { createAuth } from './auth.ts'
 import { searchFiles } from './files.ts'
 import { buildPersona } from './persona.ts'
-import { CTL_OPS, type ClientMsg, type PermissionModeName, type ServerMsg, type SessionEvent, type Settings } from './protocol.ts'
+import { CTL_OPS, type ClientMsg, type FileHit, type PermissionModeName, type ServerMsg, type SessionEvent, type Settings } from './protocol.ts'
 import { research } from './research.ts'
 import { deleteSave, errorText, getSave, isSaveId, listSaves, loadHistory, remember, renameSave, saveMeta, shortPath, unhide } from './saves.ts'
 import type { SessionApi, SessionFactory } from './session-api.ts'
@@ -27,6 +27,8 @@ if (MOCK) process.env.CLAUDE_CONFIG_DIR = join(DATA_DIR, 'mock-claude')
 const claudePath = process.env.WC_CLAUDE || undefined
 const VERSION = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version
 
+/** Agents an @ query lists before the files. */
+const AGENT_HITS = 4
 /** How long a closed session gets to emit `ended` (its CLI exiting) before the next one starts anyway. */
 const CLOSE_WAIT_MS = 3_000
 /** With no app connected for this long, the running session is closed: nobody can see or answer it. */
@@ -383,6 +385,17 @@ function open(target: string) {
   child.unref()
 }
 
+/** The session's subagents whose name matches an @ query ("@agent-ex", "@expl"), as @agent-<name> hits. */
+async function agentHits(query: string): Promise<FileHit[]> {
+  const q = query.toLowerCase().replace(/^agent-?/, '')
+  if (!current?.session || (!q && !query.toLowerCase().startsWith('agent'))) return []
+  const list = (await current.session.control('supportedAgents', []).catch(() => [])) as { name: string; description?: string }[]
+  return list
+    .filter((a) => a.name.toLowerCase().includes(q))
+    .slice(0, AGENT_HITS)
+    .map((a) => ({ path: `agent-${a.name}`, isDir: false, agent: { name: a.name, description: a.description ?? '' } }))
+}
+
 async function handle(ws: WebSocket, m: ClientMsg) {
   switch (m.t) {
     case 'hello':
@@ -476,7 +489,9 @@ async function handle(ws: WebSocket, m: ClientMsg) {
     case 'files': {
       need(isStr(m.query), 'query')
       const cwd = current?.cwd || (await loadSettings()).lastDir
-      return sendTo(ws, { t: 'files', query: m.query, hits: cwd && isDir(cwd) ? await searchFiles(cwd, m.query) : [] })
+      const [files, agents] = await Promise.all([cwd && isDir(cwd) ? searchFiles(cwd, m.query) : [], agentHits(m.query)])
+      // As in the CLI, agents and files share one list; matching agents come first.
+      return sendTo(ws, { t: 'files', query: m.query, hits: [...agents, ...files] })
     }
     case 'persona_preview':
       need(m.settings && typeof m.settings === 'object', 'settings')

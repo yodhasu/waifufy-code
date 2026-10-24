@@ -10,6 +10,7 @@ import { createAsks, type Asks } from './asks'
 import { APP_COMMANDS, findAppCommand, runCli, type CommandHost } from './commands'
 import { openPalette, openShortcuts } from './commands/palette'
 import { control } from './control'
+import { doneVerb, duration, pickVerb, SPINNER_VERBS, thinkingStatus, verbList, type SpinnerVerbs } from './spinner'
 import './chat.css'
 import {
   cleanText, createDialogue, createPager, lastEmotion, markdown, pagesForMono, pagesForText, type Dialogue, type DisplayPage,
@@ -22,6 +23,16 @@ import {
 /** A finished turn this long earns her "success" gesture. */
 const SUCCESS_MIN_SECONDS = 20
 /** Two Esc presses this close together on an idle prompt open the rewind menu. */
+const FOCUS_KEY = 'wc.focus'
+/** Below this much context left, she warns as the CLI does (its footer turns at 20%). */
+const CONTEXT_LOW_LEFT = 20
+const readFocus = () => {
+  try {
+    return localStorage.getItem(FOCUS_KEY) === '1'
+  } catch {
+    return false
+  }
+}
 const DOUBLE_ESC_MS = 800
 const THUMB_W = 320
 const THUMB_H = 180
@@ -54,7 +65,8 @@ const PHASE_VERBS: Record<Phase, string> = {
   thinking: 'thinking', writing: 'writing', tool: 'working', compacting: 'compacting the conversation', retrying: 'retrying',
 }
 
-type Layer = { el: HTMLElement; close(): void; key?(e: KeyboardEvent): boolean }
+/** `close` is Esc (a menu steps back first); `dismiss`, when set, closes it outright (a new session, closing all). */
+type Layer = { el: HTMLElement; close(): void; dismiss?(): void; key?(e: KeyboardEvent): boolean }
 /** `shell`: a `!` command, queued like the CLI queues one typed while a turn runs. */
 type Queued = { id: string; text: string; images: Image[]; shell?: boolean }
 type ModalOptions = {
@@ -130,9 +142,16 @@ export function chatScreen(): Screen {
   let turnStart = 0
   let outTokens = 0
   let phase: Phase = 'thinking'
+  /** When the current phase began: the thinking status escalates from it, as in the CLI. */
+  let phaseStart = 0
+  /** This turn's spinner verb, and the list it is picked from (the user's spinnerVerbs setting applies). */
+  let turnVerb = 'Working'
+  let verbs = SPINNER_VERBS
   let note: string | undefined
   /** A hook running right now, for the spinner. */
   let hookNote: string | undefined
+  /** The context-low warning was given for this crossing. */
+  let contextWarned = false
   let lastLine = ''
   let authFailed = false
   /** The error reported during this turn (or right before a crash), so turn_end and ended don't repeat it. */
@@ -153,7 +172,31 @@ export function chatScreen(): Screen {
   const charName = () => settings().waifu.name
   const names = () => ({ char: charName(), user: settings().profile.displayName })
   const playMs = () => basePlayMs + (startedAt ? Date.now() - startedAt : 0)
-  const gesture = (g: Gesture) => settings().motion.gestures && ctx.character.gesture(g)
+  // Focus mode keeps her still: no gestures while you work (docs/research/ux-research.md §5).
+  const gesture = (g: Gesture) => settings().motion.gestures && !focusOn && ctx.character.gesture(g)
+  let focusOn = readFocus()
+
+  /**
+   * Focus mode, the CLI's /focus ("just your prompt, summary, and response") in VN terms: her lines appear whole,
+   * the tool ribbon and petals go, and she stays still and faded. Remembered between launches.
+   */
+  function setFocus(on: boolean) {
+    focusOn = on
+    try {
+      localStorage.setItem(FOCUS_KEY, on ? '1' : '0')
+    } catch {
+      // Private window or blocked storage: it lasts until the app closes.
+    }
+    applyFocus()
+    ctx.toast(on ? 'Focus mode on · just your prompt, her summary and her reply' : 'Focus mode off')
+  }
+
+  function applyFocus() {
+    if (focusOn) document.documentElement.dataset.focus = '1'
+    else delete document.documentElement.dataset.focus
+    dialogue?.setFocus(focusOn)
+    root?.querySelector('[data-test="qm-focus"]')?.classList.toggle('on', focusOn)
+  }
   const placeholder = () => (running
     ? `${charName()} is working… (Enter queues · Esc interrupts)`
     : `Speak to ${charName()}…  ( / commands · @ files · ! shell )`)
@@ -188,7 +231,7 @@ export function chatScreen(): Screen {
   }
 
   function closeAllLayers() {
-    for (const l of [...layers].reverse()) if (l.el !== asksRoot()) l.close()
+    for (const l of [...layers].reverse()) if (l.el !== asksRoot()) (l.dismiss ?? l.close)()
   }
 
   const asksRoot = () => root.querySelector<HTMLElement>('.chat-ask')!
@@ -207,7 +250,7 @@ export function chatScreen(): Screen {
     }
     el.addEventListener('mousedown', (e) => e.target === el && close())
     el.querySelector<HTMLElement>('.close')!.onclick = close
-    pushLayer({ el, close: () => (o.back?.() ? undefined : close()), key: o.key })
+    pushLayer({ el, close: () => (o.back?.() ? undefined : close()), dismiss: close, key: o.key })
     return { el, close }
   }
 
@@ -241,7 +284,7 @@ export function chatScreen(): Screen {
       return log.map((e) => ({ who: e.who === 'char' ? n.char : e.who === 'user' ? n.user : e.who, text: entryText(e) }))
     },
     replies: () => log.flatMap((e) => (e.who === 'char' ? [e.text] : [])).reverse(),
-    copy,
+    copy: (text) => copy(text, false),
   })
   const taskWatchers = new Set<(t: BgTask[]) => void>()
   /** A rewound prompt, put back in the composer once the restarted session is ready. */
@@ -258,12 +301,15 @@ export function chatScreen(): Screen {
     return true
   }
 
-  async function copy(text: string) {
+  /** Copies with the app's toast; true when it worked. */
+  async function copy(text: string, toast = true) {
     try {
       await navigator.clipboard.writeText(text)
-      ctx.toast('Copied')
+      if (toast) ctx.toast('Copied')
+      return true
     } catch {
       ctx.toast('Could not copy to the clipboard')
+      return false
     }
   }
 
@@ -508,13 +554,42 @@ export function chatScreen(): Screen {
     if (m.state === 'error') addLog({ who: 'error', text: `${m.event} hook ${m.name} failed${m.output ? `:\n${m.output}` : ''}` })
   }
 
+  /** The user's `spinnerVerbs` setting, later files winning as the CLI merges them (user, project, local). */
+  function loadSpinnerVerbs() {
+    void control<{ json: { spinnerVerbs?: SpinnerVerbs } }[]>(ctx.link, 'settingsFiles')
+      .then((files) => {
+        const own = files.map((f) => f.json.spinnerVerbs).filter(Boolean).at(-1)
+        verbs = verbList(own)
+      })
+      .catch(() => undefined)
+  }
+
+  /**
+   * The CLI's footer warning when the context is nearly full: "Context low (N% remaining) · Run /compact to compact
+   * & continue". Said once per crossing, in the LOG and as a toast.
+   */
+  function warnContext(s: Stats) {
+    const c = s.context
+    if (!c?.max) return
+    const left = Math.max(0, Math.round(100 - (c.used / c.max) * 100))
+    if (left > CONTEXT_LOW_LEFT) return void (contextWarned = false)
+    if (contextWarned) return
+    contextWarned = true
+    const text = `Context low (${left}% remaining) · Run /compact to compact & continue`
+    addLog({ who: 'system', text })
+    input.whenIdle(() => ctx.toast(text, 6000))
+  }
+
   function updateSpinner() {
     spinnerEl.classList.toggle('show', running)
     if (!running) return
-    const secs = Math.floor((Date.now() - turnStart) / 1000)
-    const verb = asks.isOpen() ? 'waiting for your answer' : PHASE_VERBS[phase]
-    const extra = (note ? ` · ${esc(note)}` : '') + (hookNote ? ` · ${esc(hookNote)}` : '')
-    spinnerEl.innerHTML = `<b>${esc(charName())} is ${verb}…</b> <span>${secs}s · ↑ ${fmtK(outTokens)} tokens${extra}</span>`
+    // The CLI's line: "✻ Schlepping… (13s · ↓ 332 tokens · thinking with high effort)", with her name and phase.
+    const ms = Date.now() - turnStart
+    const status = asks.isOpen() ? 'waiting for your answer'
+      : phase === 'thinking' ? thinkingStatus(Math.floor((Date.now() - phaseStart) / 1000), stats?.effort)
+      : PHASE_VERBS[phase]
+    const parts = [duration(ms), `↓ ${fmtK(outTokens)} tokens`, status, note, hookNote].filter(Boolean).map((p) => esc(p!))
+    spinnerEl.innerHTML = `<b>✻ ${esc(turnVerb)}…</b> <span>(${parts.join(' · ')})</span> <em>${esc(charName())}</em>`
   }
 
   function setRunning(on: boolean) {
@@ -523,6 +598,8 @@ export function chatScreen(): Screen {
     ctx.character.setBusy(on)
     if (on) {
       turnStart = Date.now()
+      phaseStart = turnStart
+      turnVerb = pickVerb(verbs)
       outTokens = 0
       phase = 'thinking'
       note = undefined
@@ -827,6 +904,8 @@ export function chatScreen(): Screen {
       // However the turn was stopped (Esc, STOP, or No on a permission), queued messages come back to the input.
       restoreQueue()
     } else if (m.ok) {
+      // The CLI's completion line: "Baked for 1m 3s".
+      if (m.seconds >= 1) addLog({ who: 'system', text: `✻ ${doneVerb(turnStart)} for ${duration(m.seconds * 1000)}` })
       if (affection < MAX_HEARTS) panels.hearts(++affection, true)
       if (m.seconds >= SUCCESS_MIN_SECONDS) gesture('success')
     } else {
@@ -885,7 +964,7 @@ export function chatScreen(): Screen {
     tools.set(m.id, t)
     panels.tool(t)
     addLog({ who: 'tool', tool: t })
-    if (!m.sub) phase = 'tool'
+    if (!m.sub && phase !== 'tool') (phase = 'tool'), (phaseStart = Date.now())
     updateRibbon()
     updateSpinner()
   }
@@ -943,6 +1022,7 @@ export function chatScreen(): Screen {
         input.setEnabled(true, placeholder())
         if (pendingDraft) input.restore(pendingDraft)
         pendingDraft = undefined
+        loadSpinnerVerbs()
         if (visible && !layers.length) input.focus()
         // Messages typed while she was getting ready go out now.
         if (!running) sendNext()
@@ -955,11 +1035,12 @@ export function chatScreen(): Screen {
         return
       case 'face': return pager.face(m.emotion)
       case 'text':
-        if (phase !== 'writing') (phase = 'writing'), updateSpinner()
+        if (phase !== 'writing') (phase = 'writing'), (phaseStart = Date.now()), updateSpinner()
         return pager.text(m.delta)
       case 'text_end': return pager.end()
       case 'progress':
         outTokens = m.outputTokens
+        if (phase !== m.phase) phaseStart = Date.now()
         phase = m.phase
         note = m.note
         return updateSpinner()
@@ -996,6 +1077,7 @@ export function chatScreen(): Screen {
         model = m.stats.model ?? model
         if (m.stats.mode) (mode = m.stats.mode), (autoSeen ||= mode === 'auto')
         panels.stats(m.stats)
+        warnContext(m.stats)
         return flushSave()
       case 'notice': return onNotice(m)
       case 'shell_result': return onShell(m)
@@ -1037,6 +1119,7 @@ export function chatScreen(): Screen {
     if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') return void (handled(), openLog())
     if (top) return
     if (e.key === 'Tab' && e.shiftKey && !e.ctrlKey && !e.altKey) return void (handled(), cycleMode())
+    if (e.ctrlKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') return void (handled(), setFocus(!focusOn))
     // Ctrl+K: the command palette, every command and action with its key.
     if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') return void (handled(), openPalette(menuHost()))
     // `?` on an empty prompt: the shortcut sheet, as in the CLI.
@@ -1083,12 +1166,14 @@ export function chatScreen(): Screen {
       const qm = document.createElement('nav')
       qm.className = 'quickmenu'
       qm.innerHTML = [
-        ['log', 'LOG', 'Backlog (Ctrl+L)'], ['auto', 'AUTO', 'Auto-advance'], ['mode', 'MODE', 'Permission mode (Shift+Tab)'],
+        ['log', 'LOG', 'Backlog (Ctrl+O)'], ['auto', 'AUTO', 'Auto-advance'], ['mode', 'MODE', 'Permission mode (Shift+Tab)'],
         ['cmd', 'CMD', 'Commands (/)'], ['stop', 'STOP', 'Interrupt (Esc)'], ['costume', '👗', 'Costume (/costume)'],
-        ['settings', '⚙', 'Settings (/config)'], ['menu', 'MENU', 'Back to the title'],
+        ['focus', 'FOCUS', 'Focus mode: just the prompt and replies (/focus · Ctrl+Shift+F)'], ['settings', '⚙', 'Settings (/config)'],
+        ['menu', 'MENU', 'Back to the title'],
       ].map(([id, label, tip]) => `<button type="button" data-test="qm-${id}" title="${tip}">${label}</button>`).join('')
       dlgEl.append(qm)
       autoBtn = qm.querySelector('[data-test="qm-auto"]')!
+      applyFocus()
       const qmActions: Record<string, () => void> = {
         log: openLog,
         auto() {
@@ -1100,6 +1185,7 @@ export function chatScreen(): Screen {
         cmd: openSlash,
         stop: () => void (interrupt() || ctx.toast(`${charName()} isn't working on anything right now`)),
         costume: openCostumes,
+        focus: () => setFocus(!focusOn),
         settings: () => ctx.router.go('settings'),
         menu: () => void leave('title'),
       }
@@ -1129,7 +1215,12 @@ export function chatScreen(): Screen {
         log: (line) => addLog({ who: 'system', text: line }),
         gesture,
         markdown,
+        typing: () => input?.isTyping() ?? false,
         onChange(open) {
+          // Skipping never runs through a question: it stops at every choice menu.
+          if (open) stopSkip()
+          // Opened mid-sentence, it waits; once you stop typing it takes the keys.
+          if (open) input?.whenIdle(() => asks.focus())
           const el = asksRoot()
           const has = layers.some((l) => l.el === el)
           if (open && !has) pushLayer({ el, close: () => asks.escape(), key: (e) => asks.key(e) })
@@ -1190,6 +1281,11 @@ export function chatScreen(): Screen {
             case 'resume':
               void leave('saves')
               return true
+            case 'focus': {
+              const want = args.trim().toLowerCase()
+              setFocus(want === 'on' ? true : want === 'off' ? false : !focusOn)
+              return true
+            }
             case 'theme':
               ctx.router.go('settings', { tab: 'appearance' })
               return true

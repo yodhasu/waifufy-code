@@ -331,6 +331,16 @@
 .chat .mtab.on { border-color: var(--gold); color: var(--heading); font-weight: 700;
   background: linear-gradient(180deg, var(--accent-pale), var(--panel-solid)); }
 
+/* ---------- Focus mode (/focus, Ctrl+Shift+F): the CLI's focus view, quiet ---------- */
+html[data-focus='1'] #petals { display: none; }
+html[data-focus='1'] #chara .chara-box { opacity: .32; filter: saturate(.6); transition: opacity .4s, filter .4s; }
+html[data-focus='1'] .chat .chat-status .ribbon { display: none; }
+.chat .quickmenu [data-test='qm-focus'].on { color: var(--accent); text-shadow: 0 0 8px var(--accent-glow); }
+@media (prefers-reduced-motion: reduce) {
+  #petals { display: none; }
+  .chat .mrow, .chat .mtab, .chat .echip { transition: none; }
+}
+
 /* ---------- MCP elicitation form, inside the choice menu ---------- */
 .chat .ask .eform { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 8px; }
 .chat .ask .efield { display: grid; grid-template-columns: 170px 1fr; gap: 2px 14px; align-items: center; }
@@ -492,3 +502,23 @@
 .chat [data-test='plugin'] .mwarn { color: var(--warn); font-size: 13px; margin: 0 0 8px; }
 .chat [data-test='plugin'] .psource { width: 100%; font-family: var(--font-mono); }
 .chat [data-test='plugin'] .pex { color: var(--text-faint); font-size: 12.5px; margin: 6px 0 0; }
+
+/* R64: the Ctrl+K command palette (a searchable menu) and the `?` shortcut sheet (the help grid in three columns). */
+.chat [data-test='palette'] .modal { width: min(720px, 94vw); }
+.chat [data-test='palette'] .msearch { min-width: 260px; }
+.chat .help.shortcuts { grid-template-columns: repeat(3, 1fr); gap: 4px 28px; }
+.chat .help.shortcuts .hk { grid-template-columns: 120px 1fr; }
+.chat .sc-title { margin: 18px 0 8px; font-family: var(--font-title); letter-spacing: .14em; color: var(--heading); font-size: 16px; }
+.chat .sc-foot { margin: 14px 0 0; color: var(--text-faint); font-size: 12.5px; }
+@media (max-width: 720px) { .chat .help.shortcuts { grid-template-columns: 1fr; } }
+
+/* ---------------------------------------------------------------- /rewind (R61) */
+.menu .rw-quote { margin: 6px 0 0; padding: 6px 10px; border-left: 3px solid var(--accent); color: var(--text-soft);
+  white-space: pre-wrap; max-height: 8em; overflow: auto; }
+
+/* /diff (R63): the review pane — the selected file's diff (the permission prompt's look) above the file list. */
+.chat [data-test='diff'] .menu-body { display: flex; flex-direction: column; gap: 8px; }
+.chat [data-test='diff'] .diff { width: auto; }
+.chat [data-test='diff'] .diff-body { max-height: 42vh; }
+.chat [data-test='diff'] .dl.hunk { color: var(--accent); font-style: normal; padding: 2px 12px; }
+.chat [data-test='diff'] .dcomment { width: 100%; font-size: 13.5px; }

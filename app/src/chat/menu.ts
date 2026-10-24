@@ -73,6 +73,9 @@ const HINTS = '↑/↓ to navigate · Enter to confirm · Esc to go back'
 export function openMenu(host: MenuHost, test: string, first: MenuScreen | Promise<MenuScreen>, loadingTitle = 'Loading…') {
   const stack: { screen: MenuScreen; focus: string | undefined; query: string }[] = []
   let busy = false
+  /** refresh(): one is running, and another came in meanwhile. */
+  let refreshing = false
+  let stale = false
   let done!: () => void
   const closed = new Promise<void>((r) => (done = r))
 
@@ -100,8 +103,12 @@ export function openMenu(host: MenuHost, test: string, first: MenuScreen | Promi
   const rowById = (id: string | undefined) => (id === undefined ? undefined : rowsOf(top()!.screen).find((r) => r.id === id))
   const focused = () => (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('.mrow')?.dataset.id
 
+  /** A substring of the label, meta or hint; else the letters in order in the label ("mcpre" → "mcp reconnect"). */
   function matches(r: MenuRow, q: string) {
-    return !q || [r.label, r.meta ?? '', r.hint ?? ''].some((t) => t.toLowerCase().includes(q))
+    if (!q || [r.label, r.meta ?? '', r.hint ?? ''].some((t) => t.toLowerCase().includes(q))) return true
+    let i = 0
+    for (const ch of r.label.toLowerCase()) if (ch === q[i]) i++
+    return i === q.length
   }
 
   function draw() {
@@ -191,6 +198,28 @@ export function openMenu(host: MenuHost, test: string, first: MenuScreen | Promi
     } finally {
       busy = false
       el.classList.remove('busy')
+    }
+  }
+
+  /**
+   * Live data changed under the menu (/tasks): rebuilds every open screen from its `reload` and redraws. It doesn't
+   * take the action lock, so a row can show "stopping…" while its action runs; calls during a refresh coalesce.
+   */
+  async function refresh() {
+    if (refreshing) return void (stale = true)
+    refreshing = true
+    try {
+      do {
+        stale = false
+        const t = top()
+        if (t) t.focus = focused() ?? t.focus
+        for (const s of [...stack]) if (s.screen.reload) s.screen = await s.screen.reload()
+        draw()
+      } while (stale)
+    } catch (e) {
+      host.toast(e instanceof Error ? e.message : String(e))
+    } finally {
+      refreshing = false
     }
   }
 
@@ -288,7 +317,7 @@ export function openMenu(host: MenuHost, test: string, first: MenuScreen | Promi
     body.hidden = false
   })
 
-  return { close: m.close, closed, el }
+  return { close: m.close, closed, el, refresh }
 }
 
 /** A "Label: value" detail block, the CLI's server/agent/hook detail header. Values are escaped. */

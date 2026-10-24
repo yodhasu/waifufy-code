@@ -195,6 +195,8 @@ export type Stats = {
   /** Model id as the CLI reports it (resolved). */
   model?: string
   mode?: PermissionModeName
+  /** The effort level in use ("high"), as the CLI's /effort reports it: the spinner's "thinking with high effort". */
+  effort?: string
 }
 
 export type Todo = { id: string; content: string; status: 'pending' | 'in_progress' | 'completed' }
@@ -211,7 +213,8 @@ export type Command = { name: string; description: string; argumentHint: string;
 /** `supportsAuto`: the model offers auto mode, so Shift+Tab includes it (R13). */
 export type ModelChoice = { value: string; displayName: string; description: string; resolved?: string; supportsAuto?: boolean }
 
-export type FileHit = { path: string; isDir: boolean }
+/** An @-mention hit: a file or folder, or (`agent`) a subagent the CLI mentions as `@agent-<name>`. */
+export type FileHit = { path: string; isDir: boolean; agent?: { name: string; description: string } }
 
 export type Diff = { path: string; before: string; after: string }
 

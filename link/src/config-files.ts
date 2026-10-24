@@ -196,6 +196,8 @@ export async function gitDiff(cwd: string) {
   ])
   return {
     repo: true as const,
+    /** False before the first commit: the CLI titles it "Staged and new files (no commits yet)". */
+    hasHead: head.code === 0,
     branch: branch.out.trim(),
     patch: patch.out,
     truncated: patch.out.length >= GIT_MAX_BYTES - 1024,

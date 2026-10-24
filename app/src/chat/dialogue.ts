@@ -440,6 +440,8 @@ export type Dialogue = {
    * Muting finishes the page being typed without playing its emotions.
    */
   setMuted(on: boolean): void
+  /** Focus mode: every line shows at once, untyped. */
+  setFocus(on: boolean): void
 }
 
 /** Page interval while Ctrl is held. */
@@ -480,6 +482,8 @@ export function createDialogue(
   /** The reader clicked past the last page, so the next page that arrives shows at once. */
   let acked = false
   let muted = false
+  /** Focus mode: her lines appear whole, as the CLI prints them. */
+  let focus = false
 
   const motion = () => deps.store.get().motion
   const talk = (on: boolean) => deps.character.setTalking(on && !muted && motion().lipSync)
@@ -569,7 +573,7 @@ export function createDialogue(
       actionsEl.append(b)
     }
     const speed = motion().textCps
-    if (instant || skip || muted || !typed(page) || speed <= 0) {
+    if (instant || skip || muted || focus || !typed(page) || speed <= 0) {
       shown = rich.plain.length
       return finish()
     }
@@ -615,6 +619,10 @@ export function createDialogue(
       if (!on) return clearTimeout(later)
       if (!done()) finish()
       else if (queue.length) next()
+    },
+    setFocus(on) {
+      focus = on
+      if (on && !done()) finish()
     },
     setMuted(on) {
       if (muted === on) return

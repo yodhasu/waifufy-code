@@ -11,12 +11,13 @@ try {
   await app.type(command)
   await app.key('Enter')
   await sleep(1200)
-  console.log(await app.screenshot('peek/0'))
+  const tag = process.env.PEEK_NAME || 'peek'
+  console.log(await app.screenshot(`${tag}/0`))
   let i = 0
   for (const k of keys) {
     await app.key(k)
     await sleep(700)
-    console.log(await app.screenshot(`peek/${++i}`))
+    console.log(await app.screenshot(`${tag}/${++i}`))
   }
 } finally {
   await app.close?.()

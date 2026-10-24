@@ -53,8 +53,8 @@ export type CommandHost = MenuHost & {
   transcript(): { who: string; text: string }[]
   /** Her replies, newest first: /copy N. */
   replies(): string[]
-  /** Copies to the clipboard, with the app's toast. */
-  copy(text: string): Promise<void>
+  /** Copies to the clipboard; resolves true when it worked (a failure shows its own toast). */
+  copy(text: string): Promise<boolean>
 }
 
 export type AppCommand = {
@@ -76,6 +76,7 @@ export const APP_COMMANDS: AppCommand[] = [
   { name: 'status', aliases: [], hint: '', describe: () => 'Show Claude Code status including version, model, account, API connectivity, and tool statuses', run: settingsCommand },
   { name: 'usage', aliases: ['cost', 'stats'], hint: '', describe: () => 'Show session cost, plan usage, and activity stats', run: settingsCommand },
   { name: 'theme', aliases: [], hint: '', describe: () => 'Change the theme (light, dark, accent)' },
+  { name: 'focus', aliases: [], hint: '[on|off]', describe: () => 'Toggle focus view: just your prompt, summary, and response' },
   { name: 'permissions', aliases: ['allowed-tools'], hint: '', describe: () => 'Manage allow and deny tool permission rules', run: permissionsCommand },
   { name: 'add-dir', aliases: [], hint: '<path>', describe: () => 'Add a new working directory', run: permissionsCommand },
   { name: 'context', aliases: [], hint: '[all]', describe: () => 'Visualize current context usage as a colored grid', run: contextCommand },

@@ -344,6 +344,10 @@ class MockSession implements SessionApi {
   /** SDK-shaped answers for the panels' controls (see mockControl), so the E2E suite can drive /mcp, /agents… */
   async control(op: CtlOp, args: unknown[]) {
     if (op === 'rewindPoints') return [...this.prompts].reverse()
+    // A prompt that says "no code" changed no files, so its rewind offers only "Restore conversation".
+    if (op === 'rewindFiles' && /\bno code\b/i.test(this.prompts.find((p) => p.uuid === args[0])?.text ?? '')) {
+      return { canRewind: true, filesChanged: [], insertions: 0, deletions: 0 }
+    }
     if (op === 'backgroundTasks') {
       // Ctrl+B: the running mock build moves to the background and the turn ends without it.
       const t = this.bg.find((x) => x.status === 'running' && !x.backgrounded)
@@ -602,6 +606,8 @@ class MockSession implements SessionApi {
     if (mentions.length) parts.push(`I'll look at ${mentions.map((m) => `\`${m}\``).join(', ')} for you.`)
     parts.push('[nod] What should we do next?')
     await this.speak(turn, parts.join(' '))
+    // The CLI's greyed next-prompt suggestion, only when asked for (other scenarios keep the normal placeholder).
+    if (/\bsuggest/i.test(text)) this.emit({ t: 'suggestion', text: 'run the tests and fix what fails' })
     return { ok: true }
   }
 

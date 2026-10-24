@@ -6,11 +6,13 @@ permission prompts, questions and plans from VN choice menus.
 
 Under the skin it is the real Claude Code harness, through the Claude Agent SDK with its own bundled Claude Code,
 so your tools, MCP servers, skills, hooks, `CLAUDE.md`, permission rules and settings files all apply, and the
-keys you know from the terminal work the same way. The requirements are in [docs/V1.md](docs/V1.md).
+keys you know from the terminal work the same way. V0.5 brings the CLI's interactive panels in too (`/mcp`, `/config`,
+`/permissions`, `/plugin`, rewind…), drawn as VN menus. The requirements are in [docs/V1.md](docs/V1.md) and
+[docs/V0.5.md](docs/V0.5.md).
 
 ## Install
 
-Run `build\Waifufy-Code-0.1.0-setup.exe` (a per-user install; no Node or Claude Code install needed). The first
+Run `build\Waifufy-Code-0.5.0-setup.exe` (a per-user install; no Node or Claude Code install needed). The first
 run opens a short wizard:
 
 1. **Your profile**: your name, what she calls you, the honorific (`-kun`, `-sama`, `-chan`, … or your own).
@@ -28,18 +30,27 @@ run opens a short wizard:
 
 | Key | Does |
 |---|---|
-| Enter · Shift+Enter (or `\` Enter) | Send · new line |
-| ↑ ↓ · Ctrl+R | Input history per project · search it |
-| `/` | Commands: the CLI's, your custom commands and skills, plus app ones (`/model`, `/clear`, `/resume`, `/config`, `/costume`, `/login`, `/help`, `/exit`) |
-| `@` | Mention a file or folder (fuzzy, respects `.gitignore`) |
+| Enter · Shift+Enter, Ctrl+J or `\` Enter | Send · new line |
+| Enter while she works · Ctrl+Enter | Queue for her next step · send now, into the running turn |
+| ↑ ↓ · Ctrl+R | Input history per project · search it (Enter runs, Tab edits) |
+| `/` · Ctrl+K · `?` | Commands · the command palette · the shortcut sheet |
+| `@` | Mention a file, folder or agent (`@agent-Explore`) |
 | `!` | Shell command in the session folder; she answers the output, as the CLI does (`respondToBashCommands`) |
-| Paste / drop / 📎 | Images |
-| Enter while she works | Queues the message for the next turn |
-| Esc · Ctrl+C | Close the top menu, then interrupt |
-| Shift+Tab | Permission mode: default → accept edits → plan (→ auto) |
-| Ctrl+L · Ctrl+O | LOG: the full trace, searchable and copyable |
-| Click · Space · Enter | Next page · hold Ctrl to skip · AUTO advances by itself |
+| Paste / drop / 📎 / Alt+V | Images |
+| Esc · Ctrl+C | Close the top menu, then interrupt · Esc Esc on an empty prompt: rewind |
+| Shift+Tab | Permission mode: manual → accept edits → plan (→ auto); on a permission prompt, accept and switch |
+| Ctrl+O · Ctrl+L · Ctrl+B | LOG (the full trace) · clear the prompt · send the running command to the background |
+| Tab on an empty prompt | Take her greyed suggestion for the next prompt |
+| Ctrl+Shift+F · `/focus` | Focus mode: just your prompt and her replies, shown whole; she stays still |
+| Click · Space · Enter | Next page · hold Ctrl to skip (it always stops at a choice) · AUTO advances by itself |
 | 1–9 · ↑↓ Enter | Answer a choice menu (risky prompts default to No) |
+
+The CLI's interactive commands open as VN menus with the CLI's own groups, labels and actions: `/mcp`,
+`/config` (every setting, saved through the CLI's own `/config key=value`), `/status`, `/usage` (`/cost`,
+`/stats`), `/model`, `/effort`, `/fast`, `/context`, `/permissions`, `/add-dir`, `/plugin`, `/skills`,
+`/hooks`, `/memory`, `/rewind`, `/tasks`, `/diff`, `/export` and `/copy`. Everything else (`/compact`,
+`/init`, `/review`, your skills and custom commands) goes to Claude Code as typed. MCP servers that ask for input
+get a form, and permission prompts offer the CLI's "don't ask again" scopes one per row.
 
 Long output (lists, code, tables, reports) shows as a short page ending in `…`; the full text is always in the LOG.
 Pat her head, tap her, or open 👗 to change her costume.

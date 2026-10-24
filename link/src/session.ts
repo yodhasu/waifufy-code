@@ -458,6 +458,7 @@ class Session implements SessionApi {
       })
       this.emitStats()
       await this.refreshStats()
+      void this.refreshEffort()
     } catch (e) {
       if (!this.closed) this.die(`Claude Code did not finish starting: ${message(e)}`)
     }
@@ -628,10 +629,28 @@ class Session implements SessionApi {
     return run
   }
 
+  /**
+   * The effort level in use, from the CLI's own `/effort current` ("Current effort level: high", "Effort level: auto
+   * (currently high)"), for the spinner. The SDK reports it nowhere else.
+   */
+  private async refreshEffort() {
+    const out = await this.cliCommand('/effort current').catch(() => '')
+    const level = /currently (\w+)/i.exec(out)?.[1] ?? /effort level:\s*(\w+)/i.exec(out)?.[1]
+    if (!level || level === this.stats.effort) return
+    this.stats.effort = level.toLowerCase()
+    this.emitStats()
+  }
+
   /** One of the SDK's session controls (CTL_OPS), for the app's versions of the CLI's interactive panels. */
   async control(op: CtlOp, args: unknown[]) {
     // A panel's /model, /fast or /config can change what the stats line shows; a silent append refreshes nothing itself.
-    if (op === 'cli') return this.cliCommand(String(args[0])).finally(() => this.scheduleContextRefresh())
+    if (op === 'cli') {
+      const text = String(args[0])
+      return this.cliCommand(text).finally(() => {
+        this.scheduleContextRefresh()
+        if (/^\/(effort|model)\b/.test(text.trim())) void this.refreshEffort()
+      })
+    }
     if (op === 'rewindPoints') return this.rewindPoints()
     const files = fileControl(op, args, this.cwd, this.opts.claudePath)
     if (files) return files

@@ -54,3 +54,18 @@ When done, return:
 - what you couldn't do and why,
 - any change you need in a file you don't own,
 - your test result.
+
+## Phase 2 notes
+
+- **Menu features** (`app/src/chat/menu.ts`): screens can have `tabs` / `tab` / `switchTab`, giving a built-in tab strip
+  that Tab, Shift+Tab, ←/→ and clicks switch. `pick` can return `'back'`, which pops one screen and reloads the one
+  below it. Don't fake keys to drive the menu.
+- **CommandHost** (`commands/index.ts`) now also has:
+  - `sessionId`, `tasks` / `onTasks`, `rewind(o)`, `setDraft`, `run(text)`, `commands()`,
+  - `toolRecords()`, `transcript()`, `replies()`, `copy(text)`.
+- **More controls:** `rewindPoints` (newest first, `{uuid, text, before?}`), `rewindFiles(uuid, {dryRun})`,
+  `backgroundTasks`, `stopTask(id)`, `gitDiff` (`{repo, branch, patch, untracked}`), and
+  `createText(path, text)` (only .md or .txt, inside the project or `~/.claude`, never overwriting).
+- **Mock:** a prompt containing "background" starts mock background tasks (a shell and an agent) and emits `bg_tasks`.
+  `rewindPoints` lists the prompts sent so far.
+- **peek.mjs:** set `PEEK_NAME=<yourname>` so your screenshots don't overwrite other builders'.

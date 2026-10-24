@@ -50,7 +50,7 @@ export type InputApi = {
   restore(text: string): void
   /** True while the slash / @ picker is open; Esc closes it first. */
   closePopups(): boolean
-  /** True while you are typing: the composer has text, or a key went down in the last TYPING_IDLE_MS. */
+  /** True while you are typing: a draft in the focused composer and a key in the last TYPING_IDLE_MS. */
   isTyping(): boolean
   /** Runs `fn` once you stop typing (at once if you aren't): toasts and gestures never land mid-sentence. */
   whenIdle(fn: () => void): void
@@ -266,11 +266,15 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
   }
 
   function updatePlaceholder() {
-    ta.placeholder = placeholderOverride ?? (suggestion ? `${suggestion}   (Tab)` : `Speak to ${waifu()}…   ( / commands · @ files · ! bash · Shift+Enter newline )`)
-    box.classList.toggle('suggesting', !placeholderOverride && !!suggestion)
+    // A suggestion shows on an enabled prompt over the chat's own placeholder; a disabled one keeps its reason.
+    const suggesting = enabled && !!suggestion
+    ta.placeholder = suggesting ? `${suggestion}   (Tab)` : placeholderOverride ?? `Speak to ${waifu()}…   ( / commands · @ files · ! bash · Shift+Enter newline )`
+    box.classList.toggle('suggesting', suggesting)
   }
 
-  const typing = () => document.activeElement === ta && (!!ta.value.trim() || performance.now() - lastKeyAt < TYPING_IDLE_MS)
+  // Typing: a draft in the box and a key in the last TYPING_IDLE_MS. Just after Enter sent it, the box is empty, so a
+  // menu that opens then takes the keys; a pause ends "typing" even with a draft left in the box.
+  const typing = () => document.activeElement === ta && !!ta.value.trim() && performance.now() - lastKeyAt < TYPING_IDLE_MS
 
   /** Flushes the whenIdle queue once the composer has been quiet (or emptied) for TYPING_IDLE_MS. */
   function checkIdle() {
@@ -416,7 +420,15 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
       searchSel = Math.max(0, Math.min(searchHits.length - 1, searchSel + (older ? 1 : -1)))
       return renderSearch()
     }
-    if (e.key === 'Enter' || e.key === 'Tab') return e.preventDefault(), closeSearch(searchHits[searchSel])
+    // As in the CLI: Enter runs the match at once, Tab puts it in the prompt to edit first.
+    if (e.key === 'Tab') return e.preventDefault(), closeSearch(searchHits[searchSel])
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const hit = searchHits[searchSel]
+      closeSearch(hit)
+      if (hit !== undefined) send()
+      return
+    }
     if (e.key === 'Escape') return e.preventDefault(), e.stopPropagation(), closeSearch()
   })
   histList.addEventListener('mousedown', (e) => {
@@ -488,7 +500,7 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
               const path = h.isDir && !/[\\/]$/.test(h.path) ? `${h.path}/` : h.path
               const cut = path.replace(/[\\/]$/, '').search(/[^\\/]*$/)
               return `<div class="wci-row wci-arow${i === sel ? ' sel' : ''}" data-test="at-item" data-path="${esc(h.path)}" data-i="${i}">
-                <span class="ico">${h.isDir ? '📁' : '📄'}</span>
+                <span class="ico">${h.agent ? '✦' : h.isDir ? '📁' : '📄'}</span>
                 <span class="path"><span class="dir">${esc(path.slice(0, cut))}</span><b>${esc(path.slice(cut))}</b></span></div>`
             })
             .join('')
