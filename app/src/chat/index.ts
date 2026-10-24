@@ -1075,7 +1075,7 @@ export function chatScreen(): Screen {
         },
         local(name, args) {
           const own = findAppCommand(name)
-          if (own?.run) return own.run(menuHost(), args), true
+          if (own?.run) return own.run(menuHost(), args, name), true
           switch (name) {
             case 'model':
               if (args.trim()) setModel(args.trim())
@@ -1089,9 +1089,8 @@ export function chatScreen(): Screen {
             case 'resume':
               void leave('saves')
               return true
-            case 'config':
-            case 'settings':
-              ctx.router.go('settings')
+            case 'theme':
+              ctx.router.go('settings', { tab: 'appearance' })
               return true
             case 'costume':
               openCostumes()

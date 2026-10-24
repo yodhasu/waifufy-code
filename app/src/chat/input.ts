@@ -594,7 +594,8 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
     const [, word, args] = /^\/(\S+)\s*([\s\S]*)$/.exec(text)!
     const lower = word.toLowerCase()
     const own = APP_COMMANDS.find((c) => c.name === lower || c.aliases.includes(lower))
-    if (own && host.local(own.name, args.trim())) return
+    // The name as typed: an alias can pick a panel's tab (/cost, /stats), and the chat's own cases list aliases.
+    if (own && host.local(lower, args.trim())) return
     if (own?.name === 'login') {
       ctx.link.send({ t: 'login' })
       return ctx.toast('Opening the Claude Code login… come back once you are signed in')
