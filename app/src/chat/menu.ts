@@ -53,6 +53,8 @@ export type MenuScreen = {
    * Tab / Shift+Tab, or ←/→ outside a text field calls `switchTab`, whose screen replaces this one in place.
    */
   tabs?: { id: string; label: string }[]
+  /** Her line about this screen, with her name plate (VN flavour). Hidden in Focus mode. */
+  voice?: { name: string; text: string }
   tab?: string
   switchTab?(id: string): MenuScreen | Promise<MenuScreen>
 }
@@ -65,6 +67,8 @@ export type MenuHost = {
     close(): void
   }
   toast(text: string): void
+  /** Her line for a panel's first screen (by its test id), when the screen brings none of its own. */
+  voiceFor?(test: string): MenuScreen['voice']
 }
 
 const HINTS = '↑/↓ to navigate · Enter to confirm · Esc to go back'
@@ -83,7 +87,7 @@ export function openMenu(host: MenuHost, test: string, first: MenuScreen | Promi
     test,
     title: loadingTitle,
     cls: 'menu',
-    body: '<nav class="mtabs" role="tablist" data-test="menu-tabs"></nav><div class="menu-sub"></div><div class="menu-body"></div><div class="menu-list" role="listbox"></div><footer class="menu-foot"></footer>',
+    body: '<div class="mvoice" data-test="menu-voice" hidden></div><nav class="mtabs" role="tablist" data-test="menu-tabs"></nav><div class="menu-sub"></div><div class="menu-body"></div><div class="menu-list" role="listbox"></div><footer class="menu-foot"></footer>',
     key: onKey,
     back,
     onClose: () => done(),
@@ -91,6 +95,7 @@ export function openMenu(host: MenuHost, test: string, first: MenuScreen | Promi
   const el = m.el
   const titleEl = el.querySelector<HTMLElement>('header h2')!
   const tabsEl = el.querySelector<HTMLElement>('.mtabs')!
+  const voiceEl = el.querySelector<HTMLElement>('.mvoice')!
   const sub = el.querySelector<HTMLElement>('.menu-sub')!
   const body = el.querySelector<HTMLElement>('.menu-body')!
   const list = el.querySelector<HTMLElement>('.menu-list')!
@@ -120,6 +125,8 @@ export function openMenu(host: MenuHost, test: string, first: MenuScreen | Promi
     tabsEl.innerHTML = (s.tabs ?? [])
       .map((x) => `<button type="button" role="tab" class="mtab${x.id === s.tab ? ' on' : ''}" data-test="menu-tab" data-tab="${esc(x.id)}" aria-selected="${x.id === s.tab}" tabindex="-1">${esc(x.label)}</button>`)
       .join('')
+    voiceEl.hidden = !s.voice
+    voiceEl.innerHTML = s.voice ? `<b>${esc(s.voice.name)}</b><span>${esc(s.voice.text)}</span>` : ''
     sub.textContent = s.subtitle ?? ''
     sub.hidden = !s.subtitle
     body.innerHTML = s.body ?? ''
@@ -161,6 +168,7 @@ export function openMenu(host: MenuHost, test: string, first: MenuScreen | Promi
   }
 
   function push(s: MenuScreen) {
+    if (!stack.length && !s.voice) s.voice = host.voiceFor?.(test)
     if (top()) top()!.focus = focused() ?? top()!.focus
     stack.push({ screen: s, focus: undefined, query: '' })
     draw()

@@ -324,6 +324,13 @@
 .chat .menu-foot { display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; color: var(--text-faint); border-top: 1px dashed var(--panel-line); padding-top: 8px; }
 .chat .menu-foot .mkeys { font-style: italic; }
 .chat .modal.menu .msearch { width: 280px; padding: 5px 12px; }
+/* Her line at the top of a panel: a small name plate and one sentence, like a VN aside. */
+.chat .mvoice { display: flex; align-items: baseline; gap: 10px; margin-top: -6px; font-size: 14px; color: var(--text-soft); }
+.chat .mvoice[hidden] { display: none; }
+.chat .mvoice b { font-family: var(--font-title); color: var(--text-on-accent); background: linear-gradient(180deg, var(--accent), var(--accent-deep));
+  padding: 1px 12px; border-radius: 8px 8px 8px 2px; letter-spacing: .08em; font-size: 13px; }
+.chat .mvoice span::before { content: '「'; } .chat .mvoice span::after { content: '」'; }
+html[data-focus='1'] .chat .mvoice { display: none; }
 .chat .mtabs { display: flex; gap: 6px; flex-wrap: wrap; margin-top: -4px; }
 .chat .mtabs[hidden] { display: none; }
 .chat .mtab { border: 1px solid var(--panel-line); background: var(--panel-inset); color: var(--text-soft); border-radius: 999px;

@@ -31,6 +31,9 @@ const GROUPS: { scopes: string[]; title: string; note(cwd: string): string }[] =
 ]
 const BUILT_IN = { title: 'Built-in MCPs', note: 'always available' }
 
+/** How often /mcp re-reads the servers while one is still connecting. */
+const PENDING_POLL_MS = 1500
+
 const isRemote = (s: McpServer) => ['http', 'sse', 'claudeai-proxy', 'ws'].includes(s.config?.type ?? '')
 const toolCount = (s: McpServer) => s.tools?.length ?? 0
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
@@ -67,8 +70,16 @@ export function mcpCommand(host: McpHost, args: string) {
     host.toast('Usage: /mcp [reconnect|enable|disable [<server>|all]]. With no server name, applies to all.')
     return
   }
-  const list = () => control<McpServer[]>(host.link, 'mcpServerStatus')
-  openMenu(host, 'mcp', list().then((servers) => listScreen(host, servers, list)), 'Manage MCP servers')
+  let pending = false
+  const list = () =>
+    control<McpServer[]>(host.link, 'mcpServerStatus').then((servers) => {
+      pending = servers.some((x) => x.status === 'pending')
+      return servers
+    })
+  const menu = openMenu(host, 'mcp', list().then((servers) => listScreen(host, servers, list)), 'Manage MCP servers')
+  // Servers still connecting update in place, as the CLI's list does, until none is pending.
+  const poll = window.setInterval(() => pending && menu.refresh(), PENDING_POLL_MS)
+  void menu.closed.then(() => clearInterval(poll))
 }
 
 function listScreen(host: McpHost, servers: McpServer[], list: () => Promise<McpServer[]>): MenuScreen {

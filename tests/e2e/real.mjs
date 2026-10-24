@@ -4,7 +4,7 @@
 //
 // Guards: the session must report a Haiku model before anything is sent, and at most MAX_TURNS model turns
 // go out: a greeting, one tiny tool use, and a `!git status` she answers (the CLI's respondToBashCommands).
-// /context is a local command and costs nothing. After it the harness blocks every further `say` and `shell`.
+// /context (the app's own panel, from getContextUsage) costs nothing. The harness blocks every further `say` and `shell`.
 
 import { launch, stopVite } from './driver.mjs'
 import { EMOTIONS, focusInput, makeProject, newGame, readAll, removeTempDirs, say, T, turnEnd } from './lib.mjs'
@@ -128,12 +128,15 @@ try {
   // No more model turns from here: only the free local command below may go out.
   await app.eval(() => window.__e2e.block.add('shell'))
 
-  // 4. A local slash command (no model turn).
-  m = await realSay(app, '/context', { free: true })
+  // 4. /context: the app's panel over the SDK's getContextUsage (no model turn; nothing can be sent now).
   await app.eval(() => window.__e2e.block.add('say'))
-  end = await turnEnd(app, m, TURN_MS)
-  const notice = (await app.events(m, 'notice')).find((n) => n.kind === 'command')
-  check(Boolean(notice) && /context/i.test(notice.text), '/context output arrives as a command notice', notice?.text.slice(0, 60))
+  await focusInput(app)
+  await app.type('/context ')
+  await app.key('Enter')
+  await app.waitVisible(T('context'), TURN_MS)
+  await app.waitFor(() => /tokens \(\d+%\)/.test(document.querySelector('[data-test="context"]')?.innerText ?? ''), { timeout: TURN_MS, label: '/context loaded' })
+  check(true, '/context shows the real context usage', (await app.text(T('context'))).replace(/\s+/g, ' ').slice(0, 80))
+  await app.key('Escape')
 
   const last = (await app.events(0, 'stats')).at(-1)?.stats
   const filled = last?.costUsd > 0 && last?.context?.used > 0

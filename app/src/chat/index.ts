@@ -24,6 +24,24 @@ import {
 const SUCCESS_MIN_SECONDS = 20
 /** Two Esc presses this close together on an idle prompt open the rewind menu. */
 const FOCUS_KEY = 'wc.focus'
+/** Her aside at the top of each CLI panel (menu.ts voice): one short line in her voice, never instructions. */
+const PANEL_LINES: Record<string, (you: string) => string> = {
+  mcp: (you) => `These are the servers that lend me their tools, ${you}.`,
+  settings: (you) => `Everything Claude Code remembers about how you like to work, ${you}.`,
+  model: () => 'Which mind shall I think with?',
+  effort: () => 'How hard should I think before I answer?',
+  fast: () => 'Faster answers, at a higher price.',
+  context: (you) => `This is how full my memory of our conversation is, ${you}.`,
+  permissions: () => 'What I may do without asking, and what I must never do.',
+  hooks: () => 'Commands that run on their own when I use my tools.',
+  memory: (you) => `The notes I read every time we start, ${you}.`,
+  plugin: () => 'New tools and skills I could learn.',
+  skills: () => 'The skills I know, and when I may use them.',
+  tasks: () => 'Work still running in the background.',
+  diff: (you) => `Everything we changed, ${you}. Leave me a note on any file.`,
+  rewind: (you) => `Shall we go back to an earlier moment, ${you}?`,
+  palette: () => 'Anything you need, just type it.',
+}
 /** Below this much context left, she warns as the CLI does (its footer turns at 20%). */
 const CONTEXT_LOW_LEFT = 20
 const readFocus = () => {
@@ -257,6 +275,10 @@ export function chatScreen(): Screen {
   /** What the CLI-style menus (/mcp…) need from the chat: its modal layer, toasts, the link and the session folder. */
   const menuHost = (): CommandHost => ({
     modal,
+    voiceFor: (test) => {
+      const line = PANEL_LINES[test]?.(addressOf(settings()))
+      return line ? { name: charName(), text: line } : undefined
+    },
     toast: ctx.toast,
     ctx,
     link: ctx.link,
