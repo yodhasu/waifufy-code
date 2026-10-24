@@ -502,6 +502,9 @@ mod job {
     type Handle = *mut c_void;
 
     const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x2000;
+    /// Lets processes the sidecar's children start break away silently, as libuv's own job does: a browser
+    /// that Claude Code opens for login, or an editor from `!code .`, must outlive the app.
+    const JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK: u32 = 0x1000;
     const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION: i32 = 9;
 
     /// JOBOBJECT_EXTENDED_LIMIT_INFORMATION, with JOBOBJECT_BASIC_LIMIT_INFORMATION and IO_COUNTERS inlined.
@@ -544,7 +547,10 @@ mod job {
             if job.is_null() {
                 return Err(io::Error::last_os_error());
             }
-            let limits = ExtendedLimits { limit_flags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, ..Default::default() };
+            let limits = ExtendedLimits {
+                limit_flags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
+                ..Default::default()
+            };
             let info = (&limits as *const ExtendedLimits).cast();
             let length = mem::size_of::<ExtendedLimits>() as u32;
             if unsafe { SetInformationJobObject(job, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, info, length) } == 0 {
@@ -553,7 +559,9 @@ mod job {
             Ok(KillOnClose(job))
         }
 
-        /// Takes in a freshly started child. What it starts later (Claude Code) joins the job with it.
+        /// Takes in a freshly started child. What it starts later breaks away from this job; node's own job
+        /// (libuv's, kill-on-close) still ends Claude Code and `!` commands when node ends, while a browser or
+        /// editor they open survives the app.
         pub fn adopt(&self, child: &Child) -> io::Result<()> {
             match unsafe { AssignProcessToJobObject(self.0, child.as_raw_handle()) } {
                 0 => Err(io::Error::last_os_error()),

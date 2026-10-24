@@ -438,7 +438,8 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
         .commands()
         .filter((c) => !own.has(c.name))
         .map((c) => ({
-          aliases: [],
+          // The CLI's own aliases (/cost runs /usage), so an exact alias outranks a prefix like /costume.
+          aliases: (c.aliases ?? []).filter((x) => !own.has(x)),
           item: { name: c.name, description: c.description, hint: c.argumentHint, tag: c.builtin ? ('built-in' as const) : ('custom' as const) },
         })),
     ]

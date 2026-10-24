@@ -21,6 +21,15 @@ function fail(message) {
 }
 
 if (!existsSync(TAURI_CLI)) fail(`${relative(ROOT, TAURI_CLI)} is missing; run \`npm run setup\` first`)
+// Git-ignored (Live2D's license: download it, don't commit it). Without it every user of the build would only
+// ever see the placeholder sprite, and nothing else would warn.
+const CUBISM = join(APP, 'public', 'live2dcubismcore.min.js')
+if (!existsSync(CUBISM)) {
+  fail(
+    `${relative(ROOT, CUBISM)} is missing. Download it first:\n` +
+      `  Invoke-WebRequest https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js -OutFile ${relative(ROOT, CUBISM)}`,
+  )
+}
 
 execFileSync(process.execPath, [join(ROOT, 'scripts', 'stage-sidecar.mjs')], { stdio: 'inherit' })
 

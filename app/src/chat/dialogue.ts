@@ -104,7 +104,8 @@ const ABBREV = /(?:^|[\s(])(?:e\.g|i\.e|etc|vs|cf|approx)\.$/i
 /** Splits prose after sentence-ending punctuation; a marker-only tail joins the sentence before it. */
 export function sentences(s: string): string[] {
   const out: string[] = []
-  const re = /[.!?…]+["'”’)\]]*(?=\s|$)\s*|[。！？]+\s*/g
+  // A face marker may sit between the full stop and the space ("Found it! [smile] The…"): it stays with its sentence.
+  const re = new RegExp(`[.!?…]+["'”’)\\]]*[${MARK_CLASS}]*(?=\\s|$)\\s*|[。！？]+[${MARK_CLASS}]*\\s*`, 'g')
   let start = 0
   for (const m of s.matchAll(re)) {
     if (ABBREV.test(stripMarks(s.slice(start, m.index + 1)))) continue
@@ -121,12 +122,22 @@ export function sentences(s: string): string[] {
   return merged
 }
 
-/** Greedily packs pieces (sentences or lines) into pages of at most PAGE_CHARS visible characters. */
+/** Lines the dialogue box shows at the default font size, and about how many characters fit on one. */
+const BOX_LINES = 4
+const LINE_CHARS = 64
+
+/** Rendered lines of a page: each of its lines wraps every LINE_CHARS visible characters. */
+const lineCount = (page: string) => page.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(visLen(l) / LINE_CHARS)), 0)
+
+/**
+ * Greedily packs pieces (sentences or lines) into pages of at most PAGE_CHARS visible characters and BOX_LINES
+ * lines, so a lead-in plus four bullets doesn't run below the box.
+ */
 function pack(pieces: string[], joiner: string): string[] {
   const pages: string[] = []
   let page = ''
   for (const piece of pieces) {
-    if (page && visLen(page) + visLen(piece) > PAGE_CHARS) {
+    if (page && (visLen(page) + visLen(piece) > PAGE_CHARS || lineCount(page + joiner + piece) > BOX_LINES)) {
       pages.push(page)
       page = ''
     }
@@ -492,6 +503,8 @@ export function createDialogue(
 
   function paint() {
     textEl.innerHTML = renderRich(current!.rich, shown)
+    // A page that still runs long (a big font, one very long line) keeps the words being typed in view.
+    if (!done()) textEl.scrollTop = textEl.scrollHeight
   }
 
   function finish() {

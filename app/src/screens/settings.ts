@@ -6,6 +6,7 @@
 import type {
   Appearance, ClaudeSettings, Costume, Emotion, MotionSettings, PersonaPreset, Profile, ResearchProfile, ServerMsg, Settings, Waifu,
 } from '../../../link/src/protocol.ts'
+import { addressOf } from '../../../link/src/address.ts'
 import type { Ctx, Screen } from '../contracts'
 import { esc } from '../ui'
 import { CUSTOM_PERSONALITY, PERSONALITIES, personalityById } from './personas'
@@ -279,14 +280,6 @@ function setAt(s: Settings, path: string, v: unknown) {
   const last = keys.pop()!
   const parent = keys.reduce<Record<string, unknown>>((o, k) => o[k] as Record<string, unknown>, s as unknown as Record<string, unknown>)
   parent[last] = v
-}
-
-/** "Yodha" + kun → "Yodha-kun". Same rule as addressOf in link/src/settings.ts. */
-function addressOf(s: Settings) {
-  const p = s.profile
-  const name = p.callMe || p.displayName || 'Master'
-  const h = p.honorific === 'custom' ? p.customHonorific.trim() : p.honorific === 'none' ? '' : p.honorific
-  return h ? `${name}-${h.replace(/^-/, '')}` : name
 }
 
 const band = (v: number, labels: string[]) => labels[Math.min(labels.length - 1, Math.floor((v / SLIDER_MAX) * labels.length))]
@@ -917,8 +910,12 @@ export function settingsScreen(): Screen {
     ctx.store.update((s) => {
       s.waifu.activePreset = p.id
       if (p.name) s.waifu.name = p.name
-      if (p.series) s.waifu.series = p.series
-      if (!s.waifu.catchphrases.length) s.waifu.catchphrases = p.profile.catchphrases.slice(0, MAX_CATCHPHRASES)
+      // The series always follows, so an original character doesn't stay "from Re:Zero".
+      s.waifu.series = p.series
+      // Catchphrases that came from any preset give way to this one's; the ones the user typed stay.
+      const fromPresets = new Set(s.presets.flatMap((x) => x.profile.catchphrases))
+      const own = s.waifu.catchphrases.filter((c) => !fromPresets.has(c))
+      s.waifu.catchphrases = [...own, ...p.profile.catchphrases].slice(0, MAX_CATCHPHRASES)
     })
     ctx.toast(`${p.name} is now her persona. It takes effect from the next session.`)
     say(stripTags(p.profile.sampleLines[0] ?? '') || 'Nice to meet you, {you}.', 'delighted')
@@ -1453,7 +1450,7 @@ export function settingsScreen(): Screen {
     }
     if (t.dataset.chipInput !== undefined) {
       const input = t as HTMLInputElement
-      if (e.key === 'Enter' || e.key === ',') {
+      if (e.key === 'Enter') {
         e.preventDefault()
         return addChip(input)
       }

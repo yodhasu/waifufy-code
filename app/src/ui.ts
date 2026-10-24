@@ -12,12 +12,17 @@ export function toast(text: string, ms = 2600) {
   t.dataset.timer = String(setTimeout(() => t.classList.remove('show'), ms))
 }
 
+/** Leading spaces kept as non-breaking ones, so nested list items stay indented under their parent. */
+const indent = (lead: string) => '&nbsp;'.repeat(lead.replace(/\t/g, '  ').length)
+
 function inline(s: string) {
   return esc(s)
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
-    .replace(/^#{1,6}\s+(.*)$/gm, '<b>$1</b>')
-    .replace(/^\s*[-*]\s+/gm, '• ')
+    .replace(/^#{1,6}[ \t]+(.*)$/gm, '<b>$1</b>')
+    // [ \t], not \s: \s would run across the blank line before a list and swallow the paragraph break.
+    .replace(/^([ \t]*)[-*][ \t]+/gm, (_, lead: string) => `${indent(lead)}• `)
+    .replace(/^[ \t]+/gm, indent)
 }
 
 /** Just enough Markdown for dialogue: code fences, inline code, bold, headings and bullets. */

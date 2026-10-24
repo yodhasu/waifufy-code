@@ -461,6 +461,8 @@ export class App {
    * that point or the element is not hit-testable (unless `force`, which falls back to element.click()).
    */
   async click(sel, { force = false } = {}) {
+    // Choice menus ignore clicks in their first moments (asks.ts ARM_MS), as they ignore keys.
+    if (sel.includes('ask-option')) await this.waitFor(() => document.querySelector('[data-test="ask"][data-armed]'), { label: 'the menu to take input' })
     if (force) return this.eval((s) => document.querySelector(s).click(), sel)
     const { x, y } = await this.center(sel)
     const cover = await this.eval(

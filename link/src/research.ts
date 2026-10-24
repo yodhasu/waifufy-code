@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { query, type Options, type Query, type SDKAssistantMessageError } from '@anthropic-ai/claude-agent-sdk'
 import type { PersonaPreset, ResearchProfile } from './protocol.ts'
+import { childEnv } from './shell.ts'
 
 // Auto-research for roleplay (R40): a cheap model with web search and fetch studies the character
 // and returns a structured profile plus a roleplay prompt, which the settings page previews as a preset.
@@ -51,7 +52,7 @@ export const RESEARCH_SCHEMA = {
         summary: { type: 'string', description: 'Two or three sentences: who the character is, which part of canon this profile follows.' },
         personality: stringList('Core traits, each a short phrase with a concrete canon example.'),
         speechPatterns: stringList('How they talk: register, verbal tics, self-reference, sentence shape.'),
-        catchphrases: stringList('Signature lines in the original language with a translation, e.g. 「…」 (…).'),
+        catchphrases: stringList('3-6 short signature phrases she could say to the user while working, in English (a Japanese word or two is fine). No translations, quote marks, sources or notes, and never another character name.'),
         addressing: {
           type: 'string',
           description: 'How they address others: honorifics, nicknames, shifts with closeness. The user as a pattern, never a canon name.',
@@ -71,7 +72,7 @@ const SYSTEM_PROMPT = `You are a careful character researcher for Waifufy Code, 
 
 # Research
 - Use WebSearch and WebFetch. Prefer the character's fan wiki page (Fandom and similar), official sites and interviews, and quote collections. Read at least two independent sources and cross-check them.
-- Gather: personality, speech patterns (register, verbal tics, how they refer to themselves), catchphrases in the original language with a translation, how they address people (honorifics, nicknames, how that shifts with closeness), relationship dynamics, emotional range, and the canon facts a fan would notice if they were wrong.
+- Gather: personality, speech patterns (register, verbal tics, how they refer to themselves), signature lines (in the original language with a translation, for your own understanding; the catchphrases field takes short English phrases only), how they address people (honorifics, nicknames, how that shifts with closeness), relationship dynamics, emotional range, and the canon facts a fan would notice if they were wrong.
 - When sources disagree, follow the primary work over adaptations and say which version you used in the summary. Never invent quotes: a catchphrase must appear in a source.
 - If the character cannot be found (an original character, or too obscure), say so in the summary and build the profile from the user's notes and the name alone, with an empty source list.
 - Be efficient: a few targeted searches and the two or three best pages are enough. Stop researching once the picture is consistent.
@@ -283,6 +284,8 @@ export async function research(o: ResearchOptions, run: QueryFn = query): Promis
         outputFormat: { type: 'json_schema', schema: RESEARCH_SCHEMA },
         abortController: abort,
         pathToClaudeCodeExecutable: o.claudePath,
+        // The link's own credentials (WC_TOKEN, WC_PORT) stay out of the researcher's environment.
+        env: childEnv(),
         stderr: (data) => (stderr = (stderr + data).slice(-STDERR_KEEP)),
       },
     })

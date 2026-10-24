@@ -102,9 +102,12 @@ async function scan(dir: string): Promise<Found[]> {
  * which the saved value can't be trusted for: the store saves 400 ms after the change.
  */
 export async function listCostumes(dir?: string): Promise<{ list: Costume[]; dir: string; found: boolean }> {
-  const root =
+  const requested =
     dir === undefined ? (await loadSettings()).appearance.modelsDir || defaultModelsDir() : dir.trim() ? resolve(dir.trim()) : defaultModelsDir()
-  if (!root) return { list: [], dir: '', found: false }
+  // A saved folder that is missing right now (a drive not plugged in) lists the default folder meanwhile. The reply
+  // still names the requested folder: the app matches replies to its request by it.
+  const root = requested && existsSync(requested) ? requested : defaultModelsDir()
+  if (!root) return { list: [], dir: requested, found: false }
   const all = await scan(root)
   const mine = all.filter((f) => CHARACTER_RE.test(f.id) || CHARACTER_RE.test(f.model))
   const picked = mine.length ? mine : all
@@ -113,7 +116,7 @@ export async function listCostumes(dir?: string): Promise<{ list: Costume[]; dir
     .map(describe)
     .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
     .map(({ order: _, ...c }) => c)
-  return { list, dir: root, found: list.length > 0 }
+  return { list, dir: requested, found: list.length > 0 }
 }
 
 async function costumeFolder(id: string): Promise<string | undefined> {

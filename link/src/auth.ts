@@ -78,8 +78,9 @@ export function createAuth(claudePath: string | undefined, onChange: (a: Auth) =
       const exe = claudeExecutable(claudePath)
       const child =
         process.platform === 'win32'
-          ? // `start` gives the CLI a visible console even though this process runs without one.
-            spawn('cmd.exe', ['/c', 'start', `"${LOGIN_WINDOW_TITLE}"`, `"${exe}"`, 'auth', 'login'], {
+          ? // `start` gives the CLI a visible console even though this process runs without one. `|| pause`
+            // keeps the window open when the login fails, so its reason can be read.
+            spawn('cmd.exe', ['/c', 'start', `"${LOGIN_WINDOW_TITLE}"`, 'cmd.exe', '/c', `""${exe}" auth login || pause"`], {
               detached: true,
               stdio: 'ignore',
               windowsVerbatimArguments: true,

@@ -23,3 +23,13 @@
 !macro NSIS_HOOK_PREUNINSTALL
   !insertmacro WC_END_ORPHANED_SIDECAR
 !macroend
+
+; "Delete the application data" also removes the app's own data folder (settings, profile and avatar, saves,
+; thumbnails, logs), which is named after the app rather than the bundle identifier the template cleans up.
+; Never during an update. Transcripts stay in ~\.claude, where Claude Code keeps them.
+!macro NSIS_HOOK_POSTUNINSTALL
+  ${If} $DeleteAppDataCheckboxState = 1
+  ${AndIf} $UpdateMode <> 1
+    RmDir /r "$APPDATA\waifufy-code"
+  ${EndIf}
+!macroend

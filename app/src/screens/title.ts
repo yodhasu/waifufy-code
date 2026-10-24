@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { addressOf } from '../../../link/src/address.ts'
 import type { Auth, Relationship, Save, Settings } from '../../../link/src/protocol.ts'
 import type { ChatParams, Ctx, Screen } from '../contracts'
 import { esc } from '../ui'
@@ -16,19 +17,16 @@ const RELATION_WORDS: Record<Relationship, string> = {
   custom: 'companion',
 }
 
-/** "maid", "childhood friend", or the user's own word for a custom dynamic. */
+/**
+ * "maid", "childhood friend"… as a noun for "your Claude Code ___". A custom relationship is free text ("a fellow
+ * adventurer from the guild") that doesn't fit that sentence, so it reads "companion" there; the persona uses it whole.
+ */
 export function relationWord(s: Settings) {
-  const w = s.waifu
-  return w.relationship === 'custom' ? w.relationshipCustom.trim() || RELATION_WORDS.custom : RELATION_WORDS[w.relationship]
+  return RELATION_WORDS[s.waifu.relationship]
 }
 
-/** "Yodha" + kun → "Yodha-kun". Mirrors addressOf in link/src/settings.ts, which can't be bundled (node:fs). */
-export function addressOf(s: Settings) {
-  const p = s.profile
-  const name = p.callMe.trim() || p.displayName.trim() || 'Master'
-  const h = p.honorific === 'custom' ? p.customHonorific.trim() : p.honorific === 'none' ? '' : p.honorific
-  return h ? `${name}-${h.replace(/^-/, '')}` : name
-}
+/** "Yodha" + kun → "Yodha-kun": the link's own rule, shared so every screen and the persona agree. */
+export { addressOf }
 
 export const waifuName = (s: Settings) => s.waifu.name.trim() || 'Rem'
 

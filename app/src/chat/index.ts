@@ -28,6 +28,8 @@ const LAST_LINE_CHARS = 200
 /** The stats that follow turn_end are waited for this long before the turn is saved without them. */
 const STATS_WAIT_MS = 1500
 const TRUST_WAIT_MS = 15_000
+/** After a `!` command's output, how long to wait for her reply turn before running what was queued behind it. */
+const SHELL_DRAIN_MS = 1500
 /** The LOG follows new entries while you are this close to its bottom. */
 const LOG_STICK_PX = 40
 const LOG_DETAIL_CHARS = 140
@@ -48,7 +50,8 @@ const PHASE_VERBS: Record<Phase, string> = {
 }
 
 type Layer = { el: HTMLElement; close(): void; key?(e: KeyboardEvent): boolean }
-type Queued = { id: string; text: string; images: Image[] }
+/** `shell`: a `!` command, queued like the CLI queues one typed while a turn runs. */
+type Queued = { id: string; text: string; images: Image[]; shell?: boolean }
 type ModalOptions = {
   test: string
   title: string
@@ -107,6 +110,9 @@ export function chatScreen(): Screen {
   let model: string | undefined
   let mode: PermissionModeName = 'default'
   let autoSeen = false
+  let bypassAvailable = false
+  /** `!` commands sent and not yet answered with their output. */
+  let shellsRunning = 0
   let affection = 0
   let basePlayMs = 0
   let startedAt = 0
@@ -455,7 +461,7 @@ export function chatScreen(): Screen {
   // ---------------------------------------------------------------- sending, queue, interrupt (R11, R12)
 
   function renderQueue() {
-    input.setQueued(queued.map(({ id, text }) => ({ id, text })), (id) => {
+    input.setQueued(queued.map(({ id, text, shell }) => ({ id, text: shell ? `!${text}` : text })), (id) => {
       queued = queued.filter((q) => q.id !== id)
       renderQueue()
     })
@@ -482,19 +488,29 @@ export function chatScreen(): Screen {
   function sendNext() {
     const next = queued.shift()
     renderQueue()
-    if (next) say(next.text, next.images, true)
+    if (next?.shell) runShell(next.text)
+    else if (next) say(next.text, next.images, true)
+  }
+
+  /** `!cmd`: runs in the session folder. Until its output is back, Esc, Ctrl+C and STOP stop it (R16). */
+  function runShell(command: string) {
+    shellsRunning++
+    ctx.link.send({ t: 'shell', command })
+    addLog({ who: 'user', text: `!${command}` })
+    // Queued behind anything unread, so her pages are not thrown away.
+    dialogue.push({ kind: 'narration', text: `Running \`${oneLine(command, SHELL_NARRATION_CHARS)}\`… (Esc stops it)` })
   }
 
   function restoreQueue() {
     if (!queued.length) return false
-    input.restore(queued.map((q) => q.text).join('\n'))
+    input.restore(queued.map((q) => (q.shell ? `!${q.text}` : q.text)).join('\n'))
     queued = []
     renderQueue()
     return true
   }
 
   function interrupt() {
-    if (!running) return false
+    if (!running && !shellsRunning) return false
     ctx.link.send({ t: 'interrupt' })
     // Like the CLI, messages typed during the turn come back to the input instead of running.
     restoreQueue()
@@ -503,7 +519,14 @@ export function chatScreen(): Screen {
 
   function cycleMode() {
     if (!live || ended) return
-    const cycle = autoSeen || settings().claude.permissionMode === 'auto' ? [...BASE_CYCLE, 'auto' as const] : BASE_CYCLE
+    // The CLI's cycle: bypass only when the session started with it, auto only when the model offers it.
+    const current = models.find((x) => x.value === model || x.resolved === model)
+    const auto = current?.supportsAuto ?? (autoSeen || settings().claude.permissionMode === 'auto')
+    const cycle: PermissionModeName[] = [
+      ...BASE_CYCLE,
+      ...(bypassAvailable ? ['bypassPermissions' as const] : []),
+      ...(auto ? ['auto' as const] : []),
+    ]
     const next = cycle[(cycle.indexOf(mode) + 1) % cycle.length]
     mode = next
     panels.mode(next)
@@ -545,6 +568,7 @@ export function chatScreen(): Screen {
     startedAt = 0
     lastLine = ''
     queued = []
+    shellsRunning = 0
     tools.clear()
     log.length = 0
     pager.reset()
@@ -763,6 +787,9 @@ export function chatScreen(): Screen {
   }
 
   function onEnded(m: Extract<SessionEvent, { t: 'ended' }>) {
+    // What she had streamed of an unfinished reply still goes to the LOG.
+    pager.end()
+    shellsRunning = 0
     ended = true
     setRunning(false)
     asks.clear()
@@ -812,6 +839,10 @@ export function chatScreen(): Screen {
   }
 
   function onShell(m: Extract<SessionEvent, { t: 'shell_result' }>) {
+    shellsRunning = Math.max(0, shellsRunning - 1)
+    // She usually answers the output in a turn of her own; when she doesn't (stopped, or respondToBashCommands
+    // off), what was queued behind the command goes out now.
+    window.setTimeout(() => !running && !shellsRunning && sendNext(), SHELL_DRAIN_MS)
     const output = m.output.replace(/\s+$/, '')
     addLog({ who: 'shell', command: m.command, output, code: m.code })
     const page = pagesForMono(`$ ${m.command}\n${output || '(no output)'}`)[0]
@@ -828,6 +859,7 @@ export function chatScreen(): Screen {
         models = m.models
         mode = m.mode
         autoSeen ||= m.mode === 'auto'
+        bypassAvailable = m.bypassAvailable === true
         model = m.model ?? stats?.model ?? model
         panels.models(m.models)
         panels.model(model)
@@ -984,7 +1016,12 @@ export function chatScreen(): Screen {
         if (!layers.length) input.focus()
       })
 
-      panels = createPanels(root.querySelector('.chat-left')!, root.querySelector('.chat-right')!, { openModels, cycleMode, openAction })
+      panels = createPanels(root.querySelector('.chat-left')!, root.querySelector('.chat-right')!, {
+        openModels,
+        // Focus goes back to the composer, so typing goes there instead of re-pressing the badge with Space/Enter.
+        cycleMode: () => (cycleMode(), input.focus()),
+        openAction,
+      })
       asks = createAsks(asksRoot(), {
         ctx,
         name: charName,
@@ -1012,7 +1049,7 @@ export function chatScreen(): Screen {
             return ctx.toast(`The session has ended · restart it first${pics}`)
           }
           // Like the CLI, a message typed while she works (or before she is ready) waits for the next turn.
-          if (running || !ready) {
+          if (running || !ready || shellsRunning) {
             queued.push({ id: String(++queueSeq), text, images })
             return renderQueue()
           }
@@ -1023,10 +1060,12 @@ export function chatScreen(): Screen {
             input.restore(`!${command}`)
             return ctx.toast(`${charName()} is not ready yet`)
           }
-          ctx.link.send({ t: 'shell', command })
-          addLog({ who: 'user', text: `!${command}` })
-          // Queued behind anything unread, so her pages are not thrown away.
-          dialogue.push({ kind: 'narration', text: `Running \`${oneLine(command, SHELL_NARRATION_CHARS)}\`…` })
+          // As in the CLI, a `!` line typed while she works runs when the turn is over, not alongside her edits.
+          if (running || shellsRunning) {
+            queued.push({ id: String(++queueSeq), text: command, images: [], shell: true })
+            return renderQueue()
+          }
+          runShell(command)
         },
         local(name, args) {
           switch (name) {

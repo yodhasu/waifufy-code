@@ -146,8 +146,35 @@ function fromSettings<T>(cwd: string, sources: readonly string[], pick: (json: S
  * system/init only confirms it with the first turn.
  */
 function settingsMode(cwd: string, sources: readonly string[]): PermissionModeName {
-  const mode = fromSettings(cwd, sources, (j) => j.permissions?.defaultMode)
+  // The CLI ignores escalating modes from the repo-committed project file; so does the badge.
+  const own = fromSettings(cwd, sources.filter((s) => s !== 'project'), (j) => j.permissions?.defaultMode)
+  const project = sources.includes('project') ? fromSettings(cwd, ['project'], (j) => j.permissions?.defaultMode) : undefined
+  const mode = own ?? (ESCALATING.has(String(project)) ? undefined : project)
   return typeof mode === 'string' && MODES.has(mode) ? (mode as PermissionModeName) : 'default'
+}
+
+const ESCALATING = new Set(['acceptEdits', 'auto', 'bypassPermissions'])
+
+const DESTINATIONS: Record<string, string> = {
+  localSettings: 'this project (.claude/settings.local.json)',
+  projectSettings: 'this project (.claude/settings.json)',
+  userSettings: 'all your projects',
+  session: 'this session',
+  cliArg: 'this session',
+}
+
+/** What "don't ask again" saves, like the CLI's label: "Bash(npm run test:*) in this project". */
+function describeAlways(updates: PermissionUpdate[]): string {
+  const parts: string[] = []
+  for (const u of updates) {
+    const where = DESTINATIONS[u.destination] ?? u.destination
+    if (u.type === 'addRules' || u.type === 'replaceRules') {
+      const rules = u.rules.map((r) => (r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName)).join(', ')
+      parts.push(`allow ${rules} in ${where}`)
+    } else if (u.type === 'addDirectories') parts.push(`access to ${u.directories.join(', ')} in ${where}`)
+    else if (u.type === 'setMode') parts.push(`switch to ${u.mode} for ${where}`)
+  }
+  return parts.join('; ')
 }
 
 /** Whether Claude answers a `!cmd`'s output, as the CLI's `respondToBashCommands` setting says (default: yes). */
@@ -182,7 +209,16 @@ class Inbox implements AsyncIterable<SDKUserMessage> {
   }
 }
 
-const LONGEST_TAG = Math.max(...EMOTIONS.map((e) => e.length)) + 2
+/** Tags models improvise despite the list, mapped to the nearest real emotion so they never show as text. */
+const TAG_ALIASES: Record<string, Emotion> = {
+  blush: 'shy', blushing: 'shy', embarrassed: 'shy', giggle: 'happy', laugh: 'happy', grin: 'happy', joy: 'happy',
+  wink: 'smile', smirk: 'smile', excited: 'delighted', cheer: 'delighted', thinking: 'think', confused: 'think',
+  cry: 'teary', crying: 'teary', tears: 'teary', frown: 'sad', gasp: 'surprised', shock: 'surprised', huff: 'pout',
+  annoyed: 'pout', mad: 'angry', relieved: 'smile', determined: 'serious', concerned: 'worried', nervous: 'worried',
+}
+const emotionOf = (word: string): Emotion | undefined =>
+  (EMOTIONS as readonly string[]).includes(word) ? (word as Emotion) : TAG_ALIASES[word]
+const LONGEST_TAG = Math.max(...[...EMOTIONS, ...Object.keys(TAG_ALIASES)].map((e) => e.length)) + 2
 /** After a stripped tag, no space is put back before these. */
 const NO_SPACE_BEFORE = /^[.,!?;:)\]}…'"’”\n]/
 
@@ -247,10 +283,10 @@ export class TagParser {
         const close = b.indexOf(']', i)
         if (close === -1 && !final && b.length - i < LONGEST_TAG) break
         const word = close === -1 ? '' : b.slice(i + 1, close).trim().toLowerCase()
-        if (close !== -1 && close - i <= LONGEST_TAG && (EMOTIONS as readonly string[]).includes(word)) {
+        if (close !== -1 && close - i <= LONGEST_TAG && emotionOf(word)) {
           this.text(text)
           text = ''
-          this.tag(word as Emotion)
+          this.tag(emotionOf(word)!)
           i = close + 1
           continue
         }
@@ -393,11 +429,12 @@ class Session implements SessionApi {
       this.emit({
         t: 'ready',
         sessionId: this.sid,
-        commands: init.commands.map((x) => ({ name: x.name, description: x.description, argumentHint: x.argumentHint, builtin: x.builtin === true })),
-        models: init.models.map((x) => ({ value: x.value, displayName: x.displayName, description: x.description, resolved: x.resolvedModel })),
+        commands: init.commands.map((x) => ({ name: x.name, description: x.description, argumentHint: x.argumentHint, builtin: x.builtin === true, ...(x.aliases?.length ? { aliases: x.aliases } : {}) })),
+        models: init.models.map((x) => ({ value: x.value, displayName: x.displayName, description: x.description, resolved: x.resolvedModel, supportsAuto: x.supportsAutoMode === true })),
         mode,
         model: this.stats.model,
         account: accountLabel(init.account),
+        bypassAvailable: this.opts.settings.claude.permissionMode === 'bypassPermissions',
       })
       this.emitStats()
       await this.refreshStats()
@@ -420,6 +457,8 @@ class Session implements SessionApi {
       ...(c.permissionMode !== 'default' ? { permissionMode: c.permissionMode } : {}),
       ...(c.permissionMode === 'bypassPermissions' ? { allowDangerouslySkipPermissions: true } : {}),
       includePartialMessages: true,
+      // As in the terminal: file snapshots per message, so /rewind (in the terminal, for now) can restore code.
+      enableFileCheckpointing: true,
       ...(this.opts.claudePath ? { pathToClaudeCodeExecutable: this.opts.claudePath } : {}),
       // Without the first variable the SDK swallows session_state_changed. childEnv() leaves out the
       // link's credentials, which every command the model runs would otherwise see.
@@ -976,7 +1015,7 @@ class Session implements SessionApi {
       case 'commands_changed':
         return this.emit({
           t: 'commands',
-          commands: m.commands.map((x) => ({ name: x.name, description: x.description, argumentHint: x.argumentHint, builtin: x.builtin === true })),
+          commands: m.commands.map((x) => ({ name: x.name, description: x.description, argumentHint: x.argumentHint, builtin: x.builtin === true, ...(x.aliases?.length ? { aliases: x.aliases } : {}) })),
         })
       case 'local_command_output':
         if (!this.shown) this.notice(commandText(m.content), 'command')
@@ -1154,8 +1193,11 @@ class Session implements SessionApi {
         const planFile = str(input.planFilePath)
         return this.emit({ t: 'ask_plan', id, plan: str(input.plan), ...(planFile ? { planFile } : {}) })
       }
-      const shellTool = name === 'Bash' || name === 'PowerShell'
+      const shellTool = name === 'Bash' || name === 'PowerShell' || name === 'Monitor'
       const reason = this.reason(o, shellTool ? str(input.description) : '')
+      // Nothing is approved unseen: a tool without a diff or a command (MCP tools above all) shows all its parameters.
+      const full = !shellTool && !diffs.length ? prettyInput(input) : ''
+      const always = canAlways ? describeAlways(o.suggestions ?? []) : ''
       this.emit({
         t: 'ask_permission',
         id,
@@ -1168,6 +1210,8 @@ class Session implements SessionApi {
         danger: isDestructive(name, input),
         defaultToNo: o.defaultToNo === true,
         ...(reason ? { reason } : {}),
+        ...(full ? { input: full } : {}),
+        ...(always ? { always } : {}),
       })
     })
   }

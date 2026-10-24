@@ -106,10 +106,16 @@ export async function loadSettings(): Promise<Settings> {
     stored = undefined
   }
   const s = merge(defaultSettings(), stored)
-  // v0 stored only { userName }.
-  const legacy = (stored as { userName?: string } | undefined)?.userName
-  if (legacy && s.profile.callMe === 'Master') s.profile.displayName = s.profile.callMe = legacy
-  if (!s.appearance.modelsDir || !existsSync(s.appearance.modelsDir)) s.appearance.modelsDir = defaultModelsDir()
+  // v0 stored only { userName }. Migrated once: a file that already has a profile is v1, and the old key is
+  // dropped so it is never written back (it would otherwise undo a later "Master" or a Reset on every load).
+  const old = stored as { userName?: unknown; profile?: unknown } | undefined
+  if (typeof old?.userName === 'string' && old.userName.trim() && !old.profile) {
+    s.profile.displayName = s.profile.callMe = old.userName.trim()
+  }
+  delete (s as { userName?: unknown }).userName
+  // Only an empty folder gets the default here. A saved folder that is missing right now (an external drive not
+  // plugged in yet) is kept; listing and serving costumes fall back to the default on their own meanwhile.
+  if (!s.appearance.modelsDir) s.appearance.modelsDir = defaultModelsDir()
   return s
 }
 
@@ -121,10 +127,4 @@ export async function saveSettings(s: Settings) {
   await rename(tmp, FILE)
 }
 
-/** "Yodha" + kun → "Yodha-kun". */
-export function addressOf(s: Settings) {
-  const p = s.profile
-  const name = p.callMe || p.displayName || 'Master'
-  const h = p.honorific === 'custom' ? p.customHonorific.trim() : p.honorific === 'none' ? '' : p.honorific
-  return h ? `${name}-${h.replace(/^-/, '')}` : name
-}
+export { addressOf } from './address.ts'

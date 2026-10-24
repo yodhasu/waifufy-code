@@ -119,6 +119,7 @@ export function createAsks(
   root.tabIndex = -1
   const queue: Entry[] = []
   let openedAt = 0
+  let armTimer: number | undefined
 
   const head = () => queue[0]
   const choices = () => [...root.querySelectorAll<HTMLButtonElement>('.choice')]
@@ -148,6 +149,7 @@ export function createAsks(
       // The hook marks an open menu only.
       delete root.dataset.test
       delete root.dataset.kind
+      delete root.dataset.armed
       return deps.onChange(false)
     }
     root.dataset.test = 'ask'
@@ -159,6 +161,10 @@ export function createAsks(
     updateMore()
     root.classList.add('show')
     openedAt = performance.now()
+    // data-armed: the menu takes clicks and keys now (a hook for the E2E driver, which waits for it).
+    delete root.dataset.armed
+    clearTimeout(armTimer)
+    armTimer = window.setTimeout(() => root.dataset.test && (root.dataset.armed = '1'), ARM_MS)
     // Nothing is focused unless the safe answer is No, so a stray Enter never approves.
     ;(cautious(e) ? root.querySelector<HTMLElement>('.choice[data-v="deny"]') : root)?.focus()
     if (!e.greeted) {
@@ -167,6 +173,12 @@ export function createAsks(
     }
     deps.onChange(true)
   }
+
+  /**
+   * Clicks wait out the same arming window as keys: a click meant to turn a dialogue page must not land on
+   * "don't ask again" or No in a menu that just opened under the pointer.
+   */
+  const armed = () => performance.now() - openedAt >= ARM_MS
 
   function onOther(submit: (text: string) => void) {
     const input = other()!
@@ -182,6 +194,7 @@ export function createAsks(
     const name = deps.name()
     const body = m.diffs.length
       ? m.diffs.map(renderDiff).join('')
+      : m.input ? `<pre class="cmd">${esc(clip(m.input))}</pre>`
       : m.detail ? `<pre class="cmd${m.danger ? ' danger' : ''}">${esc(clip(m.detail))}</pre>` : ''
     const lead = m.danger ? `${name} is worried · this cannot be undone` : `${name} asks for permission`
     root.innerHTML = `<div class="ask${m.danger ? ' danger' : ''}">
@@ -190,7 +203,7 @@ export function createAsks(
       ${body}
       <div class="choices">
         ${choice('allow', 'Yes', 'Allow once')}
-        ${m.canAlways ? choice('always', "Yes, and don't ask again", 'Saves a permission rule') : ''}
+        ${m.canAlways ? choice('always', "Yes, and don't ask again", m.always ? `Saves: ${m.always}` : 'Saves a permission rule') : ''}
         ${choice('deny', 'No', `${name} stops and waits for you`, 'deny')}
         <input class="other field" data-test="ask-other" placeholder="…or tell ${esc(name)} what to do instead (Enter)">
       </div>
@@ -203,7 +216,7 @@ export function createAsks(
     }
     root.querySelector('.choices')!.addEventListener('click', (ev) => {
       const b = (ev.target as HTMLElement).closest<HTMLElement>('.choice')
-      if (b) answer(b.dataset.v as 'allow' | 'always' | 'deny')
+      if (b && armed()) answer(b.dataset.v as 'allow' | 'always' | 'deny')
     })
     onOther((text) => answer('feedback', text))
   }
@@ -235,7 +248,7 @@ export function createAsks(
     const box = root.querySelector('.choices')!
     box.addEventListener('click', (ev) => {
       const b = (ev.target as HTMLElement).closest<HTMLElement>('.choice')
-      if (!b) return
+      if (!b || !armed()) return
       const v = b.dataset.v!
       if (!q.multiSelect) return finish(v)
       if (v === '__confirm') {
@@ -260,7 +273,8 @@ export function createAsks(
         })
       }
     }
-    onOther(finish)
+    // In a multi-select, the typed answer joins the options already ticked.
+    onOther((text) => finish(q.multiSelect ? [...q.options.filter((o) => e.picked.has(o.label)).map((o) => o.label), text].join(', ') : text))
   }
 
   function plan(m: Extract<AskMsg, { t: 'ask_plan' }>) {
@@ -284,7 +298,7 @@ export function createAsks(
     }
     root.querySelector('.choices')!.addEventListener('click', (ev) => {
       const b = (ev.target as HTMLElement).closest<HTMLElement>('.choice')
-      if (b) answer(b.dataset.v as 'auto' | 'manual' | 'keep')
+      if (b && armed()) answer(b.dataset.v as 'auto' | 'manual' | 'keep')
     })
     onOther((text) => answer('keep', text))
   }

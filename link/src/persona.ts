@@ -1,14 +1,14 @@
-import { EMOTIONS, type Emotion, type Expressiveness, type Relationship, type Settings, type WorkVoice } from './protocol.ts'
+import { EMOTIONS, type Emotion, type Expressiveness, type Relationship, type ResearchProfile, type Settings, type WorkVoice } from './protocol.ts'
 import { addressOf, defaultSettings } from './settings.ts'
 
 // Built from the settings on every start, and appended to Claude Code's own system prompt,
 // so every tool, skill, CLAUDE.md and rule still applies. Resumed sessions get it too.
 
-/** Sliders are 0–100; these split them into low / middle / high bands. */
-const LOW = 34
-const HIGH = 67
+/** Sliders are 0–100 in five bands, the same cuts as the labels Settings shows (20/40/60/80). */
+const BANDS = 5
+const SLIDER_MAX = 100
 
-const band = (v: number) => (v < LOW ? 0 : v < HIGH ? 1 : 2)
+const band = (v: number) => Math.min(BANDS - 1, Math.floor((v / SLIDER_MAX) * BANDS))
 
 /** What each tag means, so the model picks the one the moment calls for. */
 const EMOTION_HINTS: Record<Emotion, string> = {
@@ -56,20 +56,27 @@ function relationshipLine(r: Relationship, custom: string, you: string) {
 
 function styleLines(s: Settings): string[] {
   const w = s.waifu
+  // One text per Settings label: Very casual / Casual / Polite / Formal / Very formal, and so on.
   const formality = [
-    'Speak casually, like someone close: contractions, relaxed phrasing, no stiffness.',
+    'Speak very casually, like a close friend: slang and contractions are fine, never stiff.',
+    'Speak casually and warmly: contractions and relaxed phrasing.',
     'Be polite but warm: neither stiff nor slangy.',
     'Speak formally and politely, with respectful phrasing and careful word choice.',
+    'Speak very formally, with deferential, ceremonious courtesy in every line.',
   ][band(w.formality)]
   const playfulness = [
-    'Stay earnest and serious; jokes and teasing are rare.',
-    'Allow light warmth and an occasional gentle joke or tease when the moment is relaxed.',
+    'Stay earnest and serious; no jokes or teasing.',
+    'Stay composed; a light touch of humor only rarely.',
+    'Allow warmth and an occasional gentle joke or tease when the moment is relaxed.',
     'Be playful: banter, teasing and jokes are welcome, but drop them at once when something is risky or broken.',
+    'Be mischievous: tease often and joke freely, but drop it at once when something is risky or broken.',
   ][band(w.playfulness)]
   const verbosity = [
+    'Keep the in-character talk to a few words, then the work.',
     'Keep the in-character talk minimal: a short line, then the work.',
     'Wrap the work in a sentence or two of character, no more.',
     'Be chatty: share reactions and small asides, while each spoken paragraph stays short.',
+    'Be very chatty: react to everything and add asides freely, while each spoken paragraph stays short.',
   ][band(w.verbosity)]
   const lines = [formality, playfulness, `${verbosity} The work content itself stays complete either way.`]
   lines.push(
@@ -97,7 +104,13 @@ const WORK_VOICE: Record<WorkVoice, string> = {
   work: 'Work mode: keep the character to a brief greeting or sign-off where it fits. Everything else is plain and professional, as Claude Code normally writes.',
 }
 
-const bullets = (lines: string[]) => lines.filter(Boolean).map((l) => `- ${l}`).join('\n')
+/** The research card's Do / Don't lists, which the user may have edited after the prompt was written. */
+function presetRules(p: ResearchProfile) {
+  const list = (title: string, items: string[]) => (items.length ? `\n${title}\n${items.map((x) => `- ${x}`).join('\n')}\n` : '')
+  return list('Always:', p.do.map((x) => x.trim()).filter(Boolean)) + list('Never:', p.dont.map((x) => x.trim()).filter(Boolean))
+}
+
+const bullets = (lines: (string | false)[]) => lines.filter(Boolean).map((l) => `- ${l}`).join('\n')
 
 export function buildPersona(s: Settings): string {
   const w = s.waifu
@@ -116,7 +129,8 @@ export function buildPersona(s: Settings): string {
 
   const character = bullets([
     relationshipLine(w.relationship, w.relationshipCustom, you),
-    w.personality.trim() && `Personality: ${w.personality.trim()}`,
+    // An applied research preset is the personality; the hand-written one would contradict it.
+    !preset?.prompt.trim() && w.personality.trim() && `Personality: ${w.personality.trim()}`,
     ...styleLines(s),
   ])
 
@@ -126,7 +140,7 @@ export function buildPersona(s: Settings): string {
 # Persona: ${name}
 
 In this app you speak as ${name}${series ? ` from ${series}` : ''}. You are still Claude Code, with every capability, tool and rule above: ${name} is the voice, not a different set of abilities. If ${you} sincerely asks what you are, say plainly that you are Claude, through Claude Code, playing ${name}.
-${preset?.prompt.trim() ? `\n## Core characterization\n\n${preset.prompt.trim()}\n\nThe settings below fine-tune this characterization.\n` : ''}
+${preset?.prompt.trim() ? `\n## Core characterization\n\n${preset.prompt.trim()}\n${presetRules(preset.profile)}\nThis is who you are. The settings below set your relationship with ${you} and how you speak in this app.\n` : ''}
 ## Who you're talking to
 
 ${user}
