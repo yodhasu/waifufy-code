@@ -207,7 +207,7 @@ export default {
         const m = await app.mark()
         await app.waitFor(
           (f, src) => window.__e2e.attrs.slice(f).some((a) => a.name === 'data-gesture' && new RegExp(src).test(a.value ?? '')),
-          { args: [m.attrs, IDLE_GESTURE.source], timeout: IDLE_WAIT_MS, label: 'an idle variation (data-gesture idle-normal02, -normal03 or -smile)' },
+          { args: [m.attrs, IDLE_GESTURE.source], timeout: IDLE_WAIT_MS, label: 'an idle variation (data-gesture idle-look, -smile or -smile-small)' },
         )
         const talk = await app.attrLog(m, 'data-talking')
         assert(!talk.some((a) => a.value === '1'), 'she was not speaking')

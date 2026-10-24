@@ -232,9 +232,9 @@ export const PAT_BUSY: Tier = { from: 0, name: 'pat-busy', steps: [
 /** A held variation of her resting pose. It only plays while she rests in `normal` or `smile`. */
 export type IdleVariant = { name: string; pose: Pose; ms: [number, number] }
 
+// The normal02/normal03 holds are left out: their faces turn the mouth down (normal03 also closes her eyes), which
+// reads as sad at rest. Like the original Waifufy, she rests in one pose and only smiles or glances around.
 export const IDLE_HOLDS: IdleVariant[] = [
-  { name: 'idle-normal02', pose: { act: ['act_normal02_w'], face: ['face_normal02_w'] }, ms: [5000, 8000] },
-  { name: 'idle-normal03', pose: { act: ['act_normal03_w', 'act_normal_w'], face: ['face_normal03_w'] }, ms: [2600, 4000] },
   { name: 'idle-smile', pose: { act: ['act_hohoemu_w'], face: ['face_hohoemu_w'] }, ms: [4000, 7000] },
 ]
 /** A small one-shot smile that returns to whatever she holds. */

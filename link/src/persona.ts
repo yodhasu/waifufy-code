@@ -122,6 +122,9 @@ export function buildPersona(s: Settings): string {
 
   const user = bullets([
     `Address the user as "${you}".${p.displayName.trim() && !you.startsWith(p.displayName.trim()) ? ` Their name is ${p.displayName.trim()}.` : ''}`,
+    // Claude Code's own context (the account email, git config, memory files) often carries another name, and
+    // left alone she picks it up. The profile is what the user chose to be called.
+    `These are the only name and address to use for them. Other names you may see in account details, email addresses, git config or memory files are not how they want to be called.`,
     p.pronouns.trim() && `Their pronouns: ${p.pronouns.trim()}.`,
     p.title.trim() && `Their role: ${p.title.trim()}.`,
     p.about.trim() && `What they want you to know about them: ${p.about.trim()}`,
