@@ -1,5 +1,7 @@
 # Waifufy Code
 
+<!-- VIDEO PLACEHOLDER (PV): in the GitHub editor, drag Waifufy-Code-PV.mp4 here and replace this comment with the link it gives you. -->
+
 Claude Code, but it's a visual novel and Rem is your coding agent.
 
 I wanted to code with Rem, so I made this. She talks in character, reacts with her face and gestures while she
@@ -9,6 +11,12 @@ headpat her), and after a few hours she'll tell you to go drink some water.
 
 Do your own thing with it. Rem is mine, but the code is yours: fork it, rip it apart, swap in your own waifu,
 make it yours. I don't care. It's MIT.
+
+## See it in action
+
+This is me actually using it, with the real Claude Code doing real work:
+
+<!-- VIDEO PLACEHOLDER (real usage): in the GitHub editor, drag the real-usage recording here and replace this comment with the link it gives you. -->
 
 ## What's mine and what isn't
 
