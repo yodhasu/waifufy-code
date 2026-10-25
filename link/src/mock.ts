@@ -25,6 +25,7 @@ import {
 import { toPreset, type ResearchOptions } from './research.ts'
 import type { SessionApi, SessionFactory, SessionOptions } from './session-api.ts'
 import { addressOf } from './settings.ts'
+import { voiceActive } from './tts.ts'
 
 // A scripted stand-in for session.ts, used when WC_MOCK=1 (E2E tests, UI work without a plan budget).
 // say() picks a scenario by keyword; each one streams the same event shapes, in the same order and at
@@ -495,9 +496,21 @@ class MockSession implements SessionApi {
       (emotion) => this.emit({ t: 'face', emotion }),
     )
     turn.textOpen = true
+    // Like a model with the persona's voice lines: one <ja> line at the end of each paragraph, before the blank line.
+    const voiced = this.opts.settings.voice.language === 'ja' && voiceActive(this.opts.settings.voice)
+    let lines = 0
+    let prevNewline = false
+    const voice = () => voiced && this.emit({ t: 'voice', text: `はい、レムにお任せください。${++lines}` })
     try {
       for (const [k, d] of list.entries()) {
-        splitter.feed(d)
+        // A blank line may come split across two deltas.
+        const at = prevNewline && d.startsWith('\n') ? 0 : d.indexOf('\n\n')
+        prevNewline = d.endsWith('\n')
+        if (at !== -1) {
+          splitter.feed(d.slice(0, at))
+          voice()
+          splitter.feed(d.slice(at))
+        } else splitter.feed(d)
         turn.tokens += Math.ceil(d.length / CHARS_PER_TOKEN)
         if (k % CHUNKS.length === 0) this.emit({ t: 'progress', phase: 'writing', outputTokens: turn.tokens })
         await sleep(TICK_MS, turn.signal)
@@ -505,6 +518,7 @@ class MockSession implements SessionApi {
     } finally {
       splitter.flush()
     }
+    voice()
     turn.textOpen = false
     this.emit({ t: 'text_end' })
   }

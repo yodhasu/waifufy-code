@@ -321,8 +321,10 @@ export async function saveMeta(id: string, patch: MetaPatch, thumb?: string, cwd
 const TAG_WORDS = [...EMOTIONS, ...Object.keys(AFFECTION_TAGS)].map((w) => w.replace(/[+-]/g, '\\$&'))
 const TAGS = new RegExp(`[ \\t]*\\[(?:${TAG_WORDS.join('|')})\\][ \\t]*`, 'gi')
 /** `[smile] Hi! [happy]Done [nod].` → `Hi! Done.`: one space stays between words, none at an edge or before punctuation. */
+/** Her spoken Japanese lines (persona "Voice lines"): only the voice says them, the backlog shows the English. */
+const VOICE_LINES = /[ \t]*<ja>[\s\S]*?<\/ja>/g
 const stripTags = (text: string) =>
-  text.replace(TAGS, (m: string, at: number, s: string) => {
+  text.replace(VOICE_LINES, '').replace(TAGS, (m: string, at: number, s: string) => {
     const before = s[at - 1]
     const after = s[at + m.length]
     return before && after && !/\s/.test(before) && !/[\s.,!?;:…)]/.test(after) ? ' ' : ''

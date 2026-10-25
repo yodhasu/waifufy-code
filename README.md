@@ -69,7 +69,7 @@ Settings (⚙ or `/config`) has a tab for each part:
   Research, and Haiku researches them on the web and writes a profile and a tailored roleplay prompt. Edit it,
   save it to your library, and apply it.
 - **Appearance**, **Text & Motion**, **Claude** (default model, permission mode, folder, settings sources),
-  **Voice** (off in v1), **About**.
+  **Voice** (Fish Audio: her Japanese voice in sync with the text and her lips, once you store a key), **About**.
 
 Persona changes apply from the next session; everything else applies live.
 

@@ -2,7 +2,8 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { Settings } from './protocol.ts'
+import { VOICE_MODELS, type Settings } from './protocol.ts'
+import { DEFAULT_VOICE_ID, REM_VOICE_STYLE } from './voice-style.ts'
 
 /** Everything the app writes: settings, saves registry, thumbnails, logs. */
 export const DATA_DIR = process.env.WC_DATA_DIR || join(process.env.APPDATA ?? join(homedir(), '.config'), 'waifufy-code')
@@ -25,6 +26,7 @@ export function defaultModelsDir() {
 }
 
 export function defaultSettings(): Settings {
+
   return {
     version: 1,
     onboarded: false,
@@ -81,7 +83,16 @@ export function defaultSettings(): Settings {
       gestures: true,
     },
     claude: { model: '', permissionMode: 'default', defaultDir: '', settingSources: ['user', 'project', 'local'] },
-    voice: { provider: 'off' },
+    voice: {
+      enabled: true,
+      voiceId: DEFAULT_VOICE_ID,
+      model: 's2.1-pro-free',
+      language: 'ja',
+      speed: 1,
+      volume: 80,
+      subtitles: true,
+      styleNotes: REM_VOICE_STYLE,
+    },
     lastDir: '',
   }
 }
@@ -113,6 +124,10 @@ export async function loadSettings(): Promise<Settings> {
     s.profile.displayName = s.profile.callMe = old.userName.trim()
   }
   delete (s as { userName?: unknown }).userName
+  // Before 0.5.1 voice was a placeholder, { provider: 'off' }; the merge kept that key next to the new ones.
+  delete (s.voice as { provider?: unknown }).provider
+  if (!VOICE_MODELS.includes(s.voice.model)) s.voice.model = 's2.1-pro-free'
+  if (s.voice.language !== 'en') s.voice.language = 'ja'
   // Only an empty folder gets the default here. A saved folder that is missing right now (an external drive not
   // plugged in yet) is kept; listing and serving costumes fall back to the default on their own meanwhile.
   if (!s.appearance.modelsDir) s.appearance.modelsDir = defaultModelsDir()

@@ -63,6 +63,8 @@
 #screen-settings code { padding: 1px 5px; border-radius: 5px; font-size: .92em; background: var(--inline-code-bg); color: var(--inline-code-text); }
 
 .set-note { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-soft); }
+.set-voice-status { margin: 0 0 4px; padding: 8px 12px; border-radius: 10px; font-size: 13.5px; background: var(--inline-code-bg); color: var(--text-soft); }
+.set-voice-status[data-state='on'] { color: var(--text); background: color-mix(in oklab, var(--accent) 16%, transparent); }
 .set-note code { white-space: nowrap; }
 .set-banner { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 10px 14px; border-radius: 12px; font-size: 13px;
   background: var(--accent-pale); color: var(--accent-deep); border: 1px solid var(--accent-glow); }

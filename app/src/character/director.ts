@@ -29,6 +29,8 @@ export type Actor = {
   addon(candidates: string[]): Promise<number>
   setBlush(on: boolean): void
   setTalking(on: boolean): void
+  /** While her voice plays: the mouth follows this loudness (0–1) instead of the typewriter's flap. */
+  setVoice(level: (() => number) | undefined): void
   /** Turns her toward a point: x right, y up, each in [-1, 1]. */
   focus(x: number, y: number): void
   geometry(): Geometry

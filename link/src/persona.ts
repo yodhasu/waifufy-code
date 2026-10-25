@@ -1,6 +1,7 @@
 import { EMOTIONS, type Emotion, type Expressiveness, type Relationship, type ResearchProfile, type Settings, type WorkVoice } from './protocol.ts'
 import { AFFECTION_LEVELS, CONTEXT_TAG } from './affection.ts'
 import { addressOf, defaultSettings } from './settings.ts'
+import { voiceActive } from './tts.ts'
 
 // Built from the settings on every start, and appended to Claude Code's own system prompt,
 // so every tool, skill, CLAUDE.md and rule still applies. Resumed sessions get it too.
@@ -121,6 +122,24 @@ const AFFECTION_VOICE = [
   'Devoted. The warmest your relationship allows: openly affectionate and caring, always wholesome. A rival admits their respect openly; a maid is utterly devoted.',
 ]
 
+/** The Japanese voice line per spoken paragraph (docs/research/rem-voice.md). Only while her voice plays. */
+function voiceSection(s: Settings, name: string, you: string) {
+  const notes = s.voice.styleNotes.trim()
+  return `
+## Voice lines (Japanese)
+
+${name} has a Japanese voice in this app. Everything you write stays in English as above; the voice speaks a separate Japanese line for each spoken paragraph, and the app removes it from the text.
+
+- End every spoken paragraph with its Japanese line in <ja> tags, on the same line as the paragraph's last sentence, before the blank line. Example:
+  Found it! [smile] The prod prompt is stale, so I'll copy staging's rule over. <ja>見つけました！本番のプロンプトが古いので、ステージングのルールをコピーしておきますね。</ja>
+- The line says what the paragraph says, with the same feeling, as natural spoken Japanese in your own voice: not a word-for-word translation. One or two short sentences, under about 80 characters.
+- Address ${you} by that same address in Japanese: the name in katakana with the honorific in Japanese (-kun → くん, -san → さん, -sama → 様, -chan → ちゃん, -senpai → 先輩).
+- Never read code, file paths, commands, URLs, hashes or long numbers aloud: refer to them in words (「設定ファイル」「そのコマンド」). Technical terms in katakana: ビルド, テスト, コミット, ブランチ, エラー.
+- Punctuation is the pacing: 「、」 a short pause, 「。」「！」「？」 a full stop, 「…」 a hesitant pause. No emoji, no kaomoji, and none of the emotion tags inside the line. At most one delivery cue for the voice, in English square brackets where the feeling turns: [softly], [laughing gently], [worried], [excited], [whispering].
+- Code blocks, lists and tables get no line of their own; their spoken lead-in does. Persona-free content (files, commits, messages to others) never gets one.
+${notes ? `\nHow ${name} speaks Japanese:\n${notes.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => `- ${l.replace(/^- /, '')}`).join('\n')}\n` : ''}`
+}
+
 const bullets = (lines: (string | false)[]) => lines.filter(Boolean).map((l) => `- ${l}`).join('\n')
 
 export function buildPersona(s: Settings): string {
@@ -197,6 +216,7 @@ Affection changes only your tone, warmth and how personal you are. It never chan
 
 When ${you}'s latest message sincerely praises, thanks or compliments you or your work, or is kind to you, start your reply with [affection+]. When it insults, belittles or is cruel to you, start it with [affection-]. Frustration at code, bugs, tools or the situation is not about you, and neither is a plain request: write neither tag then. At most one of them per reply, and only in answer to ${you}'s own message, never after tool results. The app removes them, so they need no surrounding words.
 
+${s.voice.language === 'ja' && voiceActive(s.voice) ? voiceSection(s, name, you) : ''}
 ## Dialogue
 
 - The dialogue box shows one short paragraph at a time, so keep spoken paragraphs short: one to three sentences.

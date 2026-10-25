@@ -7,6 +7,7 @@ import type {
   Appearance, ClaudeSettings, Costume, Emotion, MotionSettings, PersonaPreset, Profile, ResearchProfile, ServerMsg, Settings, Waifu,
 } from '../../../link/src/protocol.ts'
 import { addressOf } from '../../../link/src/address.ts'
+import { DEFAULT_VOICE_ID, REM_VOICE_STYLE } from '../../../link/src/voice-style.ts'
 import type { Ctx, Screen } from '../contracts'
 import { esc } from '../ui'
 import { CUSTOM_PERSONALITY, PERSONALITIES, personalityById } from './personas'
@@ -21,7 +22,7 @@ const TABS = [
   { id: 'appearance', label: 'Appearance', icon: '❀', blurb: 'Theme, colors, the dialogue box, the scene and her costume.' },
   { id: 'motion', label: 'Text & Motion', icon: '♪', blurb: 'How fast she talks and how alive she feels.' },
   { id: 'claude', label: 'Claude', icon: '⚙', blurb: 'Defaults for new sessions, passed straight to Claude Code.' },
-  { id: 'voice', label: 'Voice', icon: '♫', blurb: 'Spoken lines for the dialogue.' },
+  { id: 'voice', label: 'Voice', icon: '♫', blurb: 'Her spoken voice through Fish Audio, in sync with the text and her lips.' },
   { id: 'about', label: 'About', icon: '❦', blurb: 'Version, your data, and credits.' },
 ] as const
 type TabId = (typeof TABS)[number]['id']
@@ -65,14 +66,18 @@ const DEFAULTS: {
     textCps: 14, punctuationPauses: true, autoDelayMs: 1200, lipSync: true, idle: true, cursor: true, headpats: true, taps: true, gestures: true,
   },
   claude: { model: '', permissionMode: 'default', defaultDir: '', settingSources: ['user', 'project', 'local'] },
-  voice: { provider: 'off' },
+  voice: {
+    enabled: true, voiceId: DEFAULT_VOICE_ID, model: 's2.1-pro-free', language: 'ja', speed: 1, volume: 80, subtitles: true,
+    styleNotes: REM_VOICE_STYLE,
+  },
 }
 
-/** What "Reset section to defaults" restores on each tab. Roleplay, Voice and About hold nothing to reset. */
+/** What "Reset section to defaults" restores on each tab. Roleplay and About hold nothing to reset. */
 const RESET: Partial<Record<TabId, (s: Settings) => void>> = {
   you: (s) => void (s.profile = structuredClone(DEFAULTS.profile)),
   waifu: (s) => void (s.waifu = structuredClone(DEFAULTS.waifu)),
   appearance: (s) => void (s.appearance = { ...structuredClone(DEFAULTS.appearance), modelsDir: s.appearance.modelsDir }),
+  voice: (s) => void (s.voice = structuredClone(DEFAULTS.voice)),
   motion: (s) => void (s.motion = structuredClone(DEFAULTS.motion)),
   claude: (s) => void (s.claude = structuredClone(DEFAULTS.claude)),
 }
@@ -294,6 +299,22 @@ const FORMAT: Record<string, (v: number) => string> = {
   'motion.textCps': (v) =>
     v === 0 ? 'Instant' : `${v} chars/s · ≈${Math.round((v * S_PER_MIN) / CHARS_PER_WORD)} wpm${v === CPS_SPEECH ? ' · speech pace' : ''}`,
   'motion.autoDelayMs': (v) => `${(v / MS_PER_S).toFixed(1)} s`,
+  'voice.speed': (v) => `${v.toFixed(2)}×`,
+  'voice.volume': (v) => `${v}%`,
+}
+
+const VOICE_MODEL_OPTS: Opt[] = [
+  { v: 's2.1-pro-free', label: 'Free', hint: 'Fish Audio\'s free developer tier: fair use, best effort, no latency guarantee.' },
+  { v: 's2.1-pro', label: 'Paid', hint: 'The same model with an SLA: about $15 per million bytes of text (thousands of lines).' },
+]
+const VOICE_LANGS: Opt[] = [
+  { v: 'ja', label: 'Japanese', hint: 'The text stays English; she speaks a Japanese line for each paragraph.' },
+  { v: 'en', label: 'English', hint: 'She reads her own lines aloud.' },
+]
+/** The Test voice line in each language. */
+const VOICE_SAMPLE = {
+  ja: 'はい、レムです。今日も一緒に頑張りましょうね。',
+  en: 'Hello, {you}. This is my voice. Shall we get to work?',
 }
 
 /** Settings value ⇄ slider position, for sliders whose scale isn't the stored value. */
@@ -605,9 +626,29 @@ function voicePane() {
   return `<div class="set-cols">
     ${card(
       'Voice',
-      row('Provider', `<select class="field" data-test="set-voice.provider" data-bind="voice.provider"><option value="off">Off</option></select>`) +
-        row('AI voice provider', `<select class="field" disabled data-test="set-voice.ai"><option>AI voice providers: coming soon</option></select>`) +
-        note('She doesn\'t speak aloud yet: v1 plays no audio. A later version will let you pick a text-to-speech provider and a voice that fits her, with lip sync driven by the audio.'),
+      `<p class="set-voice-status" data-voice-status data-test="voice-status"></p>` +
+        toggle('voice.enabled', 'Her voice', 'Speak her lines aloud, in step with the text and her lips.') +
+        row(
+          'Fish Audio key',
+          `<div class="set-path"><input class="field" type="password" data-voice-key data-test="set-voice.key" autocomplete="off" spellcheck="false" placeholder="Paste your API key">
+          <button class="btn" type="button" data-act="voice-key-save" data-test="set-voice.key-save">Save</button>
+          <button class="btn" type="button" data-act="voice-key-remove" data-test="set-voice.key-remove">Remove</button></div>`,
+          'Kept by the app, never in settings',
+        ) +
+        note('Get a key at <code>fish.audio/app/api-keys</code>. Without one she stays silent, as before.') +
+        row('Voice id', text('voice.voiceId', `placeholder="${DEFAULT_VOICE_ID}"`), 'From the voice page on fish.audio') +
+        row('Model', seg('voice.model', VOICE_MODEL_OPTS)) +
+        row('Language', seg('voice.language', VOICE_LANGS)) +
+        toggle('voice.subtitles', 'Japanese subtitle', 'Show her Japanese line under the English while she speaks it.') +
+        row('Speed', range('voice.speed', 0.7, 1.4, 0.05)) +
+        row('Volume', range('voice.volume', 0, 100, 5)) +
+        `<div class="set-actions"><button class="btn" type="button" data-act="voice-test" data-test="set-voice.test">▶ Test voice</button></div>`,
+      'wide',
+    )}
+    ${card(
+      'How she speaks Japanese',
+      area('voice.styleNotes', 8, 'maxlength="4000"') +
+        note('One note per line: her register, how she refers to herself, her sentence endings. The default is Rem\'s (docs/research/rem-voice.md). The Japanese lines are part of her persona, so changes here, to Language and to the key apply from the next session; speed, volume and subtitles apply at once.'),
       'wide',
     )}
   </div>`
@@ -985,6 +1026,8 @@ export function settingsScreen(): Screen {
       case 'hello':
         about = { version: m.version, dataDir: m.dataDir }
         return void (visible && renderAbout())
+      case 'voice_key':
+        return void (visible && renderVoice())
       case 'research_progress':
         if (!research.running) return
         research.log.push(...m.text.split('\n').filter((l) => l.trim()))
@@ -1249,6 +1292,45 @@ export function settingsScreen(): Screen {
   }
 
   /** Paints every control from the store. Fields being edited are left alone so the caret never jumps. */
+  /** Whether she can speak, and why not. */
+  function renderVoice(s = ctx.store.get()) {
+    const el = root.querySelector<HTMLElement>('[data-voice-status]')
+    if (!el) return
+    const key = ctx.voice.hasKey()
+    const state = !key ? 'nokey' : !s.voice.enabled ? 'off' : !s.voice.voiceId.trim() ? 'novoice' : 'on'
+    el.dataset.state = state
+    el.textContent = {
+      nokey: '♫ Off · no Fish Audio key stored. Add one below and she speaks from the next session.',
+      off: '♫ Off · a key is stored; turn her voice on to hear her.',
+      novoice: '♫ Off · pick a voice id.',
+      on: `♫ On · ${s.voice.language === 'ja' ? 'Japanese voice, English text' : 'she reads her lines'} · ${s.voice.model === 's2.1-pro' ? 'paid model' : 'free model'}`,
+    }[state]
+    q<HTMLButtonElement>('[data-act="voice-key-remove"]').disabled = !key
+    q<HTMLButtonElement>('[data-act="voice-test"]').disabled = !key || !s.voice.voiceId.trim()
+  }
+
+  /** Speaks the sample line through the link, with her lips on it, and says why when it can't. */
+  async function testVoice() {
+    const s = ctx.store.get()
+    const line = s.voice.language === 'ja' ? VOICE_SAMPLE.ja : fill(VOICE_SAMPLE.en)
+    const btn = q<HTMLButtonElement>('[data-act="voice-test"]')
+    btn.disabled = true
+    btn.textContent = '… Asking Fish Audio'
+    try {
+      const clip = await ctx.voice.clip(line)
+      say(s.voice.language === 'ja' ? 'This is how I sound, {you}.' : VOICE_SAMPLE.en, 'smile')
+      const pb = ctx.voice.play(clip)
+      ctx.character.setVoiceLevel(() => pb.level())
+      pb.onEnd(() => ctx.character.setVoiceLevel(undefined))
+    } catch (e) {
+      ctx.toast(`Her voice didn't come: ${e instanceof Error ? e.message : e}`, 6000)
+      react('worried')
+    } finally {
+      btn.textContent = '▶ Test voice'
+      renderVoice()
+    }
+  }
+
   function sync(s = ctx.store.get()) {
     for (const el of qa<Field>('[data-bind]')) {
       if (el === document.activeElement && !(el instanceof HTMLInputElement && el.type === 'checkbox')) continue
@@ -1262,6 +1344,7 @@ export function settingsScreen(): Screen {
     }
     for (const el of qa('[data-out]')) el.textContent = FORMAT[el.dataset.out!]?.(Number(getAt(s, el.dataset.out!))) ?? ''
     for (const g of qa('[data-seg]')) paintSeg(g, s)
+    renderVoice(s)
     for (const el of qa('[data-when]')) {
       const [path, v] = el.dataset.when!.split('=')
       el.hidden = String(getAt(s, path)) !== v
@@ -1377,6 +1460,20 @@ export function settingsScreen(): Screen {
         return say(SPEED_SAMPLE)
       case 'sample':
         return say(SPEED_SAMPLE)
+      case 'voice-key-save': {
+        const input = q<HTMLInputElement>('[data-voice-key]')
+        if (!input.value.trim()) return ctx.toast('Paste a Fish Audio API key first.')
+        ctx.voice.setKey(input.value.trim())
+        input.value = ''
+        ctx.toast('Key saved. Her voice starts with the next session.')
+        return react('happy')
+      }
+      case 'voice-key-remove':
+        ctx.voice.setKey('')
+        ctx.toast('Key removed. She stays silent from the next session.')
+        return react('sad')
+      case 'voice-test':
+        return void testVoice()
       case 'research-start':
         return startResearch()
       case 'research-cancel':

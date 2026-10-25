@@ -41,7 +41,7 @@ const FIELDS = {
   ],
   R42: ['textCps', 'punctuationPauses', 'autoDelayMs', 'lipSync', 'idle', 'cursor', 'headpats', 'taps', 'gestures'].map((k) => `motion.${k}`),
   R43: ['claude.model', 'claude.permissionMode', 'claude.defaultDir', 'claude.settingSources'],
-  R44: ['voice.provider'],
+  R44: ['enabled', 'key', 'voiceId', 'model', 'language', 'subtitles', 'speed', 'volume', 'styleNotes'].map((k) => `voice.${k}`),
 }
 
 const PRESET = {
@@ -157,17 +157,13 @@ export default {
     })),
     {
       r: 'R44',
-      name: 'voice is Off with a disabled "coming soon" provider selector',
+      name: 'voice (V0.5.1): on by default with the Rem voice, but silent until a Fish Audio key is stored',
       async run({ app }) {
-        await showHook(app, 'set-voice.provider')
-        eq(await app.value(`#screen-settings ${T('set-voice.provider')}`), 'off', 'voice provider is Off')
-        const disabled = await app.eval(() =>
-          [...document.querySelectorAll('#screen-settings select, #screen-settings input, #screen-settings button')].some(
-            (el) => el.disabled && window.__e2e.isVisible(el) && /coming soon/i.test(el.textContent + (el.value ?? '')),
-          ),
-        )
-        assert(disabled, 'a disabled "coming soon" AI voice provider selector')
-        assert(/coming soon/i.test(await app.stageText()), '"coming soon" placeholder')
+        await showHook(app, 'set-voice.enabled')
+        assert(await app.eval(() => document.querySelector('#screen-settings [data-test="set-voice.enabled"]').checked), 'on by default')
+        eq(await app.value(`#screen-settings ${T('set-voice.voiceId')}`), 'd19e2bd4c7464bd98fa2e67044de9a8b', 'the Rem voice id')
+        eq(await app.eval(() => document.querySelector('[data-test="voice-status"]').dataset.state), 'nokey', 'no key: off')
+        assert(await app.eval(() => document.querySelector('[data-test="set-voice.test"]').disabled), 'nothing to test without a key')
       },
     },
     {

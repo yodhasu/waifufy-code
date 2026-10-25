@@ -133,12 +133,19 @@ function createMouth() {
   let syllableMs = 0
   let openTarget = 0
   let closedTarget = 0
+  /** Her voice's loudness: while it plays, the mouth follows it instead of the flap. */
+  let source: (() => number) | undefined
   return {
     set(on: boolean) {
       isOn = on
     },
+    setSource(fn: (() => number) | undefined) {
+      source = fn
+    },
     update(now: number, dt: number) {
-      if (isOn) {
+      if (source) {
+        target = Math.min(1, Math.max(0, source())) * TALK_OPEN[1]
+      } else if (isOn) {
         if (now - syllableAt >= syllableMs) {
           syllableAt = now
           syllableMs = 1000 / rand(TALK_HZ)
@@ -341,6 +348,10 @@ async function rig(stage: Stage, model: Live2DModel, json: ModelJson, costume: s
 
     setTalking(on: boolean) {
       mouth.set(on)
+    },
+
+    setVoice(level) {
+      mouth.setSource(level)
     },
 
     focus(x: number, y: number) {

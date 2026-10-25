@@ -104,7 +104,31 @@ export type Appearance = {
   modelsDir: string
 }
 
+/** Fish Audio models: the free developer tier, or the paid one with an SLA. */
+export const VOICE_MODELS = ['s2.1-pro-free', 's2.1-pro'] as const
+export type VoiceModel = (typeof VOICE_MODELS)[number]
+
+/** Her voice (docs/research/rem-voice.md). Plays only while a Fish Audio key is stored (`hello.voiceKey`). */
+export type VoiceSettings = {
+  /** On by default; with no key there is nothing to play, so it acts as off. */
+  enabled: boolean
+  /** Fish Audio voice model id (`reference_id`). */
+  voiceId: string
+  model: VoiceModel
+  /** 'ja': the text stays English and she speaks a Japanese line per paragraph; 'en': she reads the text. */
+  language: 'ja' | 'en'
+  /** 0.5–2 (Fish prosody.speed). */
+  speed: number
+  /** 0–100. */
+  volume: number
+  /** Show the Japanese line under the English one while she speaks it. */
+  subtitles: boolean
+  /** How she speaks Japanese: register, self-reference, endings (the default is Rem's). */
+  styleNotes: string
+}
+
 export type MotionSettings = {
+
   /** Typewriter characters per second; 0 = instant. Default 14 (speech pace, ~150 wpm). */
   textCps: number
   punctuationPauses: boolean
@@ -136,7 +160,7 @@ export type Settings = {
   appearance: Appearance
   motion: MotionSettings
   claude: ClaudeSettings
-  voice: { provider: 'off' }
+  voice: VoiceSettings
   /** Last folder a session was started in. */
   lastDir: string
 }
@@ -230,6 +254,10 @@ export type Image = { mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'ima
 
 export type ClientMsg =
   | { t: 'hello' }
+  /** Synthesizes one voice line; answered by a `tts` with the same id. */
+  | { t: 'tts'; id: string; text: string }
+  /** Stores the Fish Audio API key in the link (never in settings); an empty key removes it. */
+  | { t: 'voice_key'; key: string }
   | { t: 'settings_set'; settings: Settings }
   | { t: 'auth_check' }
   /** Opens the bundled Claude Code login in a console window. */
@@ -308,6 +336,8 @@ export type SessionEvent =
   | { t: 'face'; emotion: Emotion }
   /** She took the user's message as kind (+1) or unkind (-1): at most once per turn. */
   | { t: 'affection'; delta: 1 | -1 }
+  /** The line she speaks for the paragraph being written (a <ja> line, removed from the text). */
+  | { t: 'voice'; text: string }
   | { t: 'text'; delta: string }
   | { t: 'text_end' }
   /** Streaming progress for the spinner. */
@@ -349,7 +379,11 @@ export type SessionEvent =
   | { t: 'hook'; id: string; name: string; event: string; state: 'running' | 'ok' | 'error' | 'cancelled'; output?: string }
 
 export type ServerMsg =
-  | { t: 'hello'; version: string; settings: Settings; auth: Auth; dataDir: string }
+  | { t: 'hello'; version: string; settings: Settings; auth: Auth; dataDir: string; voiceKey: boolean }
+  /** One clip: base64 audio, or why there is none. */
+  | { t: 'tts'; id: string; audio?: string; mime?: string; error?: string }
+  /** Whether a Fish Audio key is stored now (after voice_key, to every window). */
+  | { t: 'voice_key'; has: boolean }
   | { t: 'settings'; settings: Settings }
   | { t: 'auth'; auth: Auth }
   | { t: 'saves'; list: Save[] }

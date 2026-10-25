@@ -14,7 +14,7 @@ import { control } from './control'
 import { doneVerb, duration, pickVerb, SPINNER_VERBS, thinkingStatus, verbList, type SpinnerVerbs } from './spinner'
 import './chat.css'
 import {
-  cleanText, createDialogue, createPager, lastEmotion, markdown, pagesForMono, pagesForText, type Dialogue, type DisplayPage,
+  cleanText, createDialogue, createPager, lastEmotion, markdown, pagesForMono, pagesForText, type Dialogue, type DisplayPage, type VoiceLine,
 } from './dialogue'
 import { createInput, fromInput, type InputApi, type InputHost } from './input'
 import {
@@ -23,7 +23,7 @@ import {
 
 /** A finished turn this long earns her "success" gesture. */
 const SUCCESS_MIN_SECONDS = 20
-/** Two Esc presses this close together on an idle prompt open the rewind menu. */
+/** Remembers Focus mode across launches. */
 const FOCUS_KEY = 'wc.focus'
 /** A headpat earns a point at most this often, so stroking her nonstop can't fill the hearts. */
 const HEADPAT_POINT_MS = 5 * 60_000
@@ -166,6 +166,8 @@ export function chatScreen(): Screen {
   let shellsRunning = 0
   /** Affection points (link/src/affection.ts); the hearts show their level. */
   let affection = 0
+  /** A voice failure was already toasted this session. */
+  let voiceWarned = false
   /** The level moved since the last message she got: the next one tells her. */
   let moodChange: 'up' | 'down' | undefined
   let lastPatPointAt = 0
@@ -235,13 +237,32 @@ export function chatScreen(): Screen {
   const nextEpoch = () => (epoch = Math.max(epoch + 1, Date.now()))
 
   const pager = createPager({
-    page: (p) => dialogue.push({ kind: 'char', text: p.text, collapsed: p.collapsed }),
+    page(p) {
+      // Asked for as soon as the paragraph is complete, so the clip is usually there when its page shows.
+      if (p.voice && ctx.voice.active()) p.voice.line.clip ??= voiceClip(p.voice.line)
+      // A getter: a <ja> line written after its paragraph's blank line still reaches these pages.
+      dialogue.push({ kind: 'char', text: p.text, collapsed: p.collapsed, get voice() { return p.voice } })
+    },
+    readAloud: () => ctx.voice.active() && settings().voice.language === 'en',
     message(full) {
       addLog({ who: 'char', text: full })
       lastLine = clipLine(full)
     },
     emote: (e) => ctx.character.emote(e),
   })
+
+  /** Her clip for a line; a failure is told once per session and the text goes on unvoiced. */
+  function voiceClip(line: VoiceLine) {
+    return ctx.voice.clip(line.text).catch((e: unknown) => {
+      const why = e instanceof Error ? e.message : String(e)
+      if (!voiceWarned) {
+        voiceWarned = true
+        ctx.toast(`${charName()}'s voice is unavailable: ${why}`, 6000)
+      }
+      addLog({ who: 'system', text: `Voice: ${why}` })
+      return undefined
+    })
+  }
 
   function clipLine(text: string) {
     const last = text.split(/\n\s*\n/).at(-1)!.replace(/\s+/g, ' ').trim()
@@ -789,6 +810,7 @@ export function chatScreen(): Screen {
     autoSeen = mode === 'auto'
     affection = 0
     moodChange = undefined
+    voiceWarned = false
     basePlayMs = 0
     startedAt = 0
     lastLine = ''
@@ -1108,6 +1130,7 @@ export function chatScreen(): Screen {
         return
       case 'face': return pager.face(m.emotion)
       case 'affection': return addAffection(m.delta, 'words')
+      case 'voice': return pager.voice(m.text)
       case 'text':
         if (phase !== 'writing') (phase = 'writing'), (phaseStart = Date.now()), updateSpinner()
         return pager.text(m.delta)
@@ -1237,7 +1260,15 @@ export function chatScreen(): Screen {
       ribbonEl = root.querySelector('.ribbon')!
       spinnerEl = root.querySelector('.spinner')!
       const dlgEl = root.querySelector<HTMLElement>('.dialogue')!
-      dialogue = createDialogue(dlgEl, { store: ctx.store, character: ctx.character, names, openLog })
+      dialogue = createDialogue(dlgEl, {
+        store: ctx.store,
+        character: ctx.character,
+        names,
+        openLog,
+        voiceOn: () => ctx.voice.active(),
+        clip: voiceClip,
+        play: (clip) => ctx.voice.play(clip),
+      })
       const qm = document.createElement('nav')
       qm.className = 'quickmenu'
       qm.innerHTML = [

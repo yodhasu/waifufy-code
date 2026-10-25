@@ -8,6 +8,7 @@ import { WebSocket, WebSocketServer } from 'ws'
 import { listCostumes, serveModel, serveThumb } from './assets.ts'
 import { asMood } from './affection.ts'
 import { createAuth } from './auth.ts'
+import { hasVoiceKey, setVoiceKey, synthesize } from './tts.ts'
 import { searchFiles } from './files.ts'
 import { buildPersona } from './persona.ts'
 import { CTL_OPS, type ClientMsg, type FileHit, type PermissionModeName, type ServerMsg, type SessionEvent, type Settings } from './protocol.ts'
@@ -30,6 +31,8 @@ const VERSION = (JSON.parse(readFileSync(new URL('../package.json', import.meta.
 
 /** Agents an @ query lists before the files. */
 const AGENT_HITS = 4
+/** A Fish Audio key is a short token; anything this long is not one. */
+const KEY_MAX = 512
 /** How long a closed session gets to emit `ended` (its CLI exiting) before the next one starts anyway. */
 const CLOSE_WAIT_MS = 3_000
 /** With no app connected for this long, the running session is closed: nobody can see or answer it. */
@@ -411,14 +414,29 @@ async function handle(ws: WebSocket, m: ClientMsg) {
           void closeCurrent()
         }
       }
-      return sendTo(ws, { t: 'hello', version: VERSION, settings: await loadSettings(), auth: await auth.get(), dataDir: DATA_DIR })
+      return sendTo(ws, { t: 'hello', version: VERSION, settings: await loadSettings(), auth: await auth.get(), dataDir: DATA_DIR, voiceKey: hasVoiceKey() })
     case 'settings_set': {
       need(m.settings && typeof m.settings === 'object' && m.settings.version === 1, 'settings')
       await updateSettings(() => m.settings)
       // The sender already has these settings; echoing them back could undo an edit typed meanwhile.
       return broadcast({ t: 'settings', settings: m.settings }, ws)
     }
+    case 'tts': {
+      need(isStr(m.id) && isStr(m.text), 'tts')
+      const id = m.id
+      // Answered on its own time: a slow clip must not hold up the messages behind it.
+      void loadSettings()
+        .then((s) => synthesize(m.text, s.voice))
+        .then((clip) => sendTo(ws, { t: 'tts', id, audio: clip.audio.toString('base64'), mime: clip.mime }))
+        .catch((e) => sendTo(ws, { t: 'tts', id, error: e instanceof Error ? e.message : String(e) }))
+      return
+    }
+    case 'voice_key':
+      need(typeof m.key === 'string' && m.key.length < KEY_MAX, 'key')
+      await setVoiceKey(m.key)
+      return broadcast({ t: 'voice_key', has: hasVoiceKey() })
     case 'auth_check':
+
       return sendTo(ws, { t: 'auth', auth: await auth.refresh() })
     case 'login':
       return auth.login()

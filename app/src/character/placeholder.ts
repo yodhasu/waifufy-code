@@ -174,6 +174,10 @@ export function createPlaceholder(box: HTMLElement, zoom: number): Placeholder {
       el.toggleAttribute('data-talking', on)
     },
 
+    setVoice(level) {
+      el.toggleAttribute('data-talking', level !== undefined)
+    },
+
     focus(x, y) {
       el.style.setProperty('--fx', x.toFixed(3))
       el.style.setProperty('--fy', y.toFixed(3))

@@ -29,7 +29,7 @@ const isWindows = process.platform === 'win32'
  * which a `printenv` would otherwise put in the transcript.
  */
 export function childEnv(): NodeJS.ProcessEnv {
-  const { WC_TOKEN: _token, WC_PORT: _port, ...env } = process.env
+  const { WC_TOKEN: _token, WC_PORT: _port, FISH_API_KEY: _fish, ...env } = process.env
   return env
 }
 

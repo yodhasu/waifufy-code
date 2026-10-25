@@ -2,6 +2,7 @@
 // talks to the others through these types (plus link/src/protocol.ts for the wire format).
 
 import type { ClientMsg, Costume, Emotion, ServerMsg, Settings } from '../../link/src/protocol.ts'
+import type { Voice } from './voice'
 
 // ---------------------------------------------------------------- link (app/src/link.ts)
 
@@ -59,6 +60,8 @@ export type Character = {
   setPlacement(p: Placement): void
   /** A JPEG data URL of the character on the current backdrop, for save thumbnails. */
   snapshot(width: number, height: number): Promise<string | undefined>
+  /** While her voice plays: her mouth follows this loudness (0–1); undefined hands it back to the typewriter. */
+  setVoiceLevel(level: (() => number) | undefined): void
   /** Calls `fn` when a headpat begins while she is free; returns the unsubscribe. */
   onHeadpat(fn: () => void): () => void
 }
@@ -80,6 +83,8 @@ export type Ctx = {
   store: Store
   character: Character
   router: Router
+  /** Her voice (app/src/voice.ts). */
+  voice: Voice
   /** Shows a transient message at the top of the stage. */
   toast(text: string, ms?: number): void
   /** A VN-style yes/no dialog; resolves true for yes. */

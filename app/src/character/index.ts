@@ -96,6 +96,8 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
     fx: spawnFx,
   })
   const patListeners = new Set<() => void>()
+  /** Her voice's loudness while a clip plays; every rig loaded meanwhile follows it too. */
+  let voiceLevel: (() => number) | undefined
   const interact = createInteract({ root, box, actor, director, motion, fx: spawnFx, onPat: () => patListeners.forEach((f) => f()) })
 
   // ---------------------------------------------------------------- rendering
@@ -167,6 +169,7 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
   function showPlaceholder() {
     if (sprite || rig) return
     sprite = createPlaceholder(box, store.get().appearance.zoom)
+    sprite.setVoice(voiceLevel)
     box.insertBefore(sprite.el, fxLayer)
     director.setActor(sprite)
     interact.refresh()
@@ -241,6 +244,7 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
       loading = undefined
       const prev = rig
       rig = next
+      next.setVoice(voiceLevel)
       updateRunning()
       fx.clear()
       director.setActor(next)
@@ -412,6 +416,11 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
     },
     setPlacement: placeExplicitly,
     snapshot,
+    setVoiceLevel(level) {
+      voiceLevel = level
+      ds.voice = level ? '1' : '0'
+      actor()?.setVoice(level)
+    },
     onHeadpat(fn) {
       patListeners.add(fn)
       return () => patListeners.delete(fn)

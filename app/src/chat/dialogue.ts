@@ -4,6 +4,7 @@
 
 import type { Emotion } from '../../../link/src/protocol.ts'
 import type { Character, Store } from '../contracts'
+import type { Playback } from '../voice'
 import { esc, renderMarkdown } from '../ui'
 
 // ---------------------------------------------------------------- pure core
@@ -60,7 +61,33 @@ export function lastEmotion(s: string): Emotion | undefined {
 const visLen = (s: string) => stripMarks(s).replace(/\*\*|`/g, '').length
 const bare = (line: string) => stripMarks(line).trim()
 
-export type PageSpec = { text: string; collapsed: boolean }
+/** What she speaks for one paragraph: its <ja> line, or (reading aloud) the paragraph itself. */
+export type VoiceLine = {
+  text: string
+  /** A Japanese line, shown under the English as a subtitle. */
+  ja: boolean
+  /** Requested once, as soon as the paragraph is complete; undefined when it could not be made. */
+  clip?: Promise<AudioBuffer | undefined>
+}
+/** A page's share of its paragraph's line, as fractions of the clip: [from, to). */
+export type PageVoice = { line: VoiceLine; from: number; to: number }
+export type PageSpec = { text: string; collapsed: boolean; voice?: PageVoice }
+
+/** Splits one line across a paragraph's pages by their visible length, so each page gets its stretch of the clip. */
+export function shareVoice(pages: PageSpec[], line: VoiceLine) {
+  const lengths = pages.map((p) => Math.max(1, visLen(p.text)))
+  const total = lengths.reduce((a, b) => a + b, 0)
+  let at = 0
+  pages.forEach((p, k) => {
+    p.voice = { line, from: at / total, to: (at + lengths[k]) / total }
+    at += lengths[k]
+  })
+}
+
+/** The words of a paragraph's pages as they would be read out: no faces, no Markdown marks, no trailing "…". */
+const spoken = (pages: PageSpec[]) =>
+  pages.map((p) => stripMarks(p.text).replace(/\*\*|`/g, '').replace(/\s*…$/, '')).join(' ').replace(/\s+/g, ' ').trim()
+
 
 /**
  * Takes the finished blocks (paragraphs, split on blank lines outside code fences) off the front of `buf`.
@@ -261,17 +288,40 @@ export function pagesForMono(text: string): PageSpec[] {
  * Builds pages from the text stream: `face` events become markers at their exact position, a page
  * goes out as soon as its paragraph is complete, and `end` flushes the rest and reports the full message.
  */
-export function createPager(out: { page(p: PageSpec): void; message(full: string): void; emote(e: Emotion): void }) {
+export function createPager(out: {
+  page(p: PageSpec): void
+  message(full: string): void
+  emote(e: Emotion): void
+  /** Reading aloud (an English voice): paragraphs with no <ja> line speak their own text. */
+  readAloud?(): boolean
+}) {
   let buf = ''
   let full = ''
+  /** The <ja> line of the paragraph being written. */
+  let pending: string | undefined
+  /** The last paragraph's pages, for a <ja> line that came after its blank line. */
+  let lastPages: PageSpec[] = []
   const flush = (final: boolean) => {
     // A face after the last paragraph has no page to ride on; it still plays.
     const trailing = final && !bare(buf) ? lastEmotion(buf) : undefined
     if (trailing) return void ((buf = ''), out.emote(trailing))
     const { blocks, rest } = takeBlocks(buf, final)
     buf = rest
-    for (const b of blocks) for (const p of pagesForBlock(b)) out.page(p)
+    for (const b of blocks) {
+      const pages = pagesForBlock(b)
+      if (!pages.length) continue
+      const prose = classify(tagsToMarks(b)).kind === 'prose' || pages.some((p) => !p.collapsed)
+      if (pending) shareVoice(pages, { text: pending, ja: true })
+      else if (prose && out.readAloud?.()) {
+        const text = spoken(pages)
+        if (text) shareVoice(pages, { text, ja: false })
+      }
+      pending = undefined
+      lastPages = pages
+      for (const p of pages) out.page(p)
+    }
   }
+
   return {
     text(delta: string) {
       buf += delta
@@ -281,6 +331,12 @@ export function createPager(out: { page(p: PageSpec): void; message(full: string
     face(e: Emotion) {
       buf += marker(e)
     },
+    voice(text: string) {
+      // Written on its own after the blank line: it belongs to the paragraph before, if that has no line yet.
+      if (!bare(buf) && lastPages.length && !lastPages[0].voice) return shareVoice(lastPages, { text, ja: true })
+      pending = pending ? `${pending} ${text}` : text
+    },
+
     end() {
       flush(true)
       const text = cleanText(full).trim()
@@ -289,6 +345,8 @@ export function createPager(out: { page(p: PageSpec): void; message(full: string
     },
     reset() {
       buf = full = ''
+      pending = undefined
+      lastPages = []
     },
   }
 }
@@ -426,6 +484,8 @@ export type DisplayPage = {
   mono?: boolean
   /** Buttons under the text, e.g. "Log in" on an auth error. */
   actions?: { label: string; v: string; run(): void }[]
+  /** Her spoken line for this page's paragraph, and this page's stretch of it. */
+  voice?: PageVoice
 }
 
 export type Dialogue = {
@@ -446,6 +506,10 @@ export type Dialogue = {
   setFocus(on: boolean): void
 }
 
+/** A voiced page waits this long for its clip, then shows its text unvoiced. */
+const VOICE_WAIT_MS = 4000
+/** How often the text catches up with the voice. */
+const VOICE_TICK_MS = 33
 /** Page interval while Ctrl is held. */
 const SKIP_MS = 70
 /** Typewriter ticks are never shorter than this; faster speeds reveal several characters per tick. */
@@ -456,11 +520,22 @@ const typed = (p: DisplayPage) => p.kind === 'char' && !p.mono
 
 export function createDialogue(
   root: HTMLElement,
-  deps: { store: Store; character: Character; names(): { char: string; user: string }; openLog(): void },
+  deps: {
+    store: Store
+    character: Character
+    names(): { char: string; user: string }
+    openLog(): void
+    /** Her voice plays (a key, on, a voice id); off, voiced pages type as usual. */
+    voiceOn?(): boolean
+    /** The clip for a line (requested once); undefined when there is none. */
+    clip?(line: VoiceLine): Promise<AudioBuffer | undefined>
+    play?(clip: AudioBuffer): Playback
+  },
 ): Dialogue {
   root.innerHTML = `
     <div class="nameplate" data-test="dialogue-name"></div>
     <div class="dlg-text" data-test="dialogue-text"></div>
+    <div class="dlg-ja" data-test="dialogue-ja" lang="ja" hidden></div>
     <div class="dlg-foot">
       <button class="dlg-hint" type="button" title="Open the LOG (Ctrl+L)">(full text in LOG)</button>
       <div class="dlg-actions"></div>
@@ -471,6 +546,7 @@ export function createDialogue(
   const hintEl = root.querySelector<HTMLElement>('.dlg-hint')!
   const actionsEl = root.querySelector<HTMLElement>('.dlg-actions')!
   const advEl = root.querySelector<HTMLElement>('.advance')!
+  const jaEl = root.querySelector<HTMLElement>('.dlg-ja')!
   hintEl.addEventListener('click', (e) => (e.stopPropagation(), deps.openLog()))
 
   const queue: DisplayPage[] = []
@@ -486,6 +562,10 @@ export function createDialogue(
   let muted = false
   /** Focus mode: her lines appear whole, as the CLI prints them. */
   let focus = false
+  /** The line being spoken. Pages of the same paragraph share it; turning to another paragraph cuts it. */
+  let speaking: { line: VoiceLine; pb: Playback } | undefined
+  /** Bumped to drop a clip still being waited for. */
+  let waitSeq = 0
 
   const motion = () => deps.store.get().motion
   const talk = (on: boolean) => deps.character.setTalking(on && !muted && motion().lipSync)
@@ -493,6 +573,80 @@ export function createDialogue(
   // Her unread lines, command and shell output (she may answer it next), and pages with buttons (Log in,
   // Restart) stay until the reader moves on.
   const waitsForReader = () => !!current && (typed(current.page) || !!current.page.mono || !!current.page.actions?.length) && !acked
+
+  // ---------------------------------------------------------------- voice
+
+  function setVoiceState(state: '' | 'waiting' | 'playing') {
+    if (state) root.dataset.voice = state
+    else delete root.dataset.voice
+  }
+
+  function stopVoice() {
+    waitSeq++
+    const s = speaking
+    speaking = undefined
+    s?.pb.stop()
+    deps.character.setVoiceLevel(undefined)
+    setVoiceState('')
+  }
+
+  /** The Japanese subtitle: the line, revealed as far as the voice has got. */
+  function paintJa(progress: number) {
+    const v = current?.page.voice
+    const show = !!v?.line.ja && deps.store.get().voice.subtitles && !!speaking && speaking.line === v.line
+    jaEl.hidden = !show
+    if (show) jaEl.textContent = v!.line.text.slice(0, Math.round(progress * v!.line.text.length))
+  }
+
+  /** Reveals the page in step with the clip: this page owns [from, to) of it. */
+  function voiceTick() {
+    const v = current?.page.voice
+    if (!current || !v) return
+    // The clip ended (or was cut) between ticks: the rest of the page shows at once.
+    if (!speaking || speaking.line !== v.line) return finish()
+    const pb = speaking.pb
+    const p = pb.progress()
+    const local = Math.min(1, Math.max(0, (p - v.from) / Math.max(1e-6, v.to - v.from)))
+    const target = pb.ended() ? current!.rich.plain.length : Math.round(local * current!.rich.plain.length)
+    if (target > shown) {
+      shown = target
+      fireMarks(shown, false)
+      paint()
+    }
+    paintJa(p)
+    if (shown >= current!.rich.plain.length) return finish()
+    typing = window.setTimeout(voiceTick, VOICE_TICK_MS)
+  }
+
+  function startVoiced(line: VoiceLine, clip: AudioBuffer) {
+    const pb = deps.play!(clip)
+    speaking = { line, pb }
+    deps.character.setVoiceLevel(() => pb.level())
+    setVoiceState('playing')
+    pb.onEnd(() => {
+      if (speaking?.pb !== pb) return
+      speaking = undefined
+      deps.character.setVoiceLevel(undefined)
+      setVoiceState('')
+      if (current?.page.voice?.line === line) {
+        paintJa(1)
+        if (!done()) return finish()
+      }
+      // AUTO waited for her to finish speaking.
+      if (done()) scheduleNext()
+    })
+  }
+
+  /** Whether this page plays (or keeps playing) its line; false types it as usual. */
+  function voiced(page: DisplayPage): boolean {
+    const v = page.voice
+    if (!v || !deps.voiceOn?.() || !deps.play || !deps.clip) return false
+    if (speaking?.line === v.line) return true
+    // A later page of a line that is no longer playing (cut, or never came) types as usual.
+    if (v.from > 0) return false
+    v.line.clip ??= deps.clip(v.line)
+    return true
+  }
 
   function updateAdvance() {
     const ready = done() && queue.length > 0
@@ -516,10 +670,13 @@ export function createDialogue(
   function finish() {
     clearTimeout(typing)
     typing = undefined
+    // A click while the clip is still on its way: the text now, no voice for this page.
+    if (root.dataset.voice === 'waiting') stopVoice()
     if (!current) return
     shown = current.rich.plain.length
     fireMarks(shown, true)
     paint()
+    if (speaking && current.page.voice?.line === speaking.line) paintJa(speaking.pb.progress())
     talk(false)
     updateAdvance()
     scheduleNext()
@@ -529,6 +686,8 @@ export function createDialogue(
   function scheduleNext() {
     clearTimeout(later)
     if (!queue.length || !(auto || skip) || muted) return
+    // AUTO lets her finish the line; the clip's end schedules the page turn.
+    if (!skip && speaking && current?.page.voice?.line === speaking.line && !speaking.pb.ended()) return
     const ms = skip ? SKIP_MS : autoDelay(current?.rich.plain.length ?? 0, motion().autoDelayMs)
     later = window.setTimeout(() => done() && next(), ms)
   }
@@ -550,6 +709,11 @@ export function createDialogue(
     clearTimeout(typing)
     clearTimeout(later)
     typing = undefined
+    // Another paragraph (or no voice at all) cuts the line being spoken, as turning a VN page does.
+    if (speaking && page.voice?.line !== speaking.line) stopVoice()
+    waitSeq++
+    if (root.dataset.voice === 'waiting') setVoiceState('')
+    jaEl.hidden = true
     const rich = parseInline(page.text, !page.mono)
     // Only her own lines move her face; a tag-like word in your message or in tool output does not.
     if (page.kind !== 'char') rich.marks = []
@@ -582,9 +746,30 @@ export function createDialogue(
     shown = 0
     fireMarks(0, false)
     paint()
+    updateAdvance()
+    if (voiced(page)) {
+      const line = page.voice!.line
+      talk(true)
+      if (speaking?.line === line) return voiceTick()
+      // Her lips stay shut while the clip is on its way; the text waits with her.
+      talk(false)
+      setVoiceState('waiting')
+      const my = ++waitSeq
+      const timeout = new Promise<undefined>((r) => window.setTimeout(() => r(undefined), VOICE_WAIT_MS))
+      void Promise.race([line.clip!, timeout]).then((clip) => {
+        if (my !== waitSeq || current?.page !== page) return
+        setVoiceState('')
+        talk(true)
+        if (clip && !muted && !skip && !focus) {
+          startVoiced(line, clip)
+          return voiceTick()
+        }
+        typing = window.setTimeout(tick, 1000 / speed)
+      })
+      return
+    }
     talk(true)
     typing = window.setTimeout(tick, 1000 / speed)
-    updateAdvance()
   }
 
   function next() {
@@ -604,6 +789,7 @@ export function createDialogue(
     },
     show(p) {
       queue.length = 0
+      stopVoice()
       render(p, true)
     },
     advance() {
@@ -619,11 +805,13 @@ export function createDialogue(
       if (skip === on) return
       skip = on
       if (!on) return clearTimeout(later)
+      stopVoice()
       if (!done()) finish()
       else if (queue.length) next()
     },
     setFocus(on) {
       focus = on
+      if (on) stopVoice()
       if (on && !done()) finish()
     },
     setMuted(on) {
@@ -632,6 +820,7 @@ export function createDialogue(
       if (!on) return void (done() && scheduleNext())
       if (!done()) finish()
       clearTimeout(later)
+      stopVoice()
       talk(false)
     },
   }

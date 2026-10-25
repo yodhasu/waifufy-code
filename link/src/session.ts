@@ -234,6 +234,11 @@ const emotionOf = (word: string): Emotion | undefined =>
   (EMOTIONS as readonly string[]).includes(word) ? (word as Emotion) : TAG_ALIASES[word]
 const isAffectionTag = (word: string): word is AffectionTag => Object.hasOwn(AFFECTION_TAGS, word)
 const LONGEST_TAG = Math.max(...[...EMOTIONS, ...Object.keys(TAG_ALIASES), ...Object.keys(AFFECTION_TAGS)].map((e) => e.length)) + 2
+/** Her spoken line for a paragraph (persona "Voice lines"): only the voice says it. */
+const VOICE_OPEN = '<ja>'
+const VOICE_CLOSE = '</ja>'
+/** An open <ja> holds the stream back at most this far; past it, the text is not a voice line. */
+const VOICE_HOLD_MAX = 1200
 /** After a stripped tag, no space is put back before these. */
 const NO_SPACE_BEFORE = /^[.,!?;:)\]}…'"’”\n]/
 
@@ -256,11 +261,18 @@ export class TagParser {
   private onText: (s: string) => void
   private onFace: (e: Emotion) => void
   private onAffection: (tag: AffectionTag) => void
+  private onVoice: (line: string) => void
 
-  constructor(onText: (s: string) => void, onFace: (e: Emotion) => void, onAffection: (tag: AffectionTag) => void = () => {}) {
+  constructor(
+    onText: (s: string) => void,
+    onFace: (e: Emotion) => void,
+    onAffection: (tag: AffectionTag) => void = () => {},
+    onVoice: (line: string) => void = () => {},
+  ) {
     this.onText = onText
     this.onFace = onFace
     this.onAffection = onAffection
+    this.onVoice = onVoice
   }
 
   feed(s: string) {
@@ -296,6 +308,24 @@ export class TagParser {
         continue
       }
       if (c === '\n' && this.ticks > 0 && this.ticks < 3) this.ticks = 0
+      if (c === '<' && this.ticks === 0) {
+        const head = b.slice(i, i + VOICE_OPEN.length)
+        // `<j` at the end of a delta may be a voice line still arriving.
+        if (!final && head.length < VOICE_OPEN.length && VOICE_OPEN.startsWith(head)) break
+        if (head === VOICE_OPEN) {
+          const close = b.indexOf(VOICE_CLOSE, i)
+          if (close === -1 && !final && b.length - i < VOICE_HOLD_MAX) break
+          if (close !== -1) {
+            this.text(text)
+            text = ''
+            this.afterTag = true
+            const line = b.slice(i + VOICE_OPEN.length, close).trim()
+            if (line) this.onVoice(line)
+            i = close + VOICE_CLOSE.length
+            continue
+          }
+        }
+      }
       if (c === '[' && this.ticks === 0) {
         const close = b.indexOf(']', i)
         if (close === -1 && !final && b.length - i < LONGEST_TAG) break
@@ -433,6 +463,7 @@ class Session implements SessionApi {
       (delta) => this.emit({ t: 'text', delta }),
       (emotion) => this.emit({ t: 'face', emotion }),
       (tag) => this.felt(tag),
+      (text) => this.emit({ t: 'voice', text }),
     )
   }
 

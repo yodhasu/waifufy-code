@@ -836,6 +836,8 @@ export async function launch(options = {}) {
           '--no-first-run',
           '--no-default-browser-check',
           '--window-size=1600,900',
+          // Her voice plays through the real audio graph (timing, loudness), just not out of the speakers.
+          '--mute-audio',
           ...webviewArgs(),
           'about:blank',
         ], { stdio: 'ignore' }),
