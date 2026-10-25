@@ -190,7 +190,7 @@ export default {
         await toastSays(app, /Updated 2 skill overrides/)
         const deadline = Date.now() + SAVE_MS
         while (!localSettings(project).skillOverrides && Date.now() < deadline) await sleep(100)
-        eq(JSON.stringify(sorted(localSettings(project).skillOverrides)), JSON.stringify({ 'triage-workflow': 'name-only', 'release-notes': 'off' }), 'settings.local.json skillOverrides')
+        eq(JSON.stringify(sorted(localSettings(project).skillOverrides)), JSON.stringify({ 'release-notes': 'off', 'triage-workflow': 'name-only' }), 'settings.local.json skillOverrides')
         // Reopened, the saved state shows; cycling off → on removes the entry.
         await slash(app, '/skills')
         await app.waitVisible(row('release-notes'))
