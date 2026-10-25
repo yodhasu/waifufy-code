@@ -1,26 +1,51 @@
 # Waifufy Code
 
-Claude Code, played as a visual novel. Your waifu (Rem from Re:Zero by default, as a Live2D model) is the agent:
-she talks in character, reacts with her face and gestures while she types at speaking pace, and you answer her
-permission prompts, questions and plans from VN choice menus.
+Claude Code, but it's a visual novel and Rem is your coding agent.
 
-Under the skin it is the real Claude Code harness, through the Claude Agent SDK with its own bundled Claude Code,
-so your tools, MCP servers, skills, hooks, `CLAUDE.md`, permission rules and settings files all apply, and the
-keys you know from the terminal work the same way. V0.5 brings the CLI's interactive panels in too (`/mcp`, `/config`,
-`/permissions`, `/plugin`, rewind…), drawn as VN menus. The requirements are in [docs/V1.md](docs/V1.md) and
-[docs/V0.5.md](docs/V0.5.md).
+I wanted to code with Rem, so I made this. She talks in character, reacts with her face and gestures while she
+types, you answer her permission prompts and plans from VN choice menus, and with a Fish Audio key she speaks
+Japanese while the English text plays along, lips in sync. She warms up to you the more you praise her (and
+headpat her), and after a few hours she'll tell you to go drink some water.
+
+Do your own thing with it. Rem is mine, but the code is yours: fork it, rip it apart, swap in your own waifu,
+make it yours. I don't care. It's MIT.
+
+## What's mine and what isn't
+
+Being upfront about who made what:
+
+- **The UI and the app**: made by me. The screens, the VN dialogue, the chat, the menus, the affection system,
+  the voice sync, all of it.
+- **The Live2D models**: made by humans, not me. They're the Re:Zero characters from *Re:Zero: Lost in
+  Memories*, which I found [on Reddit](https://www.reddit.com/r/Re_Zero/comments/pgj0dv/media_live2d_characters_from_rezero_lost_in/).
+  They are **not** in this repo; download them yourself if you want her. Without them a built-in sprite stands in
+  and everything else still works.
+- **The voice is AI-generated.** It's [Fish Audio](https://fish.audio)'s text-to-speech with a community-made
+  Rem voice model (`d19e2bd4c7464bd98fa2e67044de9a8b`). It's a synthetic imitation, not recordings of Rem's
+  voice actress, and it's off unless you put in your own Fish Audio API key. Nothing is spoken without one.
+- **The brain is Claude.** Underneath it's the real Claude Code harness through the Claude Agent SDK, logged in
+  with your own Claude subscription. Your tools, MCP servers, skills, hooks, `CLAUDE.md`, permission rules and
+  settings files all apply, and the keys you know from the terminal work the same way. The CLI's interactive
+  panels (`/mcp`, `/config`, `/permissions`, `/plugin`, rewind…) are redrawn as VN menus.
+- **Rem and Re:Zero** belong to Tappei Nagatsuki, KADOKAWA and the Re:Zero anime and game teams. This is a fan
+  project, not affiliated with any of them or with Anthropic.
+
+The requirements I built against are in [docs/V1.md](docs/V1.md) and [docs/V0.5.md](docs/V0.5.md).
 
 ## Install
 
-Run `build\Waifufy-Code-0.5.0-setup.exe` (a per-user install; no Node or Claude Code install needed). The first
-run opens a short wizard:
+Windows only for now. There's no prebuilt installer in the repo, so build it (see [Development](#development)):
+`npm run build:installer` gives you `build\Waifufy-Code-<version>-setup.exe`, a per-user install that needs no
+Node or Claude Code. The first run opens a short wizard:
 
 1. **Your profile**: your name, what she calls you, the honorific (`-kun`, `-sama`, `-chan`, … or your own).
 2. **Costumes**: the folder with the Live2D costume folders. It looks in
-   `Downloads\ReZero LiM Live2D Characters\Live2D Characters` first. The models are third-party and not
-   bundled; without them a built-in sprite stands in and everything else works.
+   `Downloads\ReZero LiM Live2D Characters\Live2D Characters` first (where the Reddit download unpacks).
 3. **Claude login**: uses your Claude subscription (opens Claude Code's own login when needed).
 4. **Theme**: light, dark or follow the system.
+
+For her voice, get a key at [fish.audio](https://fish.audio/app/api-keys), paste it in Settings → Voice, and press
+**Test voice**. The free model works with her voice; the key is kept by the app, never in settings.
 
 ## Playing
 
@@ -99,4 +124,5 @@ npm run build:installer           # build\Waifufy-Code-<version>-setup.exe
 - Tests: see [tests/README.md](tests/README.md). The E2E suite drives the real app over CDP against a mock session;
   `tests/e2e/real.mjs` is a 3-turn Haiku smoke test you run by hand.
 
-The Live2D Cubism Core is under the Live2D Proprietary Software License: download it, don't commit it.
+The Live2D Cubism Core is under the Live2D Proprietary Software License, so it isn't in the repo either: download
+it as above, don't commit it.
