@@ -1,6 +1,10 @@
 # Waifufy Code
 
-<!-- VIDEO PLACEHOLDER (PV): in the GitHub editor, drag Waifufy-Code-PV.mp4 here and replace this comment with the link it gives you. -->
+
+
+https://github.com/user-attachments/assets/df2236fe-e528-4579-8bf3-d1def90fa485
+
+
 
 Claude Code, but it's a visual novel and Rem is your coding agent.
 
@@ -16,7 +20,10 @@ make it yours. I don't care. It's MIT.
 
 This is me actually using it, with the real Claude Code doing real work:
 
-<!-- VIDEO PLACEHOLDER (real usage): in the GitHub editor, drag the real-usage recording here and replace this comment with the link it gives you. -->
+
+https://github.com/user-attachments/assets/7eecff80-6e09-4e9c-9c3e-3651be66ed5f
+
+
 
 ## What's mine and what isn't
 
