@@ -13,7 +13,7 @@ types, you answer her permission prompts and plans from VN choice menus, and wit
 Japanese while the English text plays along, lips in sync. She warms up to you the more you praise her (and
 headpat her), and after a few hours she'll tell you to go drink some water.
 
-Do your own thing with it. Rem is mine, but the code is yours: fork it, rip it apart, swap in your own waifu,
+Do your own thing with it. Rem is mine (my waifu), but the code is yours: fork it, rip it apart, swap in your own waifu,
 make it yours. I don't care. It's MIT.
 
 ## See it in action
