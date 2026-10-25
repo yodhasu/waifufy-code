@@ -18,6 +18,7 @@ import {
   type SDKMessage,
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk'
+import { AFFECTION_TAGS, moodNote, stripContext, type AffectionTag, type Mood } from './affection.ts'
 import { mcpLogin, mcpLogout } from './auth.ts'
 import { fileControl } from './config-files.ts'
 import { elicitContent, elicitFields } from './elicit.ts'
@@ -39,6 +40,7 @@ import {
   type Todo,
 } from './protocol.ts'
 import type { SessionApi, SessionFactory, SessionOptions } from './session-api.ts'
+import { addressOf } from './settings.ts'
 import { bashModeMessages, childEnv, runShell } from './shell.ts'
 import { ANSI, buildDiffs, clip, describeTool, isDestructive, prettyInput, str, toolLabel, toolOutput } from './tools.ts'
 
@@ -113,14 +115,14 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
 const freshStats = (): Stats => ({ costUsd: 0, turns: 0, apiMs: 0, tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0, limits: {} })
 const kTokens = (n: number) => (n >= TOKENS_PER_K ? `${(n / TOKENS_PER_K).toFixed(1)}k` : String(n))
 
-/** Text blocks of a message's content, which is a string or an array of blocks. */
+/** Text blocks of a message's content, which is a string or an array of blocks; the app's mood note left out. */
 function textOf(content: unknown): string {
-  if (typeof content === 'string') return content
+  if (typeof content === 'string') return stripContext(content)
   if (!Array.isArray(content)) return ''
-  return content
+  return stripContext(content
     .filter((b: { type?: string }) => b?.type === 'text')
     .map((b: { text?: string }) => b.text ?? '')
-    .join('\n')
+    .join('\n'))
 }
 
 /** Local command output as the CLI prints it, without its wrapper tags and terminal colors. */
@@ -230,7 +232,8 @@ const TAG_ALIASES: Record<string, Emotion> = {
 }
 const emotionOf = (word: string): Emotion | undefined =>
   (EMOTIONS as readonly string[]).includes(word) ? (word as Emotion) : TAG_ALIASES[word]
-const LONGEST_TAG = Math.max(...[...EMOTIONS, ...Object.keys(TAG_ALIASES)].map((e) => e.length)) + 2
+const isAffectionTag = (word: string): word is AffectionTag => Object.hasOwn(AFFECTION_TAGS, word)
+const LONGEST_TAG = Math.max(...[...EMOTIONS, ...Object.keys(TAG_ALIASES), ...Object.keys(AFFECTION_TAGS)].map((e) => e.length)) + 2
 /** After a stripped tag, no space is put back before these. */
 const NO_SPACE_BEFORE = /^[.,!?;:)\]}…'"’”\n]/
 
@@ -252,10 +255,12 @@ export class TagParser {
   private ticks = 0
   private onText: (s: string) => void
   private onFace: (e: Emotion) => void
+  private onAffection: (tag: AffectionTag) => void
 
-  constructor(onText: (s: string) => void, onFace: (e: Emotion) => void) {
+  constructor(onText: (s: string) => void, onFace: (e: Emotion) => void, onAffection: (tag: AffectionTag) => void = () => {}) {
     this.onText = onText
     this.onFace = onFace
+    this.onAffection = onAffection
   }
 
   feed(s: string) {
@@ -299,6 +304,15 @@ export class TagParser {
           this.text(text)
           text = ''
           this.tag(emotionOf(word)!)
+          i = close + 1
+          continue
+        }
+        // Her verdict on the user's message: never shown, and no face of its own.
+        if (close !== -1 && close - i <= LONGEST_TAG && isAffectionTag(word)) {
+          this.text(text)
+          text = ''
+          this.afterTag = true
+          this.onAffection(word)
           i = close + 1
           continue
         }
@@ -362,6 +376,9 @@ class Session implements SessionApi {
   /** Open MCP elicitations, by the id the app answers with. */
   private elicits = new Map<string, { fields: ElicitField[]; elicitationId?: string; finish(r: ElicitationResult): void }>()
   private tags: TagParser
+  private feltThisTurn = false
+  /** The affection level the model was last told; a note goes out again only when it moves. */
+  private toldLevel?: number
   private textOpen = false
   /** Content block types of the main agent's message being streamed, by index. */
   private blocks = new Map<number, string>()
@@ -415,7 +432,15 @@ class Session implements SessionApi {
     this.tags = new TagParser(
       (delta) => this.emit({ t: 'text', delta }),
       (emotion) => this.emit({ t: 'face', emotion }),
+      (tag) => this.felt(tag),
     )
+  }
+
+  /** One affection verdict per turn, however many times she writes the tag. */
+  private felt(tag: AffectionTag) {
+    if (this.feltThisTurn) return
+    this.feltThisTurn = true
+    this.emit({ t: 'affection', delta: AFFECTION_TAGS[tag] })
   }
 
   sessionId() {
@@ -495,21 +520,30 @@ class Session implements SessionApi {
     }
   }
 
-  say(text: string, images: Image[] = [], now = false) {
+  say(text: string, images: Image[] = [], now = false, mood?: Mood) {
     if (this.ended) {
       return this.emit({ t: 'error', kind: 'process', message: 'This session has ended. Resume it or start a new one to keep going.' })
     }
     if (!text && !images.length) return
+    const note = this.moodText(mood)
     this.send(
-      images.length
+      images.length || note
         ? [
-            // Images first, then the text, as the CLI sends a pasted screenshot.
+            // The mood note first, then images, then the text, as the CLI sends a pasted screenshot.
+            ...(note ? [{ type: 'text' as const, text: note }] : []),
             ...images.map((img) => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: img.mediaType, data: img.data } })),
             ...(text ? [{ type: 'text' as const, text }] : []),
           ]
         : text,
       now,
     )
+  }
+
+  /** The note in front of a message: on the first message, when the level moved, or when a rest reminder is due. */
+  private moodText(mood: Mood | undefined) {
+    if (!mood || (mood.level === this.toldLevel && !mood.change && !mood.restAfterMs)) return ''
+    this.toldLevel = mood.level
+    return moodNote(mood, addressOf(this.opts.settings))
   }
 
   /** Sends a user message as a turn, or as the next one when a turn is running. */
@@ -797,6 +831,7 @@ class Session implements SessionApi {
 
   private beginTurn() {
     this.running = true
+    this.feltThisTurn = false
     this.turnStart = Date.now()
     this.shown = this.errorShown = false
     this.tokens = { done: 0, reported: 0, estimate: 0 }

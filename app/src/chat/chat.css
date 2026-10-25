@@ -30,6 +30,12 @@
 .chat .hearts span.on { color: var(--pink); opacity: 1; text-shadow: 0 0 6px color-mix(in oklab, var(--pink) 70%, transparent); }
 .chat .hearts span.pop { animation: heart-pop .7s ease-out; }
 @keyframes heart-pop { 40% { transform: scale(1.6); } }
+/* The next heart fills from the left as points come in. */
+.chat .hearts span.part { opacity: 1; color: transparent; -webkit-background-clip: text; background-clip: text;
+  background-image: linear-gradient(90deg, var(--pink) var(--fill), color-mix(in oklab, var(--text-faint) 45%, transparent) var(--fill)); }
+.chat .hearts span.drop { animation: heart-drop .6s ease-out; }
+@keyframes heart-drop { 30% { transform: translateY(3px) scale(.8); } }
+@media (prefers-reduced-motion: reduce) { .chat .hearts span.pop, .chat .hearts span.drop { animation: none; } }
 .chat .hint { font-size: 10.5px; color: var(--text-soft); line-height: 1.35; }
 
 /* Gauges */

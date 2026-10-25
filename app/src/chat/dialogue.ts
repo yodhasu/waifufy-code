@@ -41,11 +41,13 @@ const NOT_MARK_RE = new RegExp(`[^${MARK_CLASS}]`, 'g')
 const isMark = (c: string) => c.charCodeAt(0) >= MARK_BASE && c.charCodeAt(0) <= MARK_END
 // A stray `[smile]` that reached the app (history, a tag the link did not catch) still never shows (R25).
 const TAG_RE = new RegExp(` ?\\[(${Object.keys(EMOTION_CODES).join('|')})\\]`, 'g')
+/** Her affection verdict (link/src/affection.ts): the link removes it; one that slipped through is dropped. */
+const AFFECTION_TAG_RE = / ?\[affection[+-]\]/g
 
 export const marker = (e: Emotion) => String.fromCharCode(MARK_BASE + EMOTION_CODES[e])
 export const stripMarks = (s: string) => s.replace(MARK_RE, '')
 const marksOf = (s: string) => s.replace(NOT_MARK_RE, '')
-export const tagsToMarks = (s: string) => s.replace(TAG_RE, (_, e: Emotion) => marker(e))
+export const tagsToMarks = (s: string) => s.replace(AFFECTION_TAG_RE, '').replace(TAG_RE, (_, e: Emotion) => marker(e))
 /** Text with tags and markers removed, for the log, save metadata and copying. */
 export const cleanText = (s: string) => stripMarks(tagsToMarks(s))
 /** The last emotion in `s`, from markers or tags. */

@@ -3,6 +3,7 @@
 
 import { getCurrentWindow, UserAttentionType } from '@tauri-apps/api/window'
 import type { BgTask, Command, HistoryEntry, Image, ModelChoice, PermissionModeName, ServerMsg, SessionEvent, Stats } from '../../../link/src/protocol.ts'
+import { AFFECTION_LEVELS, clampPoints, levelOf, levelStart, type Mood } from '../../../link/src/affection.ts'
 import type { ChatParams, Ctx, Gesture, Screen } from '../contracts'
 import { addressOf } from '../screens/title'
 import { esc, fmtK } from '../ui'
@@ -17,13 +18,22 @@ import {
 } from './dialogue'
 import { createInput, fromInput, type InputApi, type InputHost } from './input'
 import {
-  createPanels, doing, isShell, MAX_HEARTS, MODE_LABELS, oneLine, toolIcon, toolLabel, type Panels, type ToolRecord,
+  createPanels, doing, isShell, MODE_LABELS, oneLine, toolIcon, toolLabel, type Panels, type ToolRecord,
 } from './panels'
 
 /** A finished turn this long earns her "success" gesture. */
 const SUCCESS_MIN_SECONDS = 20
 /** Two Esc presses this close together on an idle prompt open the rewind menu. */
 const FOCUS_KEY = 'wc.focus'
+/** A headpat earns a point at most this often, so stroking her nonstop can't fill the hearts. */
+const HEADPAT_POINT_MS = 5 * 60_000
+/** With the app open this long, her next reply carries a rest reminder; then again every as long. */
+const REST_EVERY_MS = 3 * 60 * 60_000
+/** When the app (this page) opened: the rest reminder counts from it, across sessions. */
+const APP_OPENED_AT = performance.timeOrigin
+let lastRestAt = APP_OPENED_AT
+/** The E2E harness shortens the rest interval through this global. */
+const restEveryMs = () => (window as unknown as { __wcRestEveryMs?: number }).__wcRestEveryMs ?? REST_EVERY_MS
 /** Her aside at the top of each CLI panel (menu.ts voice): one short line in her voice, never instructions. */
 const PANEL_LINES: Record<string, (you: string) => string> = {
   mcp: (you) => `These are the servers that lend me their tools, ${you}.`,
@@ -154,7 +164,11 @@ export function chatScreen(): Screen {
   let bypassAvailable = false
   /** `!` commands sent and not yet answered with their output. */
   let shellsRunning = 0
+  /** Affection points (link/src/affection.ts); the hearts show their level. */
   let affection = 0
+  /** The level moved since the last message she got: the next one tells her. */
+  let moodChange: 'up' | 'down' | undefined
+  let lastPatPointAt = 0
   let basePlayMs = 0
   let startedAt = 0
   let turnStart = 0
@@ -648,9 +662,45 @@ export function chatScreen(): Screen {
     return { kind: 'user', text: more ? `${first.text} …` : first.text, collapsed: first.collapsed || more }
   }
 
+  // ---------------------------------------------------------------- affection and rest
+
+  /** Points from her verdict on your words (±1) or a headpat (+1); each heart costs more than the last. */
+  function addAffection(delta: number, from: 'words' | 'pat') {
+    const next = clampPoints(affection + delta)
+    if (next === affection) return
+    const before = levelOf(affection)
+    affection = next
+    const level = levelOf(next)
+    const change = level > before ? 'up' : level < before ? 'down' : undefined
+    if (change) moodChange = change
+    panels.hearts(affection, change)
+    const name = charName()
+    addLog({ who: 'system', text: from === 'pat' ? `♥ Headpat · ${name} +1` : delta > 0 ? `♥ ${name} liked that · +1` : `♡ That stung ${name} · −1` })
+    if (change === 'up') ctx.toast(`♥ ${name}'s affection rose to ${level}/${AFFECTION_LEVELS}`)
+    if (change === 'down') ctx.toast(`♡ ${name}'s affection fell to ${level}/${AFFECTION_LEVELS}`)
+    // Only the points: a full save now would cancel the thumbnail save a finished turn has pending.
+    if (sessionId) ctx.link.send({ t: 'save_meta', id: sessionId, patch: { affectionPts: affection } })
+  }
+
+  function onHeadpat() {
+    if (!live || Date.now() - lastPatPointAt < HEADPAT_POINT_MS) return
+    lastPatPointAt = Date.now()
+    addAffection(1, 'pat')
+  }
+
+  /** What rides along with a message: her level, whether it just moved, and a rest reminder when one is due. */
+  function mood(): Mood {
+    const now = Date.now()
+    const due = now - APP_OPENED_AT >= restEveryMs() && now - lastRestAt >= restEveryMs()
+    if (due) lastRestAt = now
+    const m: Mood = { level: levelOf(affection), ...(moodChange && { change: moodChange }), ...(due && { restAfterMs: now - APP_OPENED_AT }) }
+    moodChange = undefined
+    return m
+  }
+
   /** A queued message waits behind her unread pages; one you just typed replaces them, as a reply does. */
   function say(text: string, images: Image[], fromQueue = false) {
-    ctx.link.send({ t: 'say', text, images: images.length ? images : undefined })
+    ctx.link.send({ t: 'say', text, images: images.length ? images : undefined, mood: mood() })
     const pics = images.map((_, i) => ` [Image #${i + 1}]`).join('')
     addLog({ who: 'user', text: text + pics })
     const page = userPage((text || '(image)') + pics)
@@ -738,6 +788,7 @@ export function chatScreen(): Screen {
     mode = settings().claude.permissionMode
     autoSeen = mode === 'auto'
     affection = 0
+    moodChange = undefined
     basePlayMs = 0
     startedAt = 0
     lastLine = ''
@@ -817,7 +868,7 @@ export function chatScreen(): Screen {
     // Before the first stats of a resumed save the turn count is unknown, so the saved one stays.
     const patch = {
       playMs: playMs(),
-      affection,
+      affectionPts: affection,
       costume: settings().appearance.costume,
       ...(stats && { turns: stats.turns }),
       ...(lastLine && { lastLine }),
@@ -875,7 +926,8 @@ export function chatScreen(): Screen {
   function onStarted(m: Extract<SessionEvent, { t: 'started' }>) {
     cwd = m.cwd
     title = m.save?.title || title
-    affection = Math.min(MAX_HEARTS, m.save?.affection ?? 0)
+    // A save from before points carries only its hearts: it starts at the first point of that level.
+    affection = clampPoints(m.save?.affectionPts ?? levelStart(m.save?.affection ?? 0))
     basePlayMs = m.save?.playMs ?? 0
     startedAt = Date.now()
     panels.reset({ title: title || `A new day with ${charName()}`, cwd: m.cwd, cwdShort: m.cwdShort })
@@ -928,7 +980,6 @@ export function chatScreen(): Screen {
     } else if (m.ok) {
       // The CLI's completion line: "Baked for 1m 3s".
       if (m.seconds >= 1) addLog({ who: 'system', text: `✻ ${doneVerb(turnStart)} for ${duration(m.seconds * 1000)}` })
-      if (affection < MAX_HEARTS) panels.hearts(++affection, true)
       if (m.seconds >= SUCCESS_MIN_SECONDS) gesture('success')
     } else {
       const error = m.error || 'The turn failed'
@@ -1056,6 +1107,7 @@ export function chatScreen(): Screen {
         commands = m.commands
         return
       case 'face': return pager.face(m.emotion)
+      case 'affection': return addAffection(m.delta, 'words')
       case 'text':
         if (phase !== 'writing') (phase = 'writing'), (phaseStart = Date.now()), updateSpinner()
         return pager.text(m.delta)
@@ -1173,6 +1225,7 @@ export function chatScreen(): Screen {
     mount(el, c) {
       root = el
       ctx = c
+      ctx.character.onHeadpat(onHeadpat)
       root.classList.add('chat')
       root.innerHTML = `
         <aside class="panel chat-left"></aside>
@@ -1258,7 +1311,7 @@ export function chatScreen(): Screen {
         busy: () => running,
         submitNow(text, images) {
           if (!live || ended || !ready || !running) return say(text, images)
-          ctx.link.send({ t: 'say', text, images, now: true })
+          ctx.link.send({ t: 'say', text, images, now: true, mood: mood() })
           addLog({ who: 'user', text })
           ctx.toast(`Sent now · ${charName()} reads it at her next step`)
         },

@@ -279,6 +279,15 @@ export default {
       },
     },
     {
+      r: 'R69',
+      name: 'headpats fill the affection gauge, one point per 5 minutes however long you pat',
+      async run({ app }) {
+        // Every pat so far (the probe and the long one) fell inside one cooldown of a new game.
+        const pts = await app.eval(() => document.querySelector('[data-test="hearts"]').dataset.points)
+        eq(pts, '1', 'one point from headpats')
+      },
+    },
+    {
       r: 'R33',
       name: 'while she works, a headpat gets a scolding instead',
       timeout: 60_000,

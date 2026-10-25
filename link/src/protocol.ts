@@ -2,6 +2,8 @@
 // This file is the only contract between the two halves; the app imports it for types only.
 // See docs/V1.md for the requirements each message serves.
 
+import type { Mood } from './affection.ts'
+
 /** Emotion tags the character writes inline, like `text [smile] text`. Each maps to a Live2D gesture + hold. */
 export const EMOTIONS = [
   'normal', 'smile', 'happy', 'delighted', 'nod', 'think', 'worried', 'serious',
@@ -153,8 +155,10 @@ export type Save = {
   /** Time spent in the session in the app, ms. */
   playMs: number
   turns: number
-  /** 0 – 5 hearts. */
+  /** 0 – 5 hearts (the level of affectionPts). */
   affection: number
+  /** Affection points (affection.ts); absent in saves from before points, read from the hearts then. */
+  affectionPts?: number
   costume?: string
   /** URL path of the thumbnail on the link server, with a cache-busting query; absent when none. */
   thumb?: string
@@ -234,7 +238,7 @@ export type ClientMsg =
   | { t: 'save_rename'; id: string; title: string }
   | { t: 'save_delete'; id: string }
   /** Updates play stats / thumbnail of the running save. `thumb` is a data: URL (JPEG). */
-  | { t: 'save_meta'; id: string; patch: Partial<Pick<Save, 'playMs' | 'turns' | 'affection' | 'costume' | 'lastLine'>>; thumb?: string }
+  | { t: 'save_meta'; id: string; patch: Partial<Pick<Save, 'playMs' | 'turns' | 'affection' | 'affectionPts' | 'costume' | 'lastLine'>>; thumb?: string }
   | { t: 'costumes'; dir?: string }
   /** Whether `cwd` is trusted for its project settings, as the terminal's trust dialog decides; answered with `trust`. */
   | { t: 'trust_check'; cwd: string }
@@ -247,7 +251,7 @@ export type ClientMsg =
    */
   | { t: 'start'; epoch: number; cwd: string; resume?: string; resumeAt?: string; dropsTurn?: string }
   /** `now`: Ctrl+Enter, the CLI's "send now": delivered to the running turn at once instead of after it. */
-  | { t: 'say'; text: string; images?: Image[]; now?: boolean }
+  | { t: 'say'; text: string; images?: Image[]; now?: boolean; mood?: Mood }
   /** `!cmd`: runs in the session folder; output is appended to context without starting a turn. */
   | { t: 'shell'; command: string }
   | { t: 'files'; query: string }
@@ -302,6 +306,8 @@ export type SessionEvent =
   | { t: 'session_id'; sessionId: string }
   | { t: 'commands'; commands: Command[] }
   | { t: 'face'; emotion: Emotion }
+  /** She took the user's message as kind (+1) or unkind (-1): at most once per turn. */
+  | { t: 'affection'; delta: 1 | -1 }
   | { t: 'text'; delta: string }
   | { t: 'text_end' }
   /** Streaming progress for the spinner. */

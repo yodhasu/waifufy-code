@@ -2,6 +2,7 @@
 // quests, party and her recent actions on the right (R18, R19, R22).
 
 import type { Limit, ModelChoice, PermissionModeName, SessionEvent, Settings, Stats, Todo } from '../../../link/src/protocol.ts'
+import { AFFECTION_LEVELS, affectionProgress } from '../../../link/src/affection.ts'
 import { esc, fmtDur, fmtK, resetsIn } from '../ui'
 
 export const MODE_LABELS: Record<PermissionModeName, string> = {
@@ -12,7 +13,7 @@ export const MODE_LABELS: Record<PermissionModeName, string> = {
   bypassPermissions: 'Bypass',
 }
 
-export const MAX_HEARTS = 5
+export const MAX_HEARTS = AFFECTION_LEVELS
 /** Rows kept in the actions list; older ones stay in the LOG. */
 const ACTIONS_SHOWN = 14
 const RIBBON_DETAIL_CHARS = 80
@@ -95,7 +96,8 @@ export type Panels = {
   models(list: ModelChoice[]): void
   model(id?: string): void
   mode(mode: PermissionModeName): void
-  hearts(n: number, pop?: boolean): void
+  /** Affection points: full hearts for the level, the next one filled as far as its points go. */
+  hearts(points: number, change?: 'up' | 'down'): void
   todos(items: Todo[]): void
   agent(m: AgentMsg): void
   /** Adds a tool row, or refreshes it after its state changed. */
@@ -278,7 +280,7 @@ export function createPanels(
       portrait.innerHTML = p.avatar ? `<img alt="" src="${esc(p.avatar)}">` : `<span>${esc(initial)}</span>`
       q(left, '.pname').textContent = p.displayName
       q(left, '.sub').textContent = [p.title, `with ${s.waifu.name}`].filter(Boolean).join(' · ')
-      q(left, '.hint').textContent = `${s.waifu.name}'s affection · rises with every task you finish together`
+      q(left, '.hint').textContent = `${s.waifu.name}'s affection · praise and headpats warm her up`
       q(right, '.leader').textContent = `✧ ${s.waifu.name}`
       q(right, '.acts-title').textContent = `${s.waifu.name}'s actions`
     },
@@ -313,11 +315,17 @@ export function createPanels(
       modeBtn.dataset.mode = mode
       modeBtn.textContent = `Mode · ${MODE_LABELS[mode] ?? mode}`
     },
-    hearts(n, pop = false) {
+    hearts(points, change) {
       const el = q(left, '.hearts')
-      const count = Math.max(0, Math.min(MAX_HEARTS, n))
-      el.dataset.count = String(count)
-      const heart = (k: number) => `<span class="${k < count ? 'on' : ''}${pop && k === count - 1 ? ' pop' : ''}">♥</span>`
+      const { level, into, need } = affectionProgress(points)
+      el.dataset.count = String(level)
+      el.dataset.points = String(points)
+      el.title = need ? `Affection ${level}/${MAX_HEARTS} · ${into}/${need} toward the next heart` : `Affection ${level}/${MAX_HEARTS} · full`
+      const heart = (k: number) => {
+        const cls = [k < level ? 'on' : '', k === level && into ? 'part' : '', change === 'up' && k === level - 1 ? 'pop' : '', change === 'down' && k === level ? 'drop' : '']
+        const fill = k === level && into ? ` style="--fill:${Math.round((into / need) * 100)}%"` : ''
+        return `<span class="${cls.filter(Boolean).join(' ')}"${fill}>♥</span>`
+      }
       el.innerHTML = Array.from({ length: MAX_HEARTS }, (_, k) => heart(k)).join('')
     },
     todos(items) {

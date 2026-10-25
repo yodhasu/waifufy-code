@@ -59,6 +59,8 @@ export function createInteract(o: {
   director: Director
   motion(): MotionSettings
   fx(mark: Mark): void
+  /** A headpat began while she was free (a busy one is a telling-off, not a pat). */
+  onPat(): void
 }): Interact {
   const { root, box, director } = o
   let stroke: Stroke | undefined
@@ -131,6 +133,7 @@ export function createInteract(o: {
     s.isPat = true
     s.baseTier = tierFor(patCount)
     s.isBusy = director.busy()
+    if (!s.isBusy) o.onPat()
     s.timer = window.setInterval(() => patTick(s), PAT_TICK_MS)
     updateCursor()
     patTick(s)

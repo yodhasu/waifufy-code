@@ -95,7 +95,8 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
     onGesture: (g) => (ds.gesture = g),
     fx: spawnFx,
   })
-  const interact = createInteract({ root, box, actor, director, motion, fx: spawnFx })
+  const patListeners = new Set<() => void>()
+  const interact = createInteract({ root, box, actor, director, motion, fx: spawnFx, onPat: () => patListeners.forEach((f) => f()) })
 
   // ---------------------------------------------------------------- rendering
 
@@ -411,5 +412,9 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
     },
     setPlacement: placeExplicitly,
     snapshot,
+    onHeadpat(fn) {
+      patListeners.add(fn)
+      return () => patListeners.delete(fn)
+    },
   }
 }

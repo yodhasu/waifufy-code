@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promise
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { getSessionInfo, getSessionMessages, listSessions, renameSession, type SDKSessionInfo, type SessionMessage } from '@anthropic-ai/claude-agent-sdk'
+import { AFFECTION_TAGS, CONTEXT_TAG, clampPoints, levelOf } from './affection.ts'
 import { EMOTIONS, type HistoryEntry, type Save } from './protocol.ts'
 import { DATA_DIR, loadSettings } from './settings.ts'
 import { clip, describeTool, toolLabel, toolOutput } from './tools.ts'
@@ -18,7 +19,6 @@ export const THUMBS_DIR = join(DATA_DIR, 'thumbs')
 const HISTORY_LIMIT = 300
 const TITLE_MAX = 80
 const LAST_LINE_MAX = 400
-const AFFECTION_MAX = 5
 const THUMB_MAX_BYTES = 4 * 1024 * 1024
 /** A registered session that still has no transcript after this long never got a first message: it is dropped. */
 const PRUNE_AFTER_MS = 24 * 60 * 60_000
@@ -42,6 +42,7 @@ type Entry = {
   playMs: number
   turns: number
   affection: number
+  affectionPts?: number
   costume?: string
   lastLine?: string
   /** Set by rename; wins over the transcript's own title, so a rename sticks even if renameSession failed. */
@@ -158,6 +159,7 @@ function toSave(e: Entry, info: SDKSessionInfo | undefined): Save {
     playMs: e.playMs,
     turns: e.turns,
     affection: e.affection,
+    ...(e.affectionPts !== undefined && { affectionPts: e.affectionPts }),
     costume: e.costume,
     thumb: e.thumbV > 0 ? `/thumbs/${e.id}.jpg?v=${e.thumbV}` : undefined,
     lastLine: e.lastLine,
@@ -269,7 +271,7 @@ export async function deleteSave(id: string) {
   await rm(join(THUMBS_DIR, `${id}.jpg`), { force: true })
 }
 
-export type MetaPatch = Partial<Pick<Save, 'playMs' | 'turns' | 'affection' | 'costume' | 'lastLine'>>
+export type MetaPatch = Partial<Pick<Save, 'playMs' | 'turns' | 'affection' | 'affectionPts' | 'costume' | 'lastLine'>>
 
 const count = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : undefined)
 
@@ -299,10 +301,14 @@ export async function saveMeta(id: string, patch: MetaPatch, thumb?: string, cwd
     }
     const playMs = count(patch.playMs)
     const turns = count(patch.turns)
-    const affection = count(patch.affection)
+    const points = count(patch.affectionPts)
     if (playMs !== undefined) e.playMs = playMs
     if (turns !== undefined) e.turns = turns
-    if (affection !== undefined) e.affection = Math.min(AFFECTION_MAX, affection)
+    // The hearts follow the points; `affection` alone is ignored, so the two never disagree.
+    if (points !== undefined) {
+      e.affectionPts = clampPoints(points)
+      e.affection = levelOf(e.affectionPts)
+    }
     if (typeof patch.costume === 'string') e.costume = patch.costume
     if (typeof patch.lastLine === 'string') e.lastLine = stripTags(patch.lastLine).trim().slice(0, LAST_LINE_MAX)
     if (jpeg) e.thumbV += 1
@@ -312,7 +318,8 @@ export async function saveMeta(id: string, patch: MetaPatch, thumb?: string, cwd
 
 // ---------------------------------------------------------------- history
 
-const TAGS = new RegExp(`[ \\t]*\\[(?:${EMOTIONS.join('|')})\\][ \\t]*`, 'gi')
+const TAG_WORDS = [...EMOTIONS, ...Object.keys(AFFECTION_TAGS)].map((w) => w.replace(/[+-]/g, '\\$&'))
+const TAGS = new RegExp(`[ \\t]*\\[(?:${TAG_WORDS.join('|')})\\][ \\t]*`, 'gi')
 /** `[smile] Hi! [happy]Done [nod].` → `Hi! Done.`: one space stays between words, none at an edge or before punctuation. */
 const stripTags = (text: string) =>
   text.replace(TAGS, (m: string, at: number, s: string) => {
@@ -330,7 +337,7 @@ const WRAPPER_TAGS = /<\/?(?:command-[\w-]+|local-command-[\w-]+|bash-[\w-]+|sys
 /** User-role text the harness injects (hooks, background tasks, subagent hand-backs). Never something the user typed. */
 const HARNESS_TAGS = ['task-notification', 'agent-message', 'user-prompt-submit-hook', 'artifact-content-authored-by-others']
 /** Wrappers whose content is for the model only; removed before a line is read. */
-const HIDDEN = /<(system-reminder|local-command-caveat)>[\s\S]*?<\/\1>/g
+const HIDDEN = new RegExp(`<(system-reminder|local-command-caveat|${CONTEXT_TAG})>[\\s\\S]*?</\\1>\\s*`, 'g')
 
 /** Extra transcript flags the SDK passes through but doesn't type. */
 type Flags = { is_meta?: boolean; isMeta?: boolean; isCompactSummary?: boolean; origin?: { kind?: string } }

@@ -1,3 +1,4 @@
+import type { Mood } from './affection.ts'
 import type { CtlOp, Image, PermissionModeName, SessionEvent, Settings } from './protocol.ts'
 
 /** Contract between server.ts and a session implementation: session.ts (real SDK) or mock.ts (E2E tests). */
@@ -24,7 +25,7 @@ export interface SessionApi {
   /** Starts the CLI and completes the handshake; emits `ready` (and `stats`). Never throws: failures are emitted as `error` + `ended`. */
   start(): Promise<void>
   /** `now`: while a turn runs, deliver it to that turn at once (the CLI's Ctrl+Enter) instead of after it. */
-  say(text: string, images?: Image[], now?: boolean): void
+  say(text: string, images?: Image[], now?: boolean, mood?: Mood): void
   /** `!cmd`: runs it in `cwd`, emits `shell_result`, and appends input+output to context without a turn. */
   shell(command: string): Promise<void>
   interrupt(): Promise<void>

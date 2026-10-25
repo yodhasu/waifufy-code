@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 import { format } from 'node:util'
 import { WebSocket, WebSocketServer } from 'ws'
 import { listCostumes, serveModel, serveThumb } from './assets.ts'
+import { asMood } from './affection.ts'
 import { createAuth } from './auth.ts'
 import { searchFiles } from './files.ts'
 import { buildPersona } from './persona.ts'
@@ -456,7 +457,7 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       return closeCurrent()
     case 'say':
       need(isStr(m.text), 'text')
-      return live().say(m.text, Array.isArray(m.images) ? m.images : undefined, m.now === true)
+      return live().say(m.text, Array.isArray(m.images) ? m.images : undefined, m.now === true, asMood(m.mood))
     case 'shell':
       need(isStr(m.command), 'command')
       return live().shell(m.command)

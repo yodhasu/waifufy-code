@@ -59,6 +59,8 @@ export type Character = {
   setPlacement(p: Placement): void
   /** A JPEG data URL of the character on the current backdrop, for save thumbnails. */
   snapshot(width: number, height: number): Promise<string | undefined>
+  /** Calls `fn` when a headpat begins while she is free; returns the unsubscribe. */
+  onHeadpat(fn: () => void): () => void
 }
 
 // ---------------------------------------------------------------- screens (app/src/screens/, app/src/chat/)

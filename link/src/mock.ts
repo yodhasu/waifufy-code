@@ -576,6 +576,8 @@ class MockSession implements SessionApi {
     if (/\bslow\b/.test(k)) return this.slow(turn)
     if (/\bmarkdown\b/.test(k)) return this.markdown(turn)
     if (/\bemotion/.test(k)) return this.emotions(turn)
+    if (/\b(good job|well done|thank you|you're the best)\b/.test(k)) return this.praised(turn, 1)
+    if (/\b(useless|stupid|i hate you)\b/.test(k)) return this.praised(turn, -1)
     return this.echo(turn, t, images)
   }
 
@@ -608,6 +610,16 @@ class MockSession implements SessionApi {
     await this.speak(turn, parts.join(' '))
     // The CLI's greyed next-prompt suggestion, only when asked for (other scenarios keep the normal placeholder).
     if (/\bsuggest/i.test(text)) this.emit({ t: 'suggestion', text: 'run the tests and fix what fails' })
+    return { ok: true }
+  }
+
+  /** Her answer to praise (+1) or an unkind word (-1): the session's affection event, as [affection±] makes it. */
+  private async praised(turn: Turn, delta: 1 | -1): Promise<Outcome> {
+    await this.think(turn)
+    this.emit({ t: 'affection', delta })
+    await this.speak(turn, delta > 0
+      ? `[shy] E-ehehe… thank you, ${this.addr}. [happy] That makes me really happy.`
+      : `[sad] …I'm sorry, ${this.addr}. [serious] I'll do better.`)
     return { ok: true }
   }
 
