@@ -345,6 +345,19 @@ export class App {
     }
   }
 
+  /** A finger swipe from the center of `sel` by (dx, dy) CSS px over `ms` (a phone: openPhone emulates touch). */
+  async swipe(sel, dx, dy, ms = 220) {
+    const { x, y } = await this.center(sel)
+    const steps = 8
+    const touch = (type, px, py) => this.cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x: px, y: py }] })
+    await touch('touchStart', x, y)
+    for (let k = 1; k <= steps; k++) {
+      await sleep(ms / steps)
+      await touch('touchMove', x + (dx * k) / steps, y + (dy * k) / steps)
+    }
+    await touch('touchEnd', x + dx, y + dy)
+  }
+
   #mouse(type, x, y, extra = {}) {
     return this.cdp.send('Input.dispatchMouseEvent', { type, x, y, modifiers: this.held, button: 'none', ...extra })
   }

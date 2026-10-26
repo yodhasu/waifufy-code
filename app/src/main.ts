@@ -20,16 +20,26 @@ const STAGE_W = 1600
 const STAGE_H = 900
 const PETALS = 16
 
+/** A portrait stage shorter than this (the keyboard is up, or a tablet) gets the compact layout. */
+const COMPACT_H = 1450
+/** The compact layout's floor: shorter windows scale down instead. */
+const COMPACT_MIN_H = 900
+
 // The stage is scaled to fit the window around its center (R: no scrolling, any window size): 1600×900, or in
-// a window taller than wide (a phone) 900 wide and at least 1600 tall, taller still to fill a 9:20 screen
-// without bars. `data-orient` switches the portrait layout in every screen's CSS and the character's placements.
+// a window taller than wide (a phone) 900 wide and as tall as the screen's shape asks, at least 1600 to fill a
+// 9:16 or 9:20 screen without bars. When the keyboard takes the bottom of a phone, the stage gets shorter rather
+// than smaller (`data-compact`: her head and shoulders, the dialogue right above the composer).
+// `data-orient` switches the portrait layout in every screen's CSS and the character's placements.
 function fit() {
   const portrait = innerHeight > innerWidth
-  const [w, h] = portrait ? [STAGE_H, Math.max(STAGE_W, Math.round((STAGE_H * innerHeight) / innerWidth))] : [STAGE_W, STAGE_H]
+  const tall = Math.round((STAGE_H * innerHeight) / innerWidth)
+  const compact = portrait && tall < COMPACT_H
+  const [w, h] = portrait ? [STAGE_H, compact ? Math.max(COMPACT_MIN_H, tall) : Math.max(STAGE_W, tall)] : [STAGE_W, STAGE_H]
   const s = Math.min(innerWidth / w, innerHeight / h)
   const stage = document.getElementById('stage')!
   stage.style.height = portrait ? `${h}px` : ''
   stage.dataset.orient = portrait ? 'portrait' : 'landscape'
+  stage.dataset.compact = compact ? 'on' : ''
   stage.style.transform = `translate(-50%, -50%) scale(${s})`
   stage.dataset.scale = String(s)
 }

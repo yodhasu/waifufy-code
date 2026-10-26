@@ -70,12 +70,19 @@ async function tourTheme(theme) {
   await app.key('Escape')
   await app.key('Escape')
   if (PORTRAIT) {
-    await app.click(T('qm-panels'))
-    await shot(`${theme}-08c-panels`)
-    await app.click(T('qm-panels'))
+    await app.click(T('qm-more'))
+    await app.waitVisible(T('qm-sheet'))
+    await shot(`${theme}-08c-more`)
+    await app.click(T('more-quests'))
+    await shot(`${theme}-08d-quests`)
+    await app.click(T('ptab-status'))
+    await shot(`${theme}-08e-status`)
+    await app.click(T('ptab-close'))
   }
 
-  await app.click(T('qm-costume'))
+  // On a phone the costumes are in ⋯.
+  if (PORTRAIT) await app.click(T('qm-more')), await app.click(T('more-costume'))
+  else await app.click(T('qm-costume'))
   await app.waitVisible(T('costume-picker'))
   await shot(`${theme}-08-costumes`)
   await app.key('Escape')

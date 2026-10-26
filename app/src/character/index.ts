@@ -106,7 +106,7 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
 
   const stageScale = () => Number(stageEl.dataset.scale) || stageEl.getBoundingClientRect().width / STAGE_W || 1
   const portrait = () => stageEl.dataset.orient === 'portrait'
-  const spot = () => (portrait() ? portraitPlacements(stageEl.offsetHeight) : PLACEMENTS)[lastVisible]
+  const spot = () => (portrait() ? portraitPlacements(stageEl.offsetHeight, stageEl.dataset.compact === 'on') : PLACEMENTS)[lastVisible]
   const visibleScale = () => spot().scale
   const resolution = () => Math.min(MAX_RESOLUTION, (devicePixelRatio || 1) * stageScale() * visibleScale())
 
@@ -158,11 +158,11 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
     queueMicrotask(() => (isPlacedThisTask = false))
   }
   new MutationObserver((records) => {
-    // A rotation keeps what the screen asked for, in the other orientation's spot.
-    if (records.every((r) => r.attributeName === 'data-orient')) return setPlacement(requested)
+    // A rotation, or the keyboard coming up (compact), keeps what the screen asked for, in that layout's spot.
+    if (records.every((r) => r.attributeName === 'data-orient' || r.attributeName === 'data-compact')) return setPlacement(requested)
     const p = SCREEN_PLACEMENT[stageEl.dataset.screen as ScreenName]
     if (p && !isPlacedThisTask) setPlacement(p)
-  }).observe(stageEl, { attributes: true, attributeFilter: ['data-screen', 'data-orient'] })
+  }).observe(stageEl, { attributes: true, attributeFilter: ['data-screen', 'data-orient', 'data-compact'] })
 
   // ---------------------------------------------------------------- costumes
 

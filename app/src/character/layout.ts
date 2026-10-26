@@ -23,7 +23,7 @@ export const PLACEMENTS: Record<Exclude<Placement, 'hidden'>, Spot> = {
 const PORTRAIT_X = (STAGE_H - BOX_W) / 2 - BOX_LEFT
 
 /** In portrait her feet sit this far above the stage's bottom edge: tucked behind the dialogue box, or the title menu. */
-const PORTRAIT_FEET = { chat: 470, title: 420 }
+const PORTRAIT_FEET = { chat: 600, title: 420 }
 /** Her scale on a 900×1600 portrait stage (a 9:16 screen), and at most on taller ones. */
 const PORTRAIT_SCALE = { chat: [1.1, 1.4], title: [0.95, 1.2] } as const
 /** On a taller stage she grows by this much per stage pixel past 1600, filling the sky over her head. */
@@ -34,15 +34,20 @@ const PORTRAIT_GROW = 1 / 1600
  * bottom, so she does too, standing above them, and a taller screen makes her bigger. There is no room for the
  * settings preview, so 'side' isn't used there (index.ts hides her instead).
  */
-export function portraitPlacements(stageH: number): Record<Exclude<Placement, 'hidden'>, Spot> {
+export function portraitPlacements(stageH: number, compact = false): Record<Exclude<Placement, 'hidden'>, Spot> {
   const grow = Math.max(0, stageH - STAGE_W) * PORTRAIT_GROW
   const at = (k: 'chat' | 'title') => ({
     x: PORTRAIT_X,
     y: stageH - PORTRAIT_FEET[k] - BOX_H,
     scale: Math.min(PORTRAIT_SCALE[k][1], PORTRAIT_SCALE[k][0] + grow),
   })
-  const chat = at('chat')
+  // Compact (the keyboard is up): her head and shoulders, the top of her head just under the stage's top edge.
+  // The box scales about its bottom, so its top sits at y + BOX_H × (1 − scale).
+  const chat = compact ? { x: PORTRAIT_X, y: COMPACT_TOP - BOX_H * (1 - COMPACT_SCALE), scale: COMPACT_SCALE } : at('chat')
   return { chat, title: at('title'), side: chat }
 }
+/** Compact portrait: her scale, and where the box's top goes (above the stage: her hair starts a little below it). */
+const COMPACT_SCALE = 1.3
+const COMPACT_TOP = -40
 /** Hidden keeps the last visible spot and sinks a little while fading out. */
 export const HIDDEN_DROP = 40

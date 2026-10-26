@@ -214,10 +214,12 @@ try {
   await caption('Same Claude Code underneath', 'tools · quests · subagents · MCP')
   let m = await sayOnCamera('fix the failing tests with your tools')
   if (format === 'mobile') {
-    await sleep(1600)
-    await app.click(T('qm-panels'))
+    await sleep(1400)
+    await app.click(T('qm-more'))
+    await sleep(500)
+    await app.click(T('more-quests'))
     await sleep(1800)
-    await app.click(T('qm-panels'))
+    await app.click(T('ptab-close'))
   }
   await turnEnd(app, m, 60_000)
   await readAll(app, { settleMs: 700 })

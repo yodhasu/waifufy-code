@@ -55,6 +55,10 @@ export default {
         try {
           await fastText(phone)
           await phone.click(T('title-join'))
+          // A phone's first chat opens on the touch tutorial.
+          await phone.waitVisible(T('tutorial'))
+          await phone.click(T('tutorial-skip'))
+          await phone.waitHidden(T('tutorial'))
           await phone.waitVisible(T('chat-input'))
           await phone.waitFor(() => !document.querySelector('[data-test="chat-input"]')?.disabled, { label: 'phone input enabled' })
           // Joining doesn't end the desktop's session.
@@ -67,6 +71,59 @@ export default {
           await app.waitHidden(T('ask'), 10_000)
           await turnEnd(app)
           assert((await chatText(phone)).length > 0, 'the phone shows her reply')
+        } finally {
+          await phone.close()
+        }
+      },
+    },
+    {
+      r: 'R78',
+      name: 'on the phone: the tutorial walks through once; swipes open the log and hide the text; ⋯ opens the panel tabs',
+      async run({ app, project }) {
+        const pair = await enablePhone(app)
+        await newGame(app, project)
+        await fastText(app)
+        await say(app, 'hello from the desk')
+        await turnEnd(app)
+        const phone = await openPhone(pair)
+        try {
+          await fastText(phone)
+          await phone.click(T('title-join'))
+          await phone.waitVisible(T('tutorial'))
+          for (let k = 0; k < 3; k++) {
+            eq(await phone.text(T('tutorial-next')), 'Next', `card ${k + 1}`)
+            await phone.click(T('tutorial-next'))
+          }
+          eq(await phone.text(T('tutorial-next')), 'Got it', 'the last card')
+          await phone.click(T('tutorial-next'))
+          await phone.waitHidden(T('tutorial'))
+          // Only once: leaving and joining again goes straight to the chat.
+          await phone.go('title')
+          await phone.click(T('title-join'))
+          await phone.waitVisible(T('chat-input'))
+          assert(!(await phone.visible(T('tutorial'))), 'the tutorial shows once')
+
+          // Swipe up on the text box: the backlog.
+          await phone.swipe('.dialogue', 0, -160)
+          await phone.waitVisible(T('log'))
+          await phone.key('Escape')
+          await phone.waitHidden(T('log'))
+          // Swipe down: everything but her hides; a tap brings it back.
+          await phone.swipe('.dialogue', 0, 160)
+          await phone.waitFor(() => document.querySelector('.chat')?.dataset.hidden === 'on', { label: 'hidden' })
+          await phone.click(T('unhide'))
+          await phone.waitFor(() => document.querySelector('.chat')?.dataset.hidden === '', { label: 'shown again' })
+          await phone.waitVisible('.dialogue')
+
+          // ⋯ → Quests opens the panel sheet on that tab; tabs switch; ✕ closes it.
+          await phone.click(T('qm-more'))
+          await phone.click(T('more-quests'))
+          await phone.waitVisible(T('panel-tabs'))
+          await phone.waitVisible('.chat-right')
+          await phone.click(T('ptab-status'))
+          await phone.waitVisible('.chat-left')
+          await phone.click(T('ptab-close'))
+          await phone.waitHidden(T('panel-tabs'))
         } finally {
           await phone.close()
         }

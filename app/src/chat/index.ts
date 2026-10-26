@@ -11,6 +11,7 @@ import { createAsks, type Asks } from './asks'
 import { APP_COMMANDS, findAppCommand, runCli, type CommandHost } from './commands'
 import { openPalette, openShortcuts } from './commands/palette'
 import { slackCommand } from './commands/slack'
+import { phoneTutorial } from './tutorial'
 import { control } from './control'
 import { doneVerb, duration, pickVerb, SPINNER_VERBS, thinkingStatus, verbList, type SpinnerVerbs } from './spinner'
 import './chat.css'
@@ -83,6 +84,19 @@ const RETRY_NOTE_CHARS = 80
 const SHELL_NARRATION_CHARS = 120
 /** Overlays stack from this z-index up, in the order they opened. */
 const LAYER_Z_BASE = 50
+// A swipe on the text box (a phone): this far (CSS px), this quick, and mostly vertical.
+const SWIPE_PX = 50
+const SWIPE_MS = 700
+const SWIPE_STRAIGHT = 1.5
+/** The phone's panel sheet: its tabs (Slack opens the inbox instead). */
+const PANEL_TABS = [['status', 'Status'], ['quests', 'Quests'], ['actions', 'Actions'], ['slack', 'Slack']] as const
+type PanelTab = 'status' | 'quests' | 'actions'
+/** The ⋯ sheet: what the phone's quick menu leaves out. Ids are quick-menu actions, or panel tabs. */
+const MORE_ITEMS = [
+  ['status', '♥', 'Status'], ['quests', '◇', 'Quests'], ['actions', '⚒', 'Actions'], ['mode', '⇄', 'Mode'],
+  ['cmd', '/', 'Commands'], ['costume', '👗', 'Costume'], ['focus', '◎', 'Focus'], ['settings', '⚙', 'Settings'],
+  ['menu', '⌂', 'Title'],
+] as const
 const BASE_CYCLE: PermissionModeName[] = ['default', 'acceptEdits', 'plan']
 
 type LogEntry =
@@ -656,6 +670,8 @@ export function chatScreen(): Screen {
   function setRunning(on: boolean) {
     if (running === on) return
     running = on
+    // The phone's STOP button lights up while she works (chat.css).
+    root.classList.toggle('running', on)
     ctx.character.setBusy(on)
     if (on) {
       turnStart = Date.now()
@@ -1005,6 +1021,8 @@ export function chatScreen(): Screen {
       dialogue.show({ kind: 'narration', text: `${s.waifu.name} is ready in \`${m.cwdShort}\`. What shall we do today, ${addressOf(s)}?` })
     }
     gesture('greet')
+    // A phone's first chat starts with the touch tutorial (once), over the session it opened on.
+    if (ctx.link.remote && document.getElementById('stage')?.dataset.orient === 'portrait') phoneTutorial({ modal })
   }
 
   function fromHistory(h: HistoryEntry, i: number): LogEntry {
@@ -1306,11 +1324,12 @@ export function chatScreen(): Screen {
       })
       const qm = document.createElement('nav')
       qm.className = 'quickmenu'
+      // On a phone only LOG, AUTO, SLACK, STOP and ⋯ show (chat.css): fewer, bigger buttons; ⋯ opens the rest.
       qm.innerHTML = [
-        ['panels', 'PANELS', 'Status, quests and actions'], ['log', 'LOG', 'Backlog (Ctrl+O)'], ['auto', 'AUTO', 'Auto-advance'], ['mode', 'MODE', 'Permission mode (Shift+Tab)'],
+        ['log', 'LOG', 'Backlog (Ctrl+O)'], ['auto', 'AUTO', 'Auto-advance'], ['mode', 'MODE', 'Permission mode (Shift+Tab)'],
         ['cmd', 'CMD', 'Commands (/)'], ['stop', 'STOP', 'Interrupt (Esc)'], ['slack', 'SLACK', 'Slack inbox (/slack)'], ['costume', '👗', 'Costume (/costume)'],
         ['focus', 'FOCUS', 'Focus mode: just the prompt and replies (/focus · Ctrl+Shift+F)'], ['settings', '⚙', 'Settings (/config)'],
-        ['menu', 'MENU', 'Back to the title'],
+        ['menu', 'MENU', 'Back to the title'], ['more', '⋯', 'More'],
       ].map(([id, label, tip]) => `<button type="button" data-test="qm-${id}" title="${tip}">${label}</button>`).join('')
       dlgEl.append(qm)
       autoBtn = qm.querySelector('[data-test="qm-auto"]')!
@@ -1325,12 +1344,7 @@ export function chatScreen(): Screen {
       slackBadge()
       applyFocus()
       const qmActions: Record<string, () => void> = {
-        // Portrait only (a phone): the side panels slide over her instead of standing beside her.
-        panels() {
-          const open = root.dataset.panels !== 'open'
-          root.dataset.panels = open ? 'open' : ''
-          qm.querySelector('[data-test="qm-panels"]')!.classList.toggle('on', open)
-        },
+        more: openMore,
         log: openLog,
         auto() {
           auto = !auto
@@ -1355,10 +1369,100 @@ export function chatScreen(): Screen {
       // Enter or Space never presses AUTO or Restart again.
       dlgEl.addEventListener('mousedown', (e) => (e.target as HTMLElement).closest('button') && e.preventDefault())
       dlgEl.addEventListener('click', (e) => {
+        // A swipe on the box (below) is not a tap.
+        if (swiped) return void (swiped = false)
         if ((e.target as HTMLElement).closest('button, a, details') || getSelection()?.toString()) return
         dialogue.advance()
-        if (!layers.length) input.focus()
+        // On a touch screen focusing the composer would bring the keyboard up at every tap.
+        if (!layers.length && !touched) input.focus()
       })
+
+      // ---------------------------------------------------------------- phone: the ⋯ sheet, panel tabs, gestures
+      // On a phone (portrait) the side panels don't fit beside her: Status, Quests and Actions are tabs of one
+      // sheet over her, ⋯ holds what the quick menu leaves out, and the text box takes two swipes.
+
+      let touched = false
+      let swiped = false
+      let swipeFrom: { x: number; y: number; t: number } | undefined
+      const isPortrait = () => document.getElementById('stage')?.dataset.orient === 'portrait'
+      dlgEl.addEventListener('pointerdown', (e) => (touched = e.pointerType !== 'mouse'))
+      // Touch events, not pointer events: a vertical finger move starts a scroll, which cancels the pointer events.
+      dlgEl.addEventListener('touchstart', (e) => {
+        swiped = false
+        const t = e.touches[0]
+        swipeFrom = t && e.touches.length === 1 && isPortrait() && !(e.target as HTMLElement).closest('button, a')
+          ? { x: t.clientX, y: t.clientY, t: performance.now() }
+          : undefined
+      }, { passive: true })
+      dlgEl.addEventListener('touchend', (e) => {
+        const from = swipeFrom
+        swipeFrom = undefined
+        const t = e.changedTouches[0]
+        if (!from || !t) return
+        const dx = t.clientX - from.x
+        const dy = t.clientY - from.y
+        if (performance.now() - from.t > SWIPE_MS || Math.abs(dy) < SWIPE_PX || Math.abs(dy) < Math.abs(dx) * SWIPE_STRAIGHT) return
+        // A long page scrolls first: a swipe only counts once the text is at that end.
+        const text = dlgEl.querySelector<HTMLElement>('.dlg-text')
+        if (text && (dy < 0 ? text.scrollTop + text.clientHeight < text.scrollHeight - 2 : text.scrollTop > 2)) return
+        swiped = true
+        if (dy < 0) openLog()
+        else hideUi(true)
+      })
+
+      // Swipe down hides everything but her; a tap anywhere brings it back without advancing the text.
+      const unhide = document.createElement('div')
+      unhide.className = 'unhide'
+      unhide.dataset.test = 'unhide'
+      root.append(unhide)
+      unhide.addEventListener('click', (e) => (e.stopPropagation(), hideUi(false)))
+      function hideUi(on: boolean) {
+        if (on === (root.dataset.hidden === 'on')) return
+        root.dataset.hidden = on ? 'on' : ''
+        if (on) pushLayer({ el: unhide, close: () => hideUi(false) })
+        else dropLayer(unhide)
+      }
+
+      const panelTabs = document.createElement('nav')
+      panelTabs.className = 'ptabs'
+      panelTabs.dataset.test = 'panel-tabs'
+      panelTabs.innerHTML = PANEL_TABS.map(([id, label]) => `<button type="button" data-tab="${id}" data-test="ptab-${id}">${label}</button>`).join('')
+        + '<button type="button" class="pclose" data-tab="close" data-test="ptab-close" aria-label="Close">✕</button>'
+      root.append(panelTabs)
+      panelTabs.addEventListener('click', (e) => {
+        const tab = (e.target as HTMLElement).closest<HTMLElement>('[data-tab]')?.dataset.tab
+        if (tab === 'close') return closePanels()
+        if (tab === 'slack') return closePanels(), slackCommand(menuHost())
+        if (tab) openPanels(tab as PanelTab)
+      })
+      function openPanels(tab: PanelTab) {
+        const wasOpen = !!root.dataset.panels
+        root.dataset.panels = tab
+        for (const b of panelTabs.querySelectorAll<HTMLElement>('[data-tab]')) b.classList.toggle('on', b.dataset.tab === tab)
+        if (!wasOpen) pushLayer({ el: panelTabs, close: closePanels })
+      }
+      function closePanels() {
+        if (!root.dataset.panels) return
+        root.dataset.panels = ''
+        dropLayer(panelTabs)
+      }
+
+      function openMore() {
+        const m = modal({
+          test: 'qm-sheet',
+          title: 'More',
+          cls: 'sheet',
+          body: `<div class="sheet-grid">${MORE_ITEMS.map(([id, icon, label]) =>
+            `<button type="button" class="btn" data-id="${id}" data-test="more-${id}"><span>${icon}</span>${label}</button>`).join('')}</div>`,
+        })
+        m.el.querySelector('.sheet-grid')!.addEventListener('click', (e) => {
+          const id = (e.target as HTMLElement).closest<HTMLElement>('[data-id]')?.dataset.id
+          if (!id) return
+          m.close()
+          if (id === 'status' || id === 'quests' || id === 'actions') openPanels(id)
+          else qmActions[id]?.()
+        })
+      }
 
       panels = createPanels(root.querySelector('.chat-left')!, root.querySelector('.chat-right')!, {
         openModels,
