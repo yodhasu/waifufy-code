@@ -5,8 +5,9 @@ edition = "2021"
 
 [lib]
 name = "waifufy_code_lib"
-# staticlib and cdylib are what the Android build links; rlib is the desktop binary's.
-crate-type = ["staticlib", "cdylib", "rlib"]
+# The desktop binary only needs rlib: a cdylib built for windows-gnu fails to link ("export ordinal too large").
+# The Android build adds staticlib and cdylib for its run (scripts/build-android.mjs).
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
