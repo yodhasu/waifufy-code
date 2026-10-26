@@ -10,6 +10,7 @@ import { esc, fmtK } from '../ui'
 import { createAsks, type Asks } from './asks'
 import { APP_COMMANDS, findAppCommand, runCli, type CommandHost } from './commands'
 import { openPalette, openShortcuts } from './commands/palette'
+import { slackCommand } from './commands/slack'
 import { control } from './control'
 import { doneVerb, duration, pickVerb, SPINNER_VERBS, thinkingStatus, verbList, type SpinnerVerbs } from './spinner'
 import './chat.css'
@@ -51,6 +52,7 @@ const PANEL_LINES: Record<string, (you: string) => string> = {
   diff: (you) => `Everything we changed, ${you}. Leave me a note on any file.`,
   rewind: (you) => `Shall we go back to an earlier moment, ${you}?`,
   palette: () => 'Anything you need, just type it.',
+  slack: (you) => `Messages from your colleagues, ${you}. Shall I answer any for you?`,
 }
 /** Below this much context left, she warns as the CLI does (its footer turns at 20%). */
 const CONTEXT_LOW_LEFT = 20
@@ -1273,12 +1275,21 @@ export function chatScreen(): Screen {
       qm.className = 'quickmenu'
       qm.innerHTML = [
         ['log', 'LOG', 'Backlog (Ctrl+O)'], ['auto', 'AUTO', 'Auto-advance'], ['mode', 'MODE', 'Permission mode (Shift+Tab)'],
-        ['cmd', 'CMD', 'Commands (/)'], ['stop', 'STOP', 'Interrupt (Esc)'], ['costume', '👗', 'Costume (/costume)'],
+        ['cmd', 'CMD', 'Commands (/)'], ['stop', 'STOP', 'Interrupt (Esc)'], ['slack', 'SLACK', 'Slack inbox (/slack)'], ['costume', '👗', 'Costume (/costume)'],
         ['focus', 'FOCUS', 'Focus mode: just the prompt and replies (/focus · Ctrl+Shift+F)'], ['settings', '⚙', 'Settings (/config)'],
         ['menu', 'MENU', 'Back to the title'],
       ].map(([id, label, tip]) => `<button type="button" data-test="qm-${id}" title="${tip}">${label}</button>`).join('')
       dlgEl.append(qm)
       autoBtn = qm.querySelector('[data-test="qm-auto"]')!
+      // SLACK carries how many conversations have unread messages, as the link's scan finds them.
+      const slackBtn = qm.querySelector<HTMLElement>('[data-test="qm-slack"]')!
+      const slackBadge = () => {
+        const n = ctx.slack.status().signedIn ? ctx.slack.unreadCount() : 0
+        slackBtn.dataset.badge = n ? String(n) : ''
+        slackBtn.title = n ? `Slack inbox (/slack): ${n} conversation${n === 1 ? '' : 's'} unread` : 'Slack inbox (/slack)'
+      }
+      ctx.slack.onChange(slackBadge)
+      slackBadge()
       applyFocus()
       const qmActions: Record<string, () => void> = {
         log: openLog,
@@ -1290,6 +1301,7 @@ export function chatScreen(): Screen {
         mode: cycleMode,
         cmd: openSlash,
         stop: () => void (interrupt() || ctx.toast(`${charName()} isn't working on anything right now`)),
+        slack: () => slackCommand(menuHost()),
         costume: openCostumes,
         focus: () => setFocus(!focusOn),
         settings: () => ctx.router.go('settings'),

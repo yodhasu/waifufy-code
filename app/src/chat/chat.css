@@ -546,3 +546,16 @@ html[data-focus='1'] .chat .chat-status .ribbon { display: none; }
 .chat [data-test='diff'] .diff-body { max-height: 42vh; }
 .chat [data-test='diff'] .dl.hunk { color: var(--accent); font-style: normal; padding: 2px 12px; }
 .chat [data-test='diff'] .dcomment { width: 100%; font-size: 13.5px; }
+
+/* Slack (/slack, chat/commands/slack.ts): the quick menu's unread badge, messages as rows that keep their line
+   breaks, and the writing box. */
+.chat .quickmenu [data-test='qm-slack'] { position: relative; }
+.chat .quickmenu [data-test='qm-slack']:not([data-badge=''])::after { content: attr(data-badge); position: absolute; top: -5px; right: -3px;
+  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--text-on-accent);
+  font: 700 10.5px/16px var(--font-mono); letter-spacing: 0; text-align: center; box-shadow: 0 0 6px var(--accent-glow); }
+.chat [data-test='slack'] .mrow .ml small { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 9.5em; }
+.chat [data-test='slack'] .mrow { align-items: start; }
+.chat [data-test='slack'] .mrow .mi, .chat [data-test='slack'] .mrow .mm { padding-top: 2px; }
+.chat .modal.slack-compose { width: min(640px, 80%); }
+.chat .modal.slack-compose textarea { width: 100%; resize: vertical; min-height: 120px; font-size: 15px; }
+.chat .modal.slack-compose .set-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 10px; }

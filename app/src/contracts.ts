@@ -2,6 +2,7 @@
 // talks to the others through these types (plus link/src/protocol.ts for the wire format).
 
 import type { ClientMsg, Costume, Emotion, ServerMsg, Settings } from '../../link/src/protocol.ts'
+import type { Slack } from './slack'
 import type { Voice } from './voice'
 
 // ---------------------------------------------------------------- link (app/src/link.ts)
@@ -85,6 +86,8 @@ export type Ctx = {
   router: Router
   /** Her voice (app/src/voice.ts). */
   voice: Voice
+  /** The Slack sign-in and unread inbox (app/src/slack.ts). */
+  slack: Slack
   /** Shows a transient message at the top of the stage. */
   toast(text: string, ms?: number): void
   /** A VN-style yes/no dialog; resolves true for yes. */

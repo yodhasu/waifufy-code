@@ -97,6 +97,13 @@ export function describeTool(name: string, input: Record<string, unknown>, cwd?:
       return oneLine(`${str(input.pattern)}${input.path ? ` in ${path(input.path)}` : ''}`)
     case 'WebFetch':
       return oneLine(str(input.url))
+    case 'mcp__waifufy-slack__read':
+    case 'mcp__waifufy-slack__mark_read':
+      return oneLine(`${str(input.channel)}${input.thread_ts ? ` · thread ${str(input.thread_ts)}` : ''}`)
+    case 'mcp__waifufy-slack__send':
+      return oneLine(`${str(input.channel)}: ${str(input.text)}`)
+    case 'mcp__waifufy-slack__search':
+      return oneLine(str(input.query))
     case 'WebSearch':
     case 'ToolSearch':
       return oneLine(str(input.query))

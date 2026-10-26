@@ -17,6 +17,7 @@ import { deleteSave, errorText, getSave, isSaveId, listSaves, loadHistory, remem
 import type { SessionApi, SessionFactory } from './session-api.ts'
 import { createSession } from './session.ts'
 import { DATA_DIR, loadSettings, saveSettings } from './settings.ts'
+import * as slack from './slack.ts'
 import { acceptTrust, isTrusted, trustConcerns } from './trust.ts'
 
 // The Tauri app starts this process with a free port and a token, and closes stdin when it quits.
@@ -176,6 +177,15 @@ function broadcast(m: ServerMsg, except?: WebSocket) {
 
 const auth = createAuth(claudePath, (a) => broadcast({ t: 'auth', auth: a }))
 void auth.refresh()
+
+slack.onStatus((status) => broadcast({ t: 'slack_status', status }))
+slack.onInbox((inbox) => broadcast({ t: 'slack_inbox', inbox }))
+slack.startSlack()
+
+/** Answers a Slack request on its own time, so a slow scan never holds up the messages behind it. */
+function slackReply(ws: WebSocket, work: () => Promise<ServerMsg>, failed: (error: string) => ServerMsg) {
+  void work().then((m) => sendTo(ws, m), (e) => sendTo(ws, failed(errorText(e))))
+}
 
 /** Settings writes run one at a time and re-read the file, so a lastDir or preset write never undoes a settings_set. */
 let settingsWrites: Promise<unknown> = Promise.resolve()
@@ -414,7 +424,7 @@ async function handle(ws: WebSocket, m: ClientMsg) {
           void closeCurrent()
         }
       }
-      return sendTo(ws, { t: 'hello', version: VERSION, settings: await loadSettings(), auth: await auth.get(), dataDir: DATA_DIR, voiceKey: hasVoiceKey() })
+      return sendTo(ws, { t: 'hello', version: VERSION, settings: await loadSettings(), auth: await auth.get(), dataDir: DATA_DIR, voiceKey: hasVoiceKey(), slack: slack.status() })
     case 'settings_set': {
       need(m.settings && typeof m.settings === 'object' && m.settings.version === 1, 'settings')
       await updateSettings(() => m.settings)
@@ -533,6 +543,44 @@ async function handle(ws: WebSocket, m: ClientMsg) {
         // A form that doesn't fit the schema stays open; the reason goes back to the app.
         throw new BadRequest(e instanceof Error ? e.message : String(e))
       }
+    case 'slack_signin':
+      need(isStr(m.clientId) && m.clientId.length < KEY_MAX, 'clientId')
+      // Runs until the browser comes back (or times out); slack_status reports how it went.
+      void slack.signIn(m.clientId, open)
+      return
+    case 'slack_signin_cancel':
+      return slack.cancelSignIn()
+    case 'slack_signout':
+      return slack.signOut()
+    case 'slack_inbox':
+      if (m.refresh === true) slack.refreshInbox()
+      // With the status too: a window that reconnected after a link restart missed the pushes.
+      sendTo(ws, { t: 'slack_status', status: slack.status() })
+      return sendTo(ws, { t: 'slack_inbox', inbox: slack.inbox() })
+    case 'slack_convs':
+      return slackReply(ws, async () => ({ t: 'slack_convs', convs: await slack.allConversations() }), (error) => ({ t: 'slack_convs', convs: [], error }))
+    case 'slack_history': {
+      need(isStr(m.id) && isStr(m.channel) && optStr(m.thread), 'id, channel, thread')
+      const { id, channel, thread } = m
+      return slackReply(
+        ws,
+        async () => {
+          const h = await slack.history(channel, thread)
+          return { t: 'slack_history', id, channel: h.conv.id, name: h.conv.name, messages: h.messages, ...(h.lastRead ? { lastRead: h.lastRead } : {}) }
+        },
+        (error) => ({ t: 'slack_history', id, channel, error }),
+      )
+    }
+    case 'slack_mark':
+      need(isStr(m.channel) && isStr(m.ts), 'channel, ts')
+      // A failure only means the badge stays; the inbox's next scan has the truth either way.
+      void slack.markRead(m.channel, m.ts).catch((e) => console.warn('[slack] mark read failed:', errorText(e)))
+      return
+    case 'slack_send': {
+      need(isStr(m.id) && isStr(m.channel) && isStr(m.text) && optStr(m.thread), 'id, channel, text, thread')
+      const { id, channel, text, thread } = m
+      return slackReply(ws, async () => (await slack.send(channel, text, thread), { t: 'slack_sent', id, ok: true }), (error) => ({ t: 'slack_sent', id, ok: false, error }))
+    }
     default:
       throw new BadRequest(`Unknown message type: ${String((m as { t?: unknown }).t)}`)
   }

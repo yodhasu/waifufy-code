@@ -127,6 +127,12 @@ export type VoiceSettings = {
   styleNotes: string
 }
 
+/** Slack (link/src/slack.ts). The tokens live in the link's own file, never here. */
+export type SlackSettings = {
+  /** Client ID of the workspace's own Slack app (link/src/slack-app.ts); '' until set up. Not a secret. */
+  clientId: string
+}
+
 export type MotionSettings = {
 
   /** Typewriter characters per second; 0 = instant. Default 14 (speech pace, ~150 wpm). */
@@ -161,6 +167,7 @@ export type Settings = {
   motion: MotionSettings
   claude: ClaudeSettings
   voice: VoiceSettings
+  slack: SlackSettings
   /** Last folder a session was started in. */
   lastDir: string
 }
@@ -250,6 +257,55 @@ export type Auth = { loggedIn: boolean; email?: string; subscription?: string; m
 
 export type Image = { mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; data: string }
 
+// ---------------------------------------------------------------- slack
+
+/** Whether the link is signed in to Slack, and as whom. */
+export type SlackStatus = {
+  signedIn: boolean
+  /** A sign-in is waiting on the browser. */
+  signingIn: boolean
+  team?: string
+  user?: string
+  /** The workspace's web address, like https://covena.slack.com/. */
+  url?: string
+  /** Why the last sign-in failed, or why the link was signed out (a revoked token). */
+  error?: string
+}
+
+export type SlackConvKind = 'dm' | 'group' | 'channel' | 'private'
+
+/** A conversation the signed-in person is in. `unread`: counted up to `UNREAD_PEEK`, with `more` past it. */
+export type SlackConv = {
+  id: string
+  /** `#general`, a person's name for a DM, the members for a group DM. */
+  name: string
+  kind: SlackConvKind
+  unread: number
+  more: boolean
+  /** An unread message mentions the person. */
+  mention: boolean
+  /** The newest unread message, one line. */
+  preview?: { user: string; text: string; ts: string }
+}
+
+/**
+ * The unread inbox, rebuilt as the link scans every conversation in turn (Slack has no public unread-count call
+ * for channels). `convs` holds only conversations with unread messages, DMs first, newest first.
+ */
+export type SlackInbox = { convs: SlackConv[]; scanned: number; total: number; updatedAt: number }
+
+export type SlackMessage = {
+  ts: string
+  user: string
+  /** Plain text: mentions, channels and links already turned into names. */
+  text: string
+  mine: boolean
+  /** Replies in its thread (on the parent message only). */
+  replies?: number
+  /** Names of attached files. */
+  files?: string[]
+}
+
 // ---------------------------------------------------------------- client → link
 
 export type ClientMsg =
@@ -304,6 +360,23 @@ export type ClientMsg =
   | { t: 'elicit'; id: string; action: 'accept' | 'decline' | 'cancel'; content?: Record<string, ElicitValue> }
   /** Calls one of the running session's SDK controls (CTL_OPS) with positional `args`; answered with `ctl_result`. */
   | { t: 'ctl'; id: string; op: CtlOp; args?: unknown[] }
+  /**
+   * Starts the Slack sign-in in the browser with the workspace app's `clientId` (sent along, since the settings
+   * save is debounced); `slack_status` follows its progress.
+   */
+  | { t: 'slack_signin'; clientId: string }
+  | { t: 'slack_signin_cancel' }
+  | { t: 'slack_signout' }
+  /** Answered with `slack_status` and `slack_inbox`; `refresh` also starts a rescan of every conversation. */
+  | { t: 'slack_inbox'; refresh?: boolean }
+  /** Every conversation the person is in (to read one with nothing unread); answered with `slack_convs`. */
+  | { t: 'slack_convs' }
+  /** A conversation's latest messages, or a thread's; answered with `slack_history` with the same id. */
+  | { t: 'slack_history'; id: string; channel: string; thread?: string }
+  /** Marks the conversation read up to `ts`. */
+  | { t: 'slack_mark'; channel: string; ts: string }
+  /** Posts as the signed-in person, in the thread `thread` when given; answered with `slack_sent`. */
+  | { t: 'slack_send'; id: string; channel: string; text: string; thread?: string }
 
 /**
  * The running session's SDK controls the app may call directly: `Query` methods, by name. They back the in-app
@@ -379,7 +452,7 @@ export type SessionEvent =
   | { t: 'hook'; id: string; name: string; event: string; state: 'running' | 'ok' | 'error' | 'cancelled'; output?: string }
 
 export type ServerMsg =
-  | { t: 'hello'; version: string; settings: Settings; auth: Auth; dataDir: string; voiceKey: boolean }
+  | { t: 'hello'; version: string; settings: Settings; auth: Auth; dataDir: string; voiceKey: boolean; slack: SlackStatus }
   /** One clip: base64 audio, or why there is none. */
   | { t: 'tts'; id: string; audio?: string; mime?: string; error?: string }
   /** Whether a Fish Audio key is stored now (after voice_key, to every window). */
@@ -400,6 +473,14 @@ export type ServerMsg =
   | { t: 'app_error'; message: string }
   /** The answer to a `ctl`: the SDK call's result, or its error message. */
   | { t: 'ctl_result'; id: string; ok: boolean; data?: unknown; error?: string }
+  /** To every window, whenever it changes. */
+  | { t: 'slack_status'; status: SlackStatus }
+  /** To every window as the scan finds changes, and to a `slack_inbox` request. */
+  | { t: 'slack_inbox'; inbox: SlackInbox }
+  | { t: 'slack_convs'; convs: SlackConv[]; error?: string }
+  /** Oldest first. `lastRead`: the person's read cursor in the conversation, when Slack gives one. */
+  | { t: 'slack_history'; id: string; channel: string; name?: string; messages?: SlackMessage[]; lastRead?: string; error?: string }
+  | { t: 'slack_sent'; id: string; ok: boolean; error?: string }
 
 /** One input of an MCP elicitation form, from a property of its requested JSON schema. */
 export type ElicitField = {

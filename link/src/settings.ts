@@ -93,6 +93,7 @@ export function defaultSettings(): Settings {
       subtitles: true,
       styleNotes: REM_VOICE_STYLE,
     },
+    slack: { clientId: '' },
     lastDir: '',
   }
 }

@@ -15,6 +15,7 @@ import { pluginCommand } from './plugin'
 import { rewindCommand } from './rewind'
 import { settingsCommand } from './settings-panel'
 import { skillsCommand } from './skills'
+import { slackCommand } from './slack'
 import { tasksCommand } from './tasks'
 
 // The slash commands the app answers itself. They come first in the picker and replace SDK rows of the same
@@ -97,6 +98,8 @@ export const APP_COMMANDS: AppCommand[] = [
   { name: 'export', aliases: [], hint: '[filename]', describe: () => 'Export the current conversation to a file or clipboard', run: exportCommand },
   { name: 'copy', aliases: [], hint: '[N]', describe: (w) => `Copy ${w}'s last response to clipboard (or /copy N for the Nth-latest)`, run: exportCommand },
   { name: 'costume', aliases: ['outfit'], hint: '', describe: (w) => `Change ${w}'s outfit` },
+  // Not a CLI command: the app's own Slack inbox (app/src/chat/commands/slack.ts).
+  { name: 'slack', aliases: ['inbox'], hint: '', describe: () => 'Read and answer your unread Slack messages', run: slackCommand },
   { name: 'help', aliases: [], hint: '', describe: () => 'Commands and keyboard shortcuts' },
   { name: 'exit', aliases: ['quit'], hint: '', describe: () => 'Back to the title screen' },
   { name: 'login', aliases: [], hint: '', describe: () => 'Log in to Claude Code (opens a console window)' },

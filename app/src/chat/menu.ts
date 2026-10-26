@@ -38,6 +38,8 @@ export type MenuScreen = {
   notes?: string[]
   /** Type-to-filter rows by label, meta and hint. */
   search?: boolean
+  /** The row focused when the screen opens (a conversation's first unread message); else the first row. */
+  focus?: string
   /**
    * What picking a row does. Return a screen to open it on top (Esc comes back here), 'refresh' to redraw this
    * screen from `reload`, 'back' to return to the screen below (rebuilt from its `reload`), 'close' to close the
@@ -170,7 +172,7 @@ export function openMenu(host: MenuHost, test: string, first: MenuScreen | Promi
   function push(s: MenuScreen) {
     if (!stack.length && !s.voice) s.voice = host.voiceFor?.(test)
     if (top()) top()!.focus = focused() ?? top()!.focus
-    stack.push({ screen: s, focus: undefined, query: '' })
+    stack.push({ screen: s, focus: s.focus, query: '' })
     draw()
   }
 

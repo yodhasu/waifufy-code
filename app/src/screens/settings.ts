@@ -8,6 +8,7 @@ import type {
 } from '../../../link/src/protocol.ts'
 import { addressOf } from '../../../link/src/address.ts'
 import { DEFAULT_VOICE_ID, REM_VOICE_STYLE } from '../../../link/src/voice-style.ts'
+import { SLACK_MANIFEST, SLACK_REDIRECT_URL } from '../../../link/src/slack-app.ts'
 import type { Ctx, Screen } from '../contracts'
 import { esc } from '../ui'
 import { CUSTOM_PERSONALITY, PERSONALITIES, personalityById } from './personas'
@@ -23,6 +24,7 @@ const TABS = [
   { id: 'motion', label: 'Text & Motion', icon: '♪', blurb: 'How fast she talks and how alive she feels.' },
   { id: 'claude', label: 'Claude', icon: '⚙', blurb: 'Defaults for new sessions, passed straight to Claude Code.' },
   { id: 'voice', label: 'Voice', icon: '♫', blurb: 'Her spoken voice through Fish Audio, in sync with the text and her lips.' },
+  { id: 'slack', label: 'Slack', icon: '✉', blurb: 'Your unread Slack messages in the chat, and Slack tools for her.' },
   { id: 'about', label: 'About', icon: '❦', blurb: 'Version, your data, and credits.' },
 ] as const
 type TabId = (typeof TABS)[number]['id']
@@ -201,6 +203,7 @@ const TAB_LINES: Record<TabId, [string, Emotion]> = {
   motion: ['Is this pace comfortable, {you}? I can speak faster… or slower, just for you.', 'smile'],
   claude: ['These go straight to Claude Code. I\'ll use them from the next session.', 'nod'],
   voice: ['My voice… is still a secret. Soon, {you}!', 'shy'],
+  slack: ['I can keep an eye on your messages, {you}. I\'ll only send what you approve.', 'nod'],
   about: ['Thank you for choosing me, {you}.', 'happy'],
 }
 const SPEED_SAMPLE = 'Ah, {you}! Is this pace comfortable? I can speak faster, slower… or all at once, if you like.'
@@ -654,6 +657,47 @@ function voicePane() {
   </div>`
 }
 
+function slackPane() {
+  return `<div class="set-cols">
+    ${card(
+      'Slack',
+      `<p class="set-voice-status" data-slack-status data-test="slack-status"></p>` +
+        row('Client ID', text('slack.clientId', 'placeholder="From the app\'s Basic Information page" autocomplete="off"'), 'Not a secret: sign-in uses PKCE') +
+        `<div class="set-actions">
+          <button class="btn primary" type="button" data-act="slack-signin" data-test="set-slack.signin">Sign in with Slack</button>
+          <button class="btn" type="button" data-act="slack-cancel" data-test="set-slack.cancel" hidden>Cancel</button>
+          <button class="btn" type="button" data-act="slack-signout" data-test="set-slack.signout">Sign out</button>
+        </div>` +
+        note('Signing in opens Slack in your browser. The sign-in is kept by the app, never in settings. In the chat, <b>SLACK</b> (or <code>/slack</code>) opens your unread messages.'),
+      'wide',
+    )}
+    ${card(
+      'Set up the app (once per workspace)',
+      `<ol class="set-steps">
+        <li>Open <code>api.slack.com/apps</code> → <b>Create New App</b> → <b>From a manifest</b>, and pick your workspace.</li>
+        <li>Paste this manifest and create the app.</li>
+        <li>On its <b>Basic Information</b> page, copy the <b>Client ID</b> into the field above. No secret, no install step: signing in installs it for you.</li>
+      </ol>
+      <pre class="set-persona" data-test="slack-manifest">${esc(SLACK_MANIFEST)}</pre>
+      <div class="set-actions">
+        <button class="btn" type="button" data-act="slack-copy-manifest" data-test="set-slack.copy">Copy manifest</button>
+        <button class="btn" type="button" data-act="slack-apps" data-test="set-slack.apps">Open api.slack.com/apps</button>
+      </div>` +
+        note(`Your own app keeps Slack's normal limits; a shared one would be held to one history read a minute. If your workspace restricts apps, an admin may need to approve it. Sign-in returns to <code>${esc(SLACK_REDIRECT_URL)}</code>, so that port must be free.`),
+      'wide',
+    )}
+    ${card(
+      'What she can do',
+      `<ul class="set-credits">
+        <li>Read your unread conversations, any conversation or thread, and search, without asking.</li>
+        <li>Mark conversations read.</li>
+        <li><b>Send messages as you only after you approve each one</b>, in every permission mode.</li>
+      </ul>` + note('Her Slack tools join from the next session after you sign in. Messages are never saved by the app.'),
+      'wide',
+    )}
+  </div>`
+}
+
 function aboutPane() {
   return `<div class="set-cols">
     ${card(
@@ -683,7 +727,7 @@ function aboutPane() {
 
 const PANES: Record<TabId, () => string> = {
   you: youPane, waifu: waifuPane, roleplay: roleplayPane, appearance: appearancePane, motion: motionPane, claude: claudePane,
-  voice: voicePane, about: aboutPane,
+  voice: voicePane, slack: slackPane, about: aboutPane,
 }
 
 // ---------------------------------------------------------------- screen
@@ -1309,6 +1353,24 @@ export function settingsScreen(): Screen {
     q<HTMLButtonElement>('[data-act="voice-test"]').disabled = !key || !s.voice.voiceId.trim()
   }
 
+  /** Whether Slack is signed in, and as whom; which buttons apply. */
+  function renderSlack() {
+    const el = root.querySelector<HTMLElement>('[data-slack-status]')
+    if (!el) return
+    const st = ctx.slack.status()
+    const state = st.signingIn ? 'waiting' : st.signedIn ? 'on' : 'off'
+    el.dataset.state = state === 'on' ? 'on' : 'off'
+    el.textContent = state === 'waiting'
+      ? '✉ Waiting for you to approve the sign-in in your browser…'
+      : state === 'on'
+        ? `✉ Signed in to ${st.team} as ${st.user}`
+        : `✉ Not signed in${st.error ? ` · ${st.error}` : ''}`
+    q<HTMLButtonElement>('[data-act="slack-signin"]').hidden = state === 'waiting'
+    q<HTMLButtonElement>('[data-act="slack-signin"]').textContent = state === 'on' ? 'Sign in again' : 'Sign in with Slack'
+    q<HTMLButtonElement>('[data-act="slack-cancel"]').hidden = state !== 'waiting'
+    q<HTMLButtonElement>('[data-act="slack-signout"]').disabled = state !== 'on'
+  }
+
   /** Speaks the sample line through the link, with her lips on it, and says why when it can't. */
   async function testVoice() {
     const s = ctx.store.get()
@@ -1345,6 +1407,7 @@ export function settingsScreen(): Screen {
     for (const el of qa('[data-out]')) el.textContent = FORMAT[el.dataset.out!]?.(Number(getAt(s, el.dataset.out!))) ?? ''
     for (const g of qa('[data-seg]')) paintSeg(g, s)
     renderVoice(s)
+    renderSlack()
     for (const el of qa('[data-when]')) {
       const [path, v] = el.dataset.when!.split('=')
       el.hidden = String(getAt(s, path)) !== v
@@ -1496,6 +1559,23 @@ export function settingsScreen(): Screen {
       case 'card-save':
         flushCard()
         return ctx.toast('Saved to your preset library.')
+      case 'slack-signin': {
+        const id = ctx.store.get().slack.clientId.trim()
+        if (!id) return ctx.toast('Paste the Slack app\'s client ID first (step 3 below).')
+        return ctx.slack.signIn(id)
+      }
+      case 'slack-cancel':
+        return ctx.slack.cancelSignIn()
+      case 'slack-signout':
+        ctx.slack.signOut()
+        return ctx.toast('Signed out of Slack.')
+      case 'slack-copy-manifest':
+        return navigator.clipboard.writeText(SLACK_MANIFEST).then(
+          () => ctx.toast('Manifest copied. Paste it at api.slack.com/apps.'),
+          () => ctx.toast('Couldn\'t copy the manifest; select it and copy by hand.'),
+        )
+      case 'slack-apps':
+        return ctx.link.send({ t: 'open', target: 'https://api.slack.com/apps' })
       case 'copy-source':
         return navigator.clipboard.writeText(el.dataset.url ?? '').then(
           () => ctx.toast('Link copied.'),
@@ -1599,6 +1679,14 @@ export function settingsScreen(): Screen {
       root.addEventListener('click', onClick)
       addEventListener('keydown', onKey)
       ctx.link.on(onServer)
+      // A finished sign-in is the one change she reacts to; the rest only repaints the status.
+      let slackWas = ctx.slack.status().signedIn
+      ctx.slack.onChange(() => {
+        const now = ctx.slack.status().signedIn
+        if (visible && now && !slackWas) react('happy')
+        slackWas = now
+        if (visible) renderSlack()
+      })
       // A restarted link (R24) forgets the research it was running, so no result or error will ever come.
       ctx.link.onStatus((status) => {
         if (status !== 'down') return

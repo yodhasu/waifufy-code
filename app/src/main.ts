@@ -11,6 +11,7 @@ import { settingsScreen } from './screens/settings'
 import { titleScreen } from './screens/title'
 import { wizardScreen } from './screens/wizard'
 import { applyAppearance, createStore } from './state'
+import { createSlack } from './slack'
 import { createVoice } from './voice'
 
 const STAGE_W = 1600
@@ -145,7 +146,8 @@ const router: Router = {
 }
 
 const voice = createVoice(link, store, greeting.voiceKey === true)
-const ctx: Ctx = { link, store, character, router, voice, toast, confirm: confirmDialog, pickFolder, pickImages }
+const slack = createSlack(link, greeting.slack)
+const ctx: Ctx = { link, store, character, router, voice, slack, toast, confirm: confirmDialog, pickFolder, pickImages }
 for (const [name, screen] of Object.entries(screens)) screen.mount(document.getElementById(`screen-${name}`)!, ctx)
 
 // WebView2 keeps the browser's reload keys. Reloading would drop the page's session (the link closes it), so they

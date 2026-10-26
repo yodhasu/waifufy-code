@@ -41,6 +41,8 @@ import {
 } from './protocol.ts'
 import type { SessionApi, SessionFactory, SessionOptions } from './session-api.ts'
 import { addressOf } from './settings.ts'
+import { status as slackStatus } from './slack.ts'
+import { SLACK_SERVER, SLACK_TOOL_NAMES, slackServer, type SendVerdict } from './slack-tools.ts'
 import { bashModeMessages, childEnv, runShell } from './shell.ts'
 import { ANSI, buildDiffs, clip, describeTool, isDestructive, prettyInput, str, toolLabel, toolOutput } from './tools.ts'
 
@@ -548,7 +550,49 @@ class Session implements SessionApi {
       stderr: (d) => this.onStderr(d),
       canUseTool: (name, input, o) => this.ask(name, input, o),
       onElicitation: (request, o) => this.elicit(request, o.signal),
+      // Her Slack tools, while the app is signed in to Slack (signing in mid-session adds them from the next one).
+      // They skip the CLI's prompt: reading needs no approval, and `send` asks the person itself, in every mode.
+      ...(slackStatus().signedIn
+        ? { mcpServers: { [SLACK_SERVER]: slackServer((o) => this.confirmSend(o)) }, allowedTools: SLACK_TOOL_NAMES }
+        : {}),
     }
+  }
+
+  /** A Slack send waits on the person: the same choice menu as a permission prompt, with no "don't ask again". */
+  private confirmSend(o: { to: string; text: string; thread?: string }): Promise<SendVerdict> {
+    if (this.ended) return Promise.resolve({ ok: false, message: 'The session ended; nothing was sent.' })
+    const id = randomUUID()
+    const choices: PermOptions['choices'] = [
+      { id: 'send', label: 'Yes, send it', decision: 'allow' },
+      { id: 'no', label: 'No, don\'t send it', decision: 'deny' },
+      { id: 'change', label: 'No, and tell her what to change', decision: 'feedback' },
+    ]
+    return new Promise<SendVerdict>((resolve) => {
+      this.pending.set(id, {
+        kind: 'permission',
+        input: {},
+        canAlways: false,
+        choices,
+        resolve: (r) => resolve(r.behavior === 'allow'
+          ? { ok: true }
+          // Unlike a denied tool, a declined send doesn't stop her turn: the answer (or the person's note) is the tool's result.
+          : { ok: false, message: r.message === DENY_MESSAGE ? 'The user declined; nothing was sent. Don\'t retry unless they ask.' : r.message }),
+      })
+      this.emit({
+        t: 'ask_permission',
+        id,
+        tool: 'Slack',
+        title: `Send this to ${o.to} as you?`,
+        detail: `${o.to}${o.thread ? ` · thread ${o.thread}` : ''}`,
+        diffs: [],
+        canAlways: false,
+        danger: false,
+        defaultToNo: false,
+        input: o.text,
+        question: `Send this Slack message as you, to ${o.to}${o.thread ? ' (in the thread)' : ''}?`,
+        choices: choices.map(({ id: cid, label, decision }) => ({ id: cid, label, decision })),
+      })
+    })
   }
 
   say(text: string, images: Image[] = [], now = false, mood?: Mood) {

@@ -230,3 +230,5 @@
 .set-credits { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; list-style: '✦  '; font-size: 13.5px; line-height: 1.5; color: var(--text-soft); }
 .set-credits li::marker { color: var(--gold); }
 .set-credits b { color: var(--text); }
+.set-steps { margin: 0 0 10px; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; line-height: 1.5; color: var(--text-soft); }
+.set-steps b { color: var(--text); }

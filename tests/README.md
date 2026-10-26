@@ -5,6 +5,7 @@ Everything here runs without spending plan budget, except `e2e/real.mjs`, which 
 | What | Command | Needs |
 |---|---|---|
 | Mock session unit check | `node tests/unit/mock.test.mjs` | Node 24 |
+| Slack service unit check (mock workspace) | `node tests/unit/slack.test.mjs` | Node 24 |
 | E2E suite (mock session) | `node tests/e2e/run.mjs` | a dev-config debug build (below), or Chrome/Edge for `WC_E2E_TARGET=browser` |
 | Part of the suite | `node tests/e2e/run.mjs chat R14` | files whose name contains `chat`, plus every test tagged R14 |
 | Strict run | `node tests/e2e/run.mjs --strict` | also fails when a requirement is skipped or has no test |
