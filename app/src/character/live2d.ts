@@ -10,6 +10,8 @@ import { first, indexMotions, isHold, resolvePose, type MotionIndex, type Motion
 //   motions and before the model is drawn; the engine restores the motion values right after each frame.
 // - The engine's own eye blink never runs while a motion plays, and its lip sync only runs with real audio.
 // - Parallel slots: act (body), face (head + expression, overrides the act's own face), add-on (head turns).
+// - Parameters keep their value between frames, and a new motion starts from them. Starting a motion stops the
+//   one in its slot at once, with no fade-out.
 
 /** Her whole body is this many box heights tall at zoom 1, so the box frames her from the knees up. */
 const BODY_FIT = 1.5
@@ -28,12 +30,15 @@ const ACT = 0
 const FACE = 1
 const ADDON = 2
 const SLOTS = 3
-// Seconds. Cubism's default fades are 0.5–1 s, which flattens a 0.7 s gesture into a slow morph.
-const SHOT_FADE_IN = 0.2
+// Seconds. Cubism's default fades are 0.5–1 s, which flattens a 0.7 s gesture into a slow morph. One-shots
+// don't fade in at all: they start from her current pose instead (see `retarget`).
 const SHOT_FADE_OUT = 0.3
 const HOLD_FADE_IN = 0.45
 const HOLD_FADE_OUT = 0.45
 const ADDON_FADE = 0.6
+// Cubism's CubismMotionCurveTarget_Parameter and CubismMotionSegmentType_Bezier (the engine doesn't export them).
+const CURVE_PARAMETER = 1
+const SEGMENT_BEZIER = 1
 
 const BLINK_MS = 150
 /** Share of a blink spent closing; opening is slower, as with real lids. */
@@ -242,23 +247,24 @@ async function rig(stage: Stage, model: Live2DModel, json: ModelJson, costume: s
   const slot = (n: number) => internal.parallelMotionManager[n]!
   const motions = internal.motionManager
 
-  type Prepared = { durationMs: number }
+  type Motion = NonNullable<Awaited<ReturnType<typeof motions.loadMotion>>>
+  type Prepared = { durationMs: number; motion: Motion }
   const prepared = new Map<string, Promise<Prepared | undefined>>()
-  /** Loads a motion once and sets its fades: holds blend in gently, gestures snap in. */
+  const isAddon = (ref: MotionRef) => ref.suffix.startsWith('add_')
+  /** Loads a motion once and sets its fades: holds blend in gently, gestures start from where she is. */
   function prepare(ref: MotionRef) {
     let p = prepared.get(ref.suffix)
     if (!p) {
       p = motions.loadMotion(ref.group, ref.index).then((m) => {
         if (!m) return undefined
-        const isAddon = ref.suffix.startsWith('add_')
         const hold = isHold(ref.suffix)
-        m.setFadeInTime(isAddon ? ADDON_FADE : hold ? HOLD_FADE_IN : SHOT_FADE_IN)
-        m.setFadeOutTime(isAddon ? ADDON_FADE : hold ? HOLD_FADE_OUT : SHOT_FADE_OUT)
+        m.setFadeInTime(isAddon(ref) ? ADDON_FADE : hold ? HOLD_FADE_IN : 0)
+        m.setFadeOutTime(isAddon(ref) ? ADDON_FADE : hold ? HOLD_FADE_OUT : SHOT_FADE_OUT)
         // By default every loop restart fades the motion in again from zero, which snaps the head back toward
         // the neutral pose once per loop (about every second on the short holds). Fade in once, then loop clean.
         m.setLoopFadeIn(false)
         // getDuration() is -1 for looping motions, and every Rem motion is marked as looping in its file.
-        return { durationMs: m.getLoopDuration() * 1000 }
+        return { durationMs: m.getLoopDuration() * 1000, motion: m }
       })
       prepared.set(ref.suffix, p)
     }
@@ -267,10 +273,12 @@ async function rig(stage: Stage, model: Live2DModel, json: ModelJson, costume: s
   // Warm every motion up front, so the first gesture doesn't wait on a fetch.
   for (const ref of index.values()) void prepare(ref)
 
-  function start(n: number, ref: MotionRef) {
+  function start(n: number, ref: MotionRef, motion: Motion) {
     const hold = isHold(ref.suffix)
     // A one-shot restarts even when it is the motion already playing (a second nod nods again).
     if (!hold) slot(n).stopAllMotions()
+    // Add-ons are constant frames like the holds: moving their start would turn the head turn into a slow ramp.
+    if (!hold && !isAddon(ref)) retarget(motion)
     return slot(n).startMotion(ref.group, ref.index, MotionPriority.FORCE, { loop: hold })
   }
 
@@ -304,6 +312,34 @@ async function rig(stage: Stage, model: Live2DModel, json: ModelJson, costume: s
   }
   internal.on('beforeModelUpdate', onBeforeUpdate)
 
+  // ---------------------------------------------------------------- retargeting
+  // Every one-shot is animated from the neutral pose (its curves start at 0) and ends on its hold's pose. Faded in
+  // from any other pose, it first swings her back toward neutral, which reads as a snap. So each start moves the
+  // first keyframe of every parameter curve to where that parameter is now, and the gesture plays out from her
+  // current pose. Motions are cached and shared, so the authored values are kept to offset from on each start.
+
+  const paramIndex = new Map(ids.map((id, i) => [id, i]))
+  /** Per motion: the authored value of each point index that retargeting moves. */
+  const authored = new WeakMap<Motion, number[]>()
+  function retarget(motion: Motion) {
+    const { curves, segments, points } = motion._motionData
+    let base = authored.get(motion)
+    if (!base) authored.set(motion, (base = []))
+    for (let c = 0; c < curves.getSize(); c++) {
+      const curve = curves.at(c)
+      if (curve.type !== CURVE_PARAMETER) continue
+      const param = paramIndex.get(curve.id.getString().s)
+      const segment = segments.at(curve.baseSegmentIndex)
+      // Stepped segments hold their start value until the next key; those stay as authored.
+      if (param === undefined || segment.segmentType > SEGMENT_BEZIER) continue
+      const p = segment.basePointIndex
+      const delta = core.getParameterValueByIndex(param) - (base[p] ??= points.at(p).value)
+      // A Bézier's first handle moves with its start, so the curve still leaves with its authored shape.
+      const moved = segment.segmentType === SEGMENT_BEZIER ? [p, p + 1] : [p]
+      for (const i of moved) points.at(i).value = (base[i] ??= points.at(i).value) + delta
+    }
+  }
+
   /** Bumped by every pose, so a pose still loading never lands after a newer one. */
   let token = 0
   // From here on the model fades as one picture. It starts out invisible; the caller fades it in.
@@ -320,10 +356,11 @@ async function rig(stage: Stage, model: Live2DModel, json: ModelJson, costume: s
       const r = resolvePose(index, p)
       if (!r) return -1
       const my = ++token
-      const [act] = await Promise.all([prepare(r.act), r.face && prepare(r.face)])
+      const [act, face] = await Promise.all([prepare(r.act), r.face && prepare(r.face)])
       if (my !== token || !act) return 0
-      void start(ACT, r.act)
-      if (r.face) void start(FACE, r.face)
+      // The act retargets from the face slot's head angles too, so dropping the face doesn't snap her head.
+      void start(ACT, r.act, act.motion)
+      if (r.face && face) void start(FACE, r.face, face.motion)
       else slot(FACE).stopAllMotions()
       return isHold(r.act.suffix) ? 0 : act.durationMs
     },
@@ -338,7 +375,7 @@ async function rig(stage: Stage, model: Live2DModel, json: ModelJson, costume: s
       if (!ref) return -1
       const m = await prepare(ref)
       if (!m) return -1
-      void start(ADDON, ref)
+      void start(ADDON, ref, m.motion)
       return m.durationMs
     },
 

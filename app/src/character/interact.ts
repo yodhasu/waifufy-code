@@ -86,11 +86,11 @@ export function createInteract(o: {
     return undefined
   }
 
-  // The engine aims from the middle of the canvas and always turns fully. Aim from her head instead, and
-  // scale the turn with distance so a cursor near her face reads as looking straight on.
+  // The engine aims from the middle of the canvas and always turns fully. Aim from her face instead (not the
+  // headpat point on her crown), and scale the turn with distance so a cursor near her face reads as straight on.
   function lookAt(a: Actor, g: Geometry, p: { x: number; y: number }) {
-    const dx = p.x - g.head.x
-    const dy = p.y - g.head.y
+    const dx = p.x - g.face.x
+    const dy = p.y - g.face.y
     const distance = Math.hypot(dx, dy)
     if (distance < 1) return focus(a, 0, 0)
     const strength = Math.min(1, distance / (g.head.r * FOCUS_RADII))

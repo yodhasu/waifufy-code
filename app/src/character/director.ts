@@ -10,8 +10,9 @@ import {
 
 /** Points in the character box's own pixels (the 864×900 box, before placement transforms). */
 export type Geometry = {
-  /** Where she looks from; also the center of the headpat zone, `r` its radius. */
+  /** The center of the headpat zone (her crown), `r` its radius. */
   head: { x: number; y: number; r: number }
+  /** Where she looks from (the tap zone around her eyes), `r` its radius. */
   face: { x: number; y: number; r: number }
   body: { x: number; y: number; rx: number; ry: number }
 }
