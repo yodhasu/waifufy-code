@@ -67,7 +67,15 @@ try {
     if (!apkBuilt) {
       mkdirSync(JNI, { recursive: true })
       copyFileSync(LIB, join(JNI, 'libwaifufy_code_lib.so'))
-      run('gradlew.bat assembleArm64Release -x rustBuildArm64Release -PabiList=arm64-v8a -ParchList=arm64 -PtargetList=aarch64 --console=plain', ANDROID, { shell: true })
+      // One JVM for everything (Kotlin compiles in-process, no daemon left behind): the lightest build, since a
+      // separate Kotlin daemon next to Gradle's has run a 16 GB machine out of memory.
+      // By full path: cmd doesn't always look in the current folder (NoDefaultCurrentDirectoryInExePath).
+      run(
+        `"${join(ANDROID, 'gradlew.bat')}" assembleArm64Release -x rustBuildArm64Release -PabiList=arm64-v8a -ParchList=arm64 -PtargetList=aarch64 `
+          + '-Pkotlin.compiler.execution.strategy=in-process --no-daemon --console=plain',
+        ANDROID,
+        { shell: true },
+      )
     }
     const outDir = join(ANDROID, 'app', 'build', 'outputs', 'apk', 'arm64', 'release')
     const apk = readdirSync(outDir).find((f) => f.endsWith('.apk'))
