@@ -142,6 +142,8 @@ async function endCard() {
 
 /** Types a line into the composer key by key, as on camera, and sends it. */
 async function sayOnCamera(text) {
+  // Upright (the mobile cut) the composer waits behind Reply.
+  if (await app.visible(T('qm-reply'))) await app.click(T('qm-reply'))
   await app.waitFor(() => !document.querySelector('[data-test="chat-input"]')?.disabled, { label: 'input enabled' })
   await app.click(T('chat-input'))
   for (const ch of text) {
