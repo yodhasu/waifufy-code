@@ -10,6 +10,8 @@ import type { Voice } from './voice'
 export type Link = {
   /** HTTP base of the sidecar, e.g. http://127.0.0.1:51234. Models and thumbnails are served from here. */
   base: string
+  /** This window is a phone paired with a desktop's link (app/src/pair.ts): no folder pickers, no Explorer. */
+  remote: boolean
   send(m: ClientMsg): void
   /** Subscribes to every server message; returns an unsubscribe function. */
   on(handler: (m: ServerMsg) => void): () => void
@@ -109,5 +111,8 @@ export type Screen = {
   onEscape?(): boolean
 }
 
-/** Starting a session goes through the chat screen: router.go('chat', ChatParams). */
-export type ChatParams = { cwd: string; resume?: string; title?: string }
+/**
+ * Starting a session goes through the chat screen: router.go('chat', ChatParams). `attach`: a phone joining the
+ * session running on the desktop.
+ */
+export type ChatParams = { cwd: string; resume?: string; title?: string } | { attach: true }

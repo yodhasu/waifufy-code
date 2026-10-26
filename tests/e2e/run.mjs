@@ -20,7 +20,7 @@ const NOTE_WIDTH = 110
 /** Requirements the E2E suite does not cover: packaging and dev mode are checked by building. */
 const OUT_OF_SCOPE = { R47: 'installer build (npm run build:installer)', R49: 'dev mode (npm run dev)' }
 // R1–R49 are the V1 requirements (docs/V1.md); R50 on are V0.5's (docs/V0.5.md).
-const REQUIREMENTS = Array.from({ length: 76 }, (_, k) => `R${k + 1}`)
+const REQUIREMENTS = Array.from({ length: 78 }, (_, k) => `R${k + 1}`)
 
 const args = process.argv.slice(2)
 const strict = args.includes('--strict')

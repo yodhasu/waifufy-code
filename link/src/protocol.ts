@@ -306,6 +306,23 @@ export type SlackMessage = {
   files?: string[]
 }
 
+// ---------------------------------------------------------------- phone access
+
+/** Phone access (link/src/remote.ts), as the desktop's Settings → Phone shows it. Only desktop windows get it. */
+export type RemoteStatus = {
+  enabled: boolean
+  /** The phone listener is up (it can fail: the port taken). */
+  listening: boolean
+  port: number
+  /** This computer's addresses a phone can try, best first. */
+  addresses: string[]
+  /** Phones connected right now. */
+  clients: number
+  /** What the pairing QR code holds (with the token); only while enabled. */
+  pairUrl?: string
+  error?: string
+}
+
 // ---------------------------------------------------------------- client → link
 
 export type ClientMsg =
@@ -377,6 +394,18 @@ export type ClientMsg =
   | { t: 'slack_mark'; channel: string; ts: string }
   /** Posts as the signed-in person, in the thread `thread` when given; answered with `slack_sent`. */
   | { t: 'slack_send'; id: string; channel: string; text: string; thread?: string }
+  /** Desktop only: turns phone access on or off; answered (to every desktop window) with `remote_status`. */
+  | { t: 'remote_set'; enabled: boolean }
+  /** Desktop only: a new pairing token; connected phones are dropped and must scan again. */
+  | { t: 'remote_reset' }
+  /** Desktop only: answered with `remote_status`. */
+  | { t: 'remote_status' }
+  /**
+   * Joins the session running now (a phone picking up the desktop's chat): answered with `attached`, then the
+   * session's current state as ordinary session events (started with its history so far, ready, stats, todos,
+   * open prompts…) under its epoch.
+   */
+  | { t: 'attach' }
 
 /**
  * The running session's SDK controls the app may call directly: `Query` methods, by name. They back the in-app
@@ -452,7 +481,8 @@ export type SessionEvent =
   | { t: 'hook'; id: string; name: string; event: string; state: 'running' | 'ok' | 'error' | 'cancelled'; output?: string }
 
 export type ServerMsg =
-  | { t: 'hello'; version: string; settings: Settings; auth: Auth; dataDir: string; voiceKey: boolean; slack: SlackStatus }
+  /** `remote`: this window is a phone (phone access), so desktop-only things (folder pickers, Explorer) don't apply. */
+  | { t: 'hello'; version: string; settings: Settings; auth: Auth; dataDir: string; voiceKey: boolean; slack: SlackStatus; remote: boolean }
   /** One clip: base64 audio, or why there is none. */
   | { t: 'tts'; id: string; audio?: string; mime?: string; error?: string }
   /** Whether a Fish Audio key is stored now (after voice_key, to every window). */
@@ -481,6 +511,9 @@ export type ServerMsg =
   /** Oldest first. `lastRead`: the person's read cursor in the conversation, when Slack gives one. */
   | { t: 'slack_history'; id: string; channel: string; name?: string; messages?: SlackMessage[]; lastRead?: string; error?: string }
   | { t: 'slack_sent'; id: string; ok: boolean; error?: string }
+  | { t: 'remote_status'; status: RemoteStatus }
+  /** The answer to `attach`: the running session's epoch, or none when nothing runs. */
+  | { t: 'attached'; epoch?: number }
 
 /** One input of an MCP elicitation form, from a property of its requested JSON schema. */
 export type ElicitField = {

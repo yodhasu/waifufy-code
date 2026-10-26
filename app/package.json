@@ -11,8 +11,10 @@
   "dependencies": {
     "@pixi/sound": "^6.0.1",
     "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/plugin-barcode-scanner": "^2.5.3",
     "@tauri-apps/plugin-dialog": "^2.4.0",
     "pixi.js": "^8.22.0",
+    "qrcode-generator": "^2.0.4",
     "untitled-pixi-live2d-engine": "^1.4.0"
   },
   "devDependencies": {

@@ -18,6 +18,7 @@ import type { SessionApi, SessionFactory } from './session-api.ts'
 import { createSession } from './session.ts'
 import { DATA_DIR, loadSettings, saveSettings } from './settings.ts'
 import * as slack from './slack.ts'
+import { addresses, REMOTE_PORT, remoteEnabled, remoteStatus, remoteTokenOk, resetRemoteToken, setRemoteEnabled } from './remote.ts'
 import { acceptTrust, isTrusted, trustConcerns } from './trust.ts'
 
 // The Tauri app starts this process with a free port and a token, and closes stdin when it quits.
@@ -169,8 +170,100 @@ function sendTo(ws: WebSocket, m: ServerMsg) {
   }
 }
 
+/** Every window: the desktop page(s) and connected phones. */
+const clients = () => [...wss.clients, ...(phones?.wss.clients ?? [])]
+
 function broadcast(m: ServerMsg, except?: WebSocket) {
-  for (const ws of wss.clients) if (ws !== except) sendTo(ws, m)
+  for (const ws of clients()) if (ws !== except) sendTo(ws, m)
+}
+
+/** To the desktop windows only: phone access's own status carries the pairing token. */
+function broadcastLocal(m: ServerMsg) {
+  for (const ws of wss.clients) sendTo(ws, m)
+}
+
+// ---------------------------------------------------------------- phone access
+
+/** Connections that came in through the phone listener. */
+const remoteSockets = new WeakSet<WebSocket>()
+let phones: { http: ReturnType<typeof createServer>; wss: WebSocketServer } | undefined
+let phoneError: string | undefined
+
+const phoneStatus = () => remoteStatus(!!phones, phones?.wss.clients.size ?? 0, phoneError)
+
+/** Starts or stops the phone listener to match the setting; reports the outcome to the desktop windows. */
+async function syncPhones() {
+  if (remoteEnabled() && !phones) {
+    const server = createServer((req, res) => {
+      route(req, res).catch((e) => {
+        console.error(`[http] ${req.url}:`, e)
+        text(res, 500, 'internal error')
+      })
+    })
+    const pws = new WebSocketServer({
+      server,
+      verifyClient: ({ req }: { req: IncomingMessage }) => remoteTokenOk(new URL(req.url ?? '/', 'http://link').searchParams.get('token') ?? ''),
+    })
+    pws.on('connection', (ws) => {
+      remoteSockets.add(ws)
+      serve(ws)
+      broadcastLocal({ t: 'remote_status', status: phoneStatus() })
+      ws.on('close', () => broadcastLocal({ t: 'remote_status', status: phoneStatus() }))
+    })
+    phoneError = await new Promise<string | undefined>((resolve) => {
+      server.once('error', (e: NodeJS.ErrnoException) => resolve(e.code === 'EADDRINUSE' ? `Port ${REMOTE_PORT} is in use by another program.` : e.message))
+      // Every interface: the phone comes in over Wi-Fi or Tailscale. The token keeps everyone else out.
+      server.listen(REMOTE_PORT, '0.0.0.0', () => resolve(undefined))
+    })
+    if (phoneError) {
+      console.warn('[remote] phone access could not start:', phoneError)
+      pws.close()
+    } else {
+      phones = { http: server, wss: pws }
+      // A later failure (the network going away) shouldn't take the link down.
+      server.on('error', (e) => console.warn('[remote] phone listener error:', e))
+      console.log(`[remote] phone access on port ${REMOTE_PORT}: ${addresses().join(', ') || 'no network address'}`)
+    }
+  } else if (!remoteEnabled() && phones) {
+    stopPhones()
+    phoneError = undefined
+  }
+  broadcastLocal({ t: 'remote_status', status: phoneStatus() })
+}
+
+function stopPhones() {
+  if (!phones) return
+  for (const ws of phones.wss.clients) ws.terminate()
+  phones.wss.close()
+  phones.http.close()
+  phones = undefined
+  console.log('[remote] phone access off')
+}
+
+/**
+ * A window joining mid-session (`attach`): the epoch, then the session's state so far as the events that hold it,
+ * with the transcript read fresh, and the prompts still open. A turn half-written at that moment shows from its next
+ * paragraph.
+ */
+async function attach(ws: WebSocket) {
+  const live = current
+  if (!live?.session) return sendTo(ws, { t: 'attached' })
+  sendTo(ws, { t: 'attached', epoch: live.epoch })
+  const started = live.latest.get('started') as Extract<SessionEvent, { t: 'started' }> | undefined
+  const id = live.session.sessionId()
+  const history = id ? await loadHistory(id, live.cwd).catch(() => started?.history ?? []) : started?.history ?? []
+  const save = id ? await getSave(id, live.cwd).catch(() => started?.save) : started?.save
+  if (current !== live) return
+  if (started) sendTo(ws, { ...started, history, ...(save ? { save } : {}), resumed: true, epoch: live.epoch })
+  for (const [t, e] of live.latest) if (t !== 'started') sendTo(ws, { ...e, epoch: live.epoch } as ServerMsg)
+  for (const e of live.asks.values()) sendTo(ws, { ...e, epoch: live.epoch } as ServerMsg)
+}
+
+/** An answer from one window closes the same prompt in the others (the desktop and a phone both show it). */
+function answered(ws: WebSocket, id: string) {
+  const live = current
+  if (!live?.asks.delete(id)) return
+  broadcast({ t: 'ask_cancel', id, epoch: live.epoch }, ws)
 }
 
 // ---------------------------------------------------------------- services
@@ -211,7 +304,15 @@ type Live = {
   closing: boolean
   ended: Promise<void>
   emit(e: SessionEvent): void
+  /** What a window joining mid-session needs (`attach`): the latest event of each kind that holds state. */
+  latest: Map<SessionEvent['t'], SessionEvent>
+  /** Prompts still waiting on an answer, by id, in the order they came. */
+  asks: Map<string, SessionEvent>
 }
+
+/** Session events that each replace the one before; replayed to a window that attaches. */
+const STATE_EVENTS = new Set<SessionEvent['t']>(['started', 'ready', 'session_id', 'commands', 'stats', 'todos', 'bg_tasks', 'state'])
+const ASK_EVENTS = new Set<SessionEvent['t']>(['ask_permission', 'ask_question', 'ask_plan', 'ask_elicit'])
 
 let current: Live | undefined
 /** Bumped by every start and end, so a start that was overtaken while it awaited drops out instead of spawning a CLI. */
@@ -231,9 +332,12 @@ function makeLive(epoch: number, cwd: string): Live {
     }
     const id = e.t === 'ready' || e.t === 'session_id' ? e.sessionId : undefined
     if (id) remember(id, cwd).catch((err) => console.error(`[saves] remember ${id}:`, err))
+    if (STATE_EVENTS.has(e.t)) live.latest.set(e.t, e)
+    if (ASK_EVENTS.has(e.t)) live.asks.set((e as { id: string }).id, e)
+    if (e.t === 'ask_cancel') live.asks.delete(e.id)
     broadcast({ ...e, epoch } as ServerMsg)
   }
-  const live: Live = { epoch, cwd, closing: false, ended, emit }
+  const live: Live = { epoch, cwd, closing: false, ended, emit, latest: new Map(), asks: new Map() }
   return live
 }
 
@@ -303,7 +407,9 @@ async function start(m: Extract<ClientMsg, { t: 'start' }>) {
     current = live
     live.session = factory({ epoch: m.epoch, cwd, resume: m.resume, resumeAt: m.resumeAt, dropsTurn: m.dropsTurn, settings, claudePath, emit: live.emit })
     console.log(`[session] epoch ${m.epoch} ${m.resume ? `resume ${m.resume}` : 'new'} in ${cwd}${MOCK ? ' (mock)' : ''}`)
-    broadcast({ t: 'started', cwd, cwdShort: shortPath(cwd), resumed: !!m.resume, history, save, epoch: m.epoch })
+    const started: SessionEvent = { t: 'started', cwd, cwdShort: shortPath(cwd), resumed: !!m.resume, history, save }
+    live.latest.set('started', started)
+    broadcast({ ...started, epoch: m.epoch })
     await live.session.start()
   } catch (e) {
     console.error('[session] could not start the session:', e)
@@ -416,15 +522,19 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       // The first hello on a connection means the page booted (first launch, F5, a renderer crash). It starts at the
       // title screen and can't attach to a running session, which may be blocked on a prompt nobody can see now: close
       // it. Screens may say hello again later (for the version or login state); those must never end the session.
+      // A phone joining is never a reload: the desktop's session stays (it can `attach` to it).
       if (!greeted.has(ws)) {
         greeted.add(ws)
-        if (current) {
+        if (current && !remoteSockets.has(ws)) {
           console.log(`[session] the app reloaded; closing epoch ${current.epoch}`)
           ++startGen
           void closeCurrent()
         }
       }
-      return sendTo(ws, { t: 'hello', version: VERSION, settings: await loadSettings(), auth: await auth.get(), dataDir: DATA_DIR, voiceKey: hasVoiceKey(), slack: slack.status() })
+      return sendTo(ws, {
+        t: 'hello', version: VERSION, settings: await loadSettings(), auth: await auth.get(), dataDir: DATA_DIR, voiceKey: hasVoiceKey(), slack: slack.status(),
+        remote: remoteSockets.has(ws),
+      })
     case 'settings_set': {
       need(m.settings && typeof m.settings === 'object' && m.settings.version === 1, 'settings')
       await updateSettings(() => m.settings)
@@ -508,12 +618,15 @@ async function handle(ws: WebSocket, m: ClientMsg) {
     }
     case 'permission':
       need(isStr(m.id) && PERMISSION_DECISIONS.includes(m.decision) && optStr(m.message) && optStr(m.option), 'id, decision, message, option')
+      answered(ws, m.id)
       return live().answerPermission(m.id, m.decision, m.message, m.option)
     case 'answer':
       need(isStr(m.id) && (m.answers === undefined || isAnswers(m.answers)), 'id, answers')
+      answered(ws, m.id)
       return live().answerQuestion(m.id, m.answers ?? {})
     case 'plan':
       need(isStr(m.id) && PLAN_DECISIONS.includes(m.decision) && optStr(m.message), 'id, decision, message')
+      answered(ws, m.id)
       return live().answerPlan(m.id, m.decision, m.message)
     case 'files': {
       need(isStr(m.query), 'query')
@@ -538,7 +651,8 @@ async function handle(ws: WebSocket, m: ClientMsg) {
     case 'elicit':
       need(isStr(m.id) && ['accept', 'decline', 'cancel'].includes(m.action) && (m.content === undefined || (typeof m.content === 'object' && m.content !== null)), 'id, action, content')
       try {
-        return live().answerElicit(m.id, m.action, m.content)
+        live().answerElicit(m.id, m.action, m.content)
+        return answered(ws, m.id)
       } catch (e) {
         // A form that doesn't fit the schema stays open; the reason goes back to the app.
         throw new BadRequest(e instanceof Error ? e.message : String(e))
@@ -581,6 +695,24 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       const { id, channel, text, thread } = m
       return slackReply(ws, async () => (await slack.send(channel, text, thread), { t: 'slack_sent', id, ok: true }), (error) => ({ t: 'slack_sent', id, ok: false, error }))
     }
+    case 'attach':
+      return attach(ws)
+    case 'remote_set':
+    case 'remote_reset':
+    case 'remote_status':
+      // Only the desktop turns phone access on, or sees its token.
+      need(!remoteSockets.has(ws), 'phone access is managed on the desktop')
+      if (m.t === 'remote_set') {
+        need(typeof m.enabled === 'boolean', 'enabled')
+        await setRemoteEnabled(m.enabled)
+        return syncPhones()
+      }
+      if (m.t === 'remote_reset') {
+        await resetRemoteToken()
+        for (const p of phones?.wss.clients ?? []) p.close(4001, 'unpaired')
+        return broadcastLocal({ t: 'remote_status', status: phoneStatus() })
+      }
+      return sendTo(ws, { t: 'remote_status', status: phoneStatus() })
     default:
       throw new BadRequest(`Unknown message type: ${String((m as { t?: unknown }).t)}`)
   }
@@ -588,7 +720,10 @@ async function handle(ws: WebSocket, m: ClientMsg) {
 
 let orphanTimer: ReturnType<typeof setTimeout> | undefined
 
-wss.on('connection', (ws) => {
+wss.on('connection', serve)
+
+/** One window's connection, from the desktop page or (phone access) a phone. */
+function serve(ws: WebSocket) {
   clearTimeout(orphanTimer)
   ws.on('message', (raw) => {
     let m: ClientMsg
@@ -608,15 +743,15 @@ wss.on('connection', (ws) => {
   })
   ws.on('error', (e) => console.warn('[ws] socket error:', e))
   ws.on('close', () => {
-    if (wss.clients.size > 0 || !current) return
+    if (clients().length > 0 || !current) return
     orphanTimer = setTimeout(() => {
-      if (wss.clients.size > 0) return
+      if (clients().length > 0) return
       console.log('[session] no app connected; closing the orphaned session')
       ++startGen
       void closeCurrent()
     }, ORPHAN_MS)
   })
-})
+}
 
 let shuttingDown = false
 async function shutdown() {
@@ -625,6 +760,7 @@ async function shutdown() {
   console.log('[link] shutting down')
   researchCtl?.abort()
   ++startGen
+  stopPhones()
   await closeCurrent()
   process.exit(0)
 }
@@ -635,4 +771,8 @@ process.stdin.resume()
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
 
-http.listen(PORT, '127.0.0.1', () => console.log(`[link] v${VERSION} listening on 127.0.0.1:${PORT}${MOCK ? ' (mock sessions)' : ''}, data in ${DATA_DIR}`))
+http.listen(PORT, '127.0.0.1', () => {
+  console.log(`[link] v${VERSION} listening on 127.0.0.1:${PORT}${MOCK ? ' (mock sessions)' : ''}, data in ${DATA_DIR}`)
+  // Phone access left on comes back with the app.
+  void syncPhones()
+})

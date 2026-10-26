@@ -1,0 +1,13 @@
+/* The phone's pairing screen (pair.ts): one card over the backdrop, before any screen mounts. Sized for the
+   portrait stage (900 wide), and fine in landscape too. */
+.pair { position: absolute; inset: 0; z-index: 90; display: grid; place-items: center; padding: 48px; }
+.pair-box { width: min(760px, 100%); padding: 44px 48px; display: flex; flex-direction: column; gap: 18px; font-size: 24px; }
+.pair-box h2 { margin: 0; font-family: var(--font-title); font-size: 40px; letter-spacing: .1em; color: var(--heading); }
+.pair-box ol { margin: 0; padding-left: 30px; display: flex; flex-direction: column; gap: 10px; line-height: 1.45; color: var(--text-soft); }
+.pair-box b { color: var(--text); }
+.pair-box .btn { min-height: 72px; font-size: 26px; border-radius: 16px; }
+.pair-box textarea { font: 20px/1.4 var(--font-mono); resize: none; }
+.pair-or { color: var(--text-faint); font-size: 19px; text-align: center; }
+.pair-error { margin: 0; min-height: 1.4em; color: var(--bad); font-size: 21px; line-height: 1.4; }
+.pair-error:empty { display: none; }
+.pair-note { margin: 0; color: var(--text-faint); font-size: 18px; line-height: 1.5; }

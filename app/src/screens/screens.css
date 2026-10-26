@@ -242,3 +242,35 @@
 .wz-foot { flex: none; display: flex; align-items: center; gap: 10px; padding-top: 14px; border-top: 1.5px solid var(--gold-faint); }
 .wz-foot .btn { min-width: 124px; height: 42px; }
 .wz-hint { margin: 0 auto 0 8px; font-size: 12px; letter-spacing: .06em; color: var(--text-faint); }
+
+/* ================================================================ portrait (a phone, base.css) */
+
+/* Title: the logo at the top, her in the middle, the menu over her feet; her quote and the key hints are left out. */
+#stage[data-orient='portrait'] #screen-title .ttl-banner { left: 32px; right: 32px; top: 24px; width: auto; }
+#stage[data-orient='portrait'] #screen-title .ttl-logo { left: 48px; top: 120px; width: auto; right: 48px; }
+#stage[data-orient='portrait'] .ttl-logo h1 { font-size: 84px; }
+#stage[data-orient='portrait'] .ttl-sub::before { width: 340px; }
+#stage[data-orient='portrait'] #screen-title .ttl-menu { left: 48px; right: 48px; top: auto; bottom: 96px; width: auto; }
+#stage[data-orient='portrait'] .ttl-item { min-height: 76px; }
+#stage[data-orient='portrait'] .ttl-item.on { transform: none; }
+#stage[data-orient='portrait'] .ttl-hint b { max-width: 420px; }
+#stage[data-orient='portrait'] #screen-title .ttl-quote,
+#stage[data-orient='portrait'] .ttl-item[data-id='continue'] .ttl-label::after { display: none; }
+#stage[data-orient='portrait'] #screen-title .ttl-foot { left: 48px; right: 48px; justify-content: center; }
+
+/* Save/Load: two slots a row, four rows a page; the slot actions always show (there is no hover on a phone). */
+#stage[data-orient='portrait'] #screen-saves .sv-page { padding: 26px 24px 22px; }
+#stage[data-orient='portrait'] .sv-head { height: auto; flex-wrap: wrap; gap: 12px; }
+#stage[data-orient='portrait'] .sv-heading h2 { font-size: 40px; letter-spacing: .2em; }
+#stage[data-orient='portrait'] .sv-tab, #stage[data-orient='portrait'] .sv-arrow { height: 44px; }
+#stage[data-orient='portrait'] .sv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(4, minmax(0, 1fr)); gap: 16px; }
+#stage[data-orient='portrait'] .sv-actions { opacity: 1; transform: none; }
+#stage[data-orient='portrait'] .sv-actions button { width: 44px; height: 44px; }
+#stage[data-orient='portrait'] .sv-keys { display: none; }
+#stage[data-orient='portrait'] .sv-hint { height: auto; min-height: 44px; padding: 8px 18px; }
+#stage[data-orient='portrait'] .sv-bar-btn { flex: 1; min-width: 0; }
+
+/* The wizard stays a desktop screen (a phone uses the desktop's settings); it is centered so nothing is cut off. */
+#stage[data-orient='portrait'] #screen-wizard .wz-panel { left: 90px; top: 120px; }
+/* Keyboard hints mean nothing on a touch screen. */
+#stage[data-orient='portrait'] #screen-title .ttl-foot span:first-child { display: none; }

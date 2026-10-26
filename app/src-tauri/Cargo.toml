@@ -5,15 +5,23 @@ edition = "2021"
 
 [lib]
 name = "waifufy_code_lib"
-crate-type = ["rlib"]
+# staticlib and cdylib are what the Android build links; rlib is the desktop binary's.
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
+
+# The desktop shell: the sidecar supervisor's error dialogs and the folder picker.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-dialog = "2"
+
+# The phone app pairs with a desktop by scanning the QR code its Settings show.
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+tauri-plugin-barcode-scanner = "2"
 
 [profile.release]
 opt-level = "s"

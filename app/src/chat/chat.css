@@ -559,3 +559,33 @@ html[data-focus='1'] .chat .chat-status .ribbon { display: none; }
 .chat .modal.slack-compose { width: min(640px, 80%); }
 .chat .modal.slack-compose textarea { width: 100%; resize: vertical; min-height: 120px; font-size: 15px; }
 .chat .modal.slack-compose .set-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 10px; }
+
+/* ---------- Portrait (a phone, base.css): she stands in the upper half; the dialogue box spans the width below
+   her, the quick menu is a scrolling row under it, and the composer sits at the bottom. The side panels are
+   hidden until PANELS slides them over her. Menus and prompts fit the 900px width. ---------- */
+.chat .quickmenu [data-test='qm-panels'] { display: none; }
+#stage[data-orient='portrait'] .chat .quickmenu [data-test='qm-panels'] { display: block; }
+#stage[data-orient='portrait'] .chat .chat-left, #stage[data-orient='portrait'] .chat .chat-right { display: none; top: 24px; bottom: 330px;
+  width: 414px; z-index: 7; overflow-y: auto; }
+#stage[data-orient='portrait'] .chat .chat-left { left: 24px; }
+#stage[data-orient='portrait'] .chat .chat-right { right: 24px; }
+#stage[data-orient='portrait'] .chat[data-panels='open'] .chat-left,
+#stage[data-orient='portrait'] .chat[data-panels='open'] .chat-right { display: flex; animation: fade .2s; }
+#stage[data-orient='portrait'] .chat > .chat-status { left: 24px; right: 24px; bottom: 530px; }
+#stage[data-orient='portrait'] .chat .ribbon, #stage[data-orient='portrait'] .chat .spinner { max-width: 852px; }
+#stage[data-orient='portrait'] .chat .dialogue { left: 24px; right: 24px; bottom: 176px; height: 340px; padding: 34px 34px 42px; }
+#stage[data-orient='portrait'] .chat .nameplate { max-width: 600px; }
+#stage[data-orient='portrait'] .chat .quickmenu { left: -2px; right: -2px; bottom: -76px; height: 60px; padding: 4px; gap: 4px; overflow-x: auto;
+  overflow-y: hidden; scrollbar-width: none; border-radius: 14px; background: var(--panel); backdrop-filter: blur(8px); border: 1px solid var(--gold-soft); }
+#stage[data-orient='portrait'] .chat .quickmenu button { flex: 1 0 auto; min-height: 50px; padding: 4px 9px; font-size: 14px; letter-spacing: .06em; }
+#stage[data-orient='portrait'] .chat .quickmenu [data-test='qm-slack']:not([data-badge=''])::after { top: 2px; right: 0; }
+#stage[data-orient='portrait'] .chat .chat-input { left: 24px; right: 24px; bottom: 24px; }
+#stage[data-orient='portrait'] .chat .ask { max-width: 852px; max-height: 1500px; }
+#stage[data-orient='portrait'] .chat .chat-modal .modal,
+#stage[data-orient='portrait'] .chat .chat-modal .modal.wide { inset: 60px 24px; padding: 20px 22px; }
+#stage[data-orient='portrait'] .chat .chat-modal .modal.side { inset: 24px 24px 24px auto; width: 560px; }
+#stage[data-orient='portrait'] .chat .modal header { flex-wrap: wrap; }
+#stage[data-orient='portrait'] .chat .modal h2 { white-space: normal; letter-spacing: .1em; }
+#stage[data-orient='portrait'] .chat .modal .close { min-height: 44px; }
+#stage[data-orient='portrait'] .chat .mrow { min-height: 52px; }
+#stage[data-orient='portrait'] .chat .modal.slack-compose { inset: 300px 24px auto 24px; width: auto; }

@@ -144,6 +144,8 @@ export function chatScreen(): Screen {
   // Session state. `epoch` tags every session event; anything from an older start is dropped. Epochs grow
   // across page loads too: after a webview reload the sidecar still reports the old page's session ending.
   let epoch = 0
+  /** A phone's `attach` is out: the link answers with the running session's epoch, or none. */
+  let attaching = false
   let live = false
   let ready = false
   let ended = false
@@ -794,7 +796,31 @@ export function chatScreen(): Screen {
 
   /** `checkTrust`: a folder opened from the title or Load; a restart or /clear reuses a folder already trusted. */
   function start(o: { cwd: string; resume?: string; title?: string; resumeAt?: string; dropsTurn?: string }, checkTrust = false) {
-    nextEpoch()
+    reset(o, nextEpoch())
+    const send = () => ctx.link.send({ t: 'start', epoch, cwd: o.cwd, resume: o.resume, ...(o.resumeAt ? { resumeAt: o.resumeAt } : {}), ...(o.dropsTurn ? { dropsTurn: o.dropsTurn } : {}) })
+    if (checkTrust) void trustThen(o.cwd, send)
+    else send()
+  }
+
+  /**
+   * Picks up a session this window didn't start: the one running when a phone asks to `attach`, or one another
+   * window (the desktop, or a phone) just started. Its state follows as ordinary session events under its epoch.
+   */
+  function follow(e: number, o: { cwd: string; title?: string }) {
+    attaching = false
+    reset(o, e)
+    dialogue.show({ kind: 'narration', text: `Joining ${charName()}…` })
+  }
+
+  /** The phone's "join": asks the link for the running session (answered by `attached`). */
+  function attach() {
+    attaching = true
+    ctx.link.send({ t: 'attach' })
+  }
+
+  /** Clears the screen for a session under epoch `e`, before its events come in. */
+  function reset(o: { cwd: string; resume?: string; title?: string }, e: number) {
+    epoch = e
     live = true
     ready = false
     ended = false
@@ -836,9 +862,6 @@ export function chatScreen(): Screen {
     dialogue.show({ kind: 'narration', text: `${charName()} is getting ready…` })
     input.setEnabled(false, `${charName()} is getting ready…`)
     bgTasks = []
-    const send = () => ctx.link.send({ t: 'start', epoch, cwd: o.cwd, resume: o.resume, ...(o.resumeAt ? { resumeAt: o.resumeAt } : {}), ...(o.dropsTurn ? { dropsTurn: o.dropsTurn } : {}) })
-    if (checkTrust) void trustThen(o.cwd, send)
-    else send()
   }
 
   /**
@@ -1274,7 +1297,7 @@ export function chatScreen(): Screen {
       const qm = document.createElement('nav')
       qm.className = 'quickmenu'
       qm.innerHTML = [
-        ['log', 'LOG', 'Backlog (Ctrl+O)'], ['auto', 'AUTO', 'Auto-advance'], ['mode', 'MODE', 'Permission mode (Shift+Tab)'],
+        ['panels', 'PANELS', 'Status, quests and actions'], ['log', 'LOG', 'Backlog (Ctrl+O)'], ['auto', 'AUTO', 'Auto-advance'], ['mode', 'MODE', 'Permission mode (Shift+Tab)'],
         ['cmd', 'CMD', 'Commands (/)'], ['stop', 'STOP', 'Interrupt (Esc)'], ['slack', 'SLACK', 'Slack inbox (/slack)'], ['costume', '👗', 'Costume (/costume)'],
         ['focus', 'FOCUS', 'Focus mode: just the prompt and replies (/focus · Ctrl+Shift+F)'], ['settings', '⚙', 'Settings (/config)'],
         ['menu', 'MENU', 'Back to the title'],
@@ -1292,6 +1315,12 @@ export function chatScreen(): Screen {
       slackBadge()
       applyFocus()
       const qmActions: Record<string, () => void> = {
+        // Portrait only (a phone): the side panels slide over her instead of standing beside her.
+        panels() {
+          const open = root.dataset.panels !== 'open'
+          root.dataset.panels = open ? 'open' : ''
+          qm.querySelector('[data-test="qm-panels"]')!.classList.toggle('on', open)
+        },
         log: openLog,
         auto() {
           auto = !auto
@@ -1442,7 +1471,21 @@ export function chatScreen(): Screen {
           }
           return
         }
-        if ('epoch' in m && m.epoch === epoch && live) onSession(m)
+        if (m.t === 'attached') {
+          if (!attaching) return
+          if (m.epoch !== undefined) return follow(m.epoch, { cwd: '' })
+          attaching = false
+          ctx.toast(`Nothing is running on your computer. Start or load a session.`)
+          return ctx.router.go('title')
+        }
+        if (!('epoch' in m)) return
+        if (m.epoch === epoch && live) return onSession(m)
+        // Another window started a session (a phone, or the desktop while a phone watches): the link runs one at a
+        // time, so this chat follows it rather than showing one that just ended.
+        if (m.t === 'started' && live && !attaching) {
+          follow(m.epoch, { cwd: m.cwd, title: m.save?.title })
+          onSession(m)
+        }
       })
       // A dropped link means the sidecar restarted, and the session went with it (R24).
       ctx.link.onStatus((s) => {
@@ -1473,6 +1516,7 @@ export function chatScreen(): Screen {
       dialogue.setMuted(false)
       ctx.character.setPlacement('chat')
       const p = params as ChatParams | undefined
+      if (p && 'attach' in p) return attach()
       if (p?.cwd) return start({ cwd: p.cwd, resume: p.resume, title: p.title }, true)
       // Back from Settings: the session is still running.
       if (!live) return ctx.router.go('title')

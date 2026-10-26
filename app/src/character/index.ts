@@ -4,7 +4,7 @@ import './character.css'
 import { createDirector, type Actor } from './director.ts'
 import { createFx } from './fx.ts'
 import { createInteract } from './interact.ts'
-import { BOX_H, BOX_LEFT, BOX_W, HIDDEN_DROP, PLACEMENTS, STAGE_H, STAGE_W } from './layout.ts'
+import { BOX_H, BOX_LEFT, BOX_W, HIDDEN_DROP, PLACEMENTS, portraitPlacements, STAGE_H, STAGE_W } from './layout.ts'
 // The engine is imported on first use (see startStage): it throws at import when the Cubism core is missing.
 import type { Rig, Stage } from './live2d.ts'
 import type { Mark } from './motions.ts'
@@ -79,6 +79,8 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
   /** The costume being loaded, so a newer request wins over an older one still in flight. */
   let loading: string | undefined
   let placement: Placement = 'title'
+  /** What the screen asked for; in portrait 'side' shows as hidden, and a rotation re-applies it. */
+  let requested: Placement = 'title'
   let lastVisible: Exclude<Placement, 'hidden'> = 'title'
   let hideTimer: number | undefined
 
@@ -103,7 +105,9 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
   // ---------------------------------------------------------------- rendering
 
   const stageScale = () => Number(stageEl.dataset.scale) || stageEl.getBoundingClientRect().width / STAGE_W || 1
-  const visibleScale = () => PLACEMENTS[lastVisible].scale
+  const portrait = () => stageEl.dataset.orient === 'portrait'
+  const spot = () => (portrait() ? portraitPlacements(stageEl.offsetHeight) : PLACEMENTS)[lastVisible]
+  const visibleScale = () => spot().scale
   const resolution = () => Math.min(MAX_RESOLUTION, (devicePixelRatio || 1) * stageScale() * visibleScale())
 
   function updateRunning() {
@@ -112,6 +116,8 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
 
   let resizeTimer: number | undefined
   addEventListener('resize', () => {
+    // A portrait stage changes height with the window, and her spot hangs from its bottom.
+    if (portrait()) applyPlacement()
     clearTimeout(resizeTimer)
     resizeTimer = window.setTimeout(() => stage?.setResolution(resolution()), RESIZE_DEBOUNCE_MS)
   })
@@ -121,9 +127,9 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
   })
 
   function applyPlacement() {
-    const { x, scale } = PLACEMENTS[lastVisible]
+    const { x, y, scale } = spot()
     const drop = placement === 'hidden' ? HIDDEN_DROP : 0
-    box.style.transform = `translate(${x}px, ${drop}px) scale(${scale})`
+    box.style.transform = `translate(${x}px, ${y + drop}px) scale(${scale})`
     ds.placement = placement
     clearTimeout(hideTimer)
     if (placement === 'hidden') fx.clear(), (hideTimer = window.setTimeout(updateRunning, HIDE_MS))
@@ -132,7 +138,10 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
     interact.refresh()
   }
 
-  function setPlacement(p: Placement) {
+  function setPlacement(asked: Placement) {
+    requested = asked
+    // The settings preview has no room on a phone.
+    const p = asked === 'side' && portrait() ? 'hidden' : asked
     placement = p
     if (p !== 'hidden') lastVisible = p
     if (p === 'hidden') interact.reset()
@@ -148,10 +157,12 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
     isPlacedThisTask = true
     queueMicrotask(() => (isPlacedThisTask = false))
   }
-  new MutationObserver(() => {
+  new MutationObserver((records) => {
+    // A rotation keeps what the screen asked for, in the other orientation's spot.
+    if (records.every((r) => r.attributeName === 'data-orient')) return setPlacement(requested)
     const p = SCREEN_PLACEMENT[stageEl.dataset.screen as ScreenName]
     if (p && !isPlacedThisTask) setPlacement(p)
-  }).observe(stageEl, { attributes: true, attributeFilter: ['data-screen'] })
+  }).observe(stageEl, { attributes: true, attributeFilter: ['data-screen', 'data-orient'] })
 
   // ---------------------------------------------------------------- costumes
 

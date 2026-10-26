@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "ai.waifufy.code",
+  "build": {
+    "beforeDevCommand": "npm run dev -- --host",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Waifufy Code",
+        "backgroundColor": "#05070f"
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self' 'unsafe-eval'",
+        "style-src": "'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src": "'self' data: https://fonts.gstatic.com",
+        "img-src": "'self' data: blob: http://*:47920",
+        "media-src": "'self' data: blob: http://*:47920",
+        "connect-src": "'self' ipc: http://ipc.localhost http://*:47920 ws://*:47920",
+        "worker-src": "'self' blob:"
+      },
+      "dangerousDisableAssetCspModification": ["style-src"]
+    }
+  },
+  "bundle": {
+    "android": {
+      "minSdkVersion": 26
+    }
+  }
+}

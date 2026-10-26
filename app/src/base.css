@@ -9,10 +9,11 @@ input, textarea, select { font: inherit; color: var(--text); }
 ::selection { background: var(--accent-glow); }
 * { scrollbar-width: thin; scrollbar-color: var(--gold-soft) transparent; }
 
-/* A fixed 1600×900 stage centered on the window and scaled to fit (letterboxed), like a VN engine. */
-#viewport { position: fixed; inset: 0; overflow: hidden; }
+/* A fixed 1600×900 stage centered on the window and scaled to fit (letterboxed), like a VN engine. `clip`, not
+   `hidden`: focusing or scrolling to something near an edge must never scroll the stage itself. */
+#viewport { position: fixed; inset: 0; overflow: clip; }
 #stage {
-  width: 1600px; height: 900px; position: absolute; left: 50%; top: 50%; overflow: hidden; transform-origin: center;
+  width: 1600px; height: 900px; position: absolute; left: 50%; top: 50%; overflow: clip; transform-origin: center;
   background:
     radial-gradient(ellipse 60% 50% at 50% 28%, var(--sun), transparent 70%),
     linear-gradient(180deg, var(--sky-1) 0%, var(--sky-2) 38%, var(--sky-3) 72%, var(--sky-4) 100%);
@@ -73,3 +74,20 @@ code, .mono { font-family: var(--font-mono); }
   background: var(--toast-bg); color: var(--toast-text); border: 1px solid var(--bad); border-radius: 12px; padding: 8px 18px; font-size: 14px; }
 #offline.show { display: block; animation: fade .2s; }
 #offline::before { content: '✦'; margin-right: 8px; color: var(--bad); animation: pulse 1s infinite; display: inline-block; }
+
+/* ---------- Portrait (a phone): main.ts turns the stage to 900×1600 and sets data-orient; each screen's CSS
+   lays itself out again under #stage[data-orient='portrait']. Touch targets are at least 44px tall there. ---------- */
+#stage[data-orient='portrait'] { width: 900px; height: 1600px;
+  background:
+    radial-gradient(ellipse 90% 30% at 50% 18%, var(--sun), transparent 70%),
+    linear-gradient(180deg, var(--sky-1) 0%, var(--sky-2) 38%, var(--sky-3) 72%, var(--sky-4) 100%); }
+#stage[data-orient='portrait'] .window-light { height: 900px; }
+#stage[data-orient='portrait'] .window-light:nth-child(1) { left: 150px !important; }
+#stage[data-orient='portrait'] .window-light:nth-child(2) { left: 390px !important; }
+#stage[data-orient='portrait'] .window-light:nth-child(3) { left: 630px !important; }
+#stage[data-orient='portrait'] .ray { height: 1700px; }
+#stage[data-orient='portrait'] .floor { height: 520px; }
+#stage[data-orient='portrait'] .btn { min-height: 44px; }
+#stage[data-orient='portrait'] #toast { max-width: 840px; text-align: center; }
+#stage[data-orient='portrait'] #confirm .box { width: 840px; }
+#stage[data-orient='portrait'] #confirm .row .btn { flex: 1; }

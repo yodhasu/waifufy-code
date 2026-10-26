@@ -53,9 +53,11 @@ export const overlayOpen = () => document.querySelector('#stage .overlay.show') 
 
 // ---------------------------------------------------------------- title screen
 
-type ItemId = 'continue' | 'load' | 'new' | 'settings' | 'exit'
+type ItemId = 'join' | 'continue' | 'load' | 'new' | 'settings' | 'exit'
 
 const ITEMS: { id: ItemId; label: string }[] = [
+  // Phone only: pick up the session running on the paired computer.
+  { id: 'join', label: 'Join' },
   { id: 'continue', label: 'Continue' },
   { id: 'load', label: 'Load' },
   { id: 'new', label: 'New Game' },
@@ -97,6 +99,10 @@ export function titleScreen(): Screen {
     const latest = saves[0]
     root.querySelector('.ttl-sub')!.textContent = `${name} · your Claude Code ${relationWord(s)}`
 
+    // A phone joins the computer's session, and leaves with the back button rather than Exit.
+    item('join').hidden = !ctx.link.remote
+    item('join').querySelector('.ttl-hint')!.textContent = `Pick up where ${name} is on your computer`
+    item('exit').hidden = ctx.link.remote
     const cont = item('continue')
     cont.hidden = !latest
     if (latest) {
@@ -124,9 +130,12 @@ export function titleScreen(): Screen {
     root.querySelector('.ttl-line')!.textContent = greeting(s, count > 0, auth)
     root.querySelector('.ttl-ver')!.textContent = version ? `Waifufy Code ${/^\d/.test(version) ? 'v' : ''}${version}` : 'Waifufy Code'
 
-    if (!visible().includes(selected)) select(latest ? 'continue' : 'new', active)
-    else if (!touched && latest && selected !== 'continue') select('continue', active)
+    if (!visible().includes(selected)) select(first(), active)
+    else if (!touched && selected !== first()) select(first(), active)
   }
+
+  /** What the marker starts on: Join on a phone, else Continue when there is a save, else New Game. */
+  const first = (): ItemId => (ctx.link.remote ? 'join' : saves.length ? 'continue' : 'new')
 
   function greeting(s: Settings, hasSaves: boolean, a?: Auth) {
     const addr = addressOf(s)
@@ -154,6 +163,7 @@ export function titleScreen(): Screen {
   function run(id: ItemId) {
     touched = true
     select(id, false)
+    if (id === 'join') return void ctx.router.go('chat', { attach: true } satisfies ChatParams)
     if (id === 'continue') return void (saves[0] && ctx.router.go('chat', chatParams(saves[0])))
     if (id === 'load') return void ctx.router.go('saves')
     if (id === 'settings') return void ctx.router.go('settings')
@@ -282,7 +292,7 @@ export function titleScreen(): Screen {
       void root.offsetWidth
       root.classList.add('enter')
       render()
-      select(saves.length ? 'continue' : 'new')
+      select(first())
       refresh()
     },
     hide() {

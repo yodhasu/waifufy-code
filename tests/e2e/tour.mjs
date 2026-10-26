@@ -2,17 +2,24 @@
 // saved as PNGs in tests/e2e/out/tour/. Uses the mock session, so it costs nothing.
 //
 //   node tests/e2e/tour.mjs            the Tauri debug build (WC_E2E_TARGET=browser for headless Chrome)
+//   WC_TOUR_PORTRAIT=1 node …          a phone (412×915 portrait, touch) into tests/e2e/out/tour-portrait/;
+//                                      WC_E2E_VIEWPORT=1080x1920 picks another size
 
-import { launch, stopVite } from './driver.mjs'
-import { fastText, makeProject, newGame, readAll, removeTempDirs, say, sleep, T, turnEnd, waitScreen } from './lib.mjs'
+const PORTRAIT = process.env.WC_TOUR_PORTRAIT === '1'
+// Read by the driver as it launches, so the page boots at phone size.
+if (PORTRAIT) process.env.WC_E2E_VIEWPORT ||= '412x915@2.625'
+
+const { launch, stopVite } = await import('./driver.mjs')
+const { fastText, makeProject, newGame, readAll, removeTempDirs, say, setField, sleep, T, turnEnd, waitScreen } = await import('./lib.mjs')
 
 const SETTLE_MS = 900
-const TABS = ['you', 'waifu', 'roleplay', 'appearance', 'motion', 'claude', 'voice', 'about']
+const TABS = ['you', 'waifu', 'roleplay', 'appearance', 'motion', 'claude', 'voice', 'slack', 'phone', 'about']
+const DIR = PORTRAIT ? 'tour-portrait' : 'tour'
 
 let app
 const shot = async (name) => {
   await sleep(SETTLE_MS)
-  console.log(`  ${await app.screenshot(`tour/${name}`)}`)
+  console.log(`  ${await app.screenshot(`${DIR}/${name}`)}`)
 }
 
 async function tourTheme(theme) {
@@ -54,6 +61,20 @@ async function tourTheme(theme) {
   await shot(`${theme}-07-log`)
   await app.key('Escape')
 
+  await app.click(T('qm-slack'))
+  await app.waitFor(() => document.querySelector('[data-test="slack"] [data-id="c:C0GENERAL"]'), { label: 'the Slack inbox' })
+  await shot(`${theme}-08a-slack`)
+  await app.click('[data-test="slack"] [data-id="c:C0GENERAL"]')
+  await app.waitFor(() => document.querySelector('[data-test="slack"] header h2')?.textContent === '#general', { label: '#general' })
+  await shot(`${theme}-08b-slack-conversation`)
+  await app.key('Escape')
+  await app.key('Escape')
+  if (PORTRAIT) {
+    await app.click(T('qm-panels'))
+    await shot(`${theme}-08c-panels`)
+    await app.click(T('qm-panels'))
+  }
+
   await app.click(T('qm-costume'))
   await app.waitVisible(T('costume-picker'))
   await shot(`${theme}-08-costumes`)
@@ -65,8 +86,15 @@ async function tourTheme(theme) {
 
   await app.go('settings')
   await waitScreen(app, 'settings')
+  // The screen fades in from transparent; tabs checked before that would count as hidden.
+  await app.waitVisible(T('settings-tab', { tab: TABS[0] }))
   for (const tab of TABS) {
     const sel = T('settings-tab', { tab })
+    // In portrait the tabs are a scrolling strip.
+    await app.eval((s) => {
+      const b = document.querySelector(s)
+      if (b) b.parentElement.scrollLeft = b.offsetLeft - b.parentElement.clientWidth / 2
+    }, sel)
     if (!(await app.visible(sel))) continue
     await app.click(sel)
     await shot(`${theme}-10-settings-${tab}`)
@@ -78,6 +106,13 @@ try {
   await waitScreen(app, 'wizard', 30_000)
   await shot('light-00-wizard')
   await app.updateSettings({ onboarded: true, profile: { displayName: 'Yodha', callMe: 'Yodha' } })
+  // Signed in to the mock Slack workspace, so the chat shows its inbox (link/src/slack.ts mockApi).
+  await app.go('settings')
+  await waitScreen(app, 'settings')
+  await app.click(T('settings-tab', { tab: 'slack' }))
+  await setField(app, 'slack.clientId', '123.456')
+  await app.click(T('set-slack.signin'))
+  await app.waitFor(() => document.querySelector('[data-test="slack-status"]')?.textContent.includes('Signed in'), { label: 'Slack signed in' })
   for (const theme of ['light', 'dark']) await tourTheme(theme)
 } catch (e) {
   console.error('tour failed:', e)

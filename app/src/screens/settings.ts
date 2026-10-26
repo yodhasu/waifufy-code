@@ -4,12 +4,14 @@
 // the store, and sync() paints the whole screen back from the store after each change.
 
 import type {
-  Appearance, ClaudeSettings, Costume, Emotion, MotionSettings, PersonaPreset, Profile, ResearchProfile, ServerMsg, Settings, Waifu,
+  Appearance, ClaudeSettings, Costume, Emotion, MotionSettings, PersonaPreset, Profile, RemoteStatus, ResearchProfile, ServerMsg, Settings, Waifu,
 } from '../../../link/src/protocol.ts'
+import qrcode from 'qrcode-generator'
 import { addressOf } from '../../../link/src/address.ts'
 import { DEFAULT_VOICE_ID, REM_VOICE_STYLE } from '../../../link/src/voice-style.ts'
 import { SLACK_MANIFEST, SLACK_REDIRECT_URL } from '../../../link/src/slack-app.ts'
 import type { Ctx, Screen } from '../contracts'
+import { clearPairing, savedPairing } from '../pair'
 import { esc } from '../ui'
 import { CUSTOM_PERSONALITY, PERSONALITIES, personalityById } from './personas'
 import './settings.css'
@@ -25,6 +27,7 @@ const TABS = [
   { id: 'claude', label: 'Claude', icon: '⚙', blurb: 'Defaults for new sessions, passed straight to Claude Code.' },
   { id: 'voice', label: 'Voice', icon: '♫', blurb: 'Her spoken voice through Fish Audio, in sync with the text and her lips.' },
   { id: 'slack', label: 'Slack', icon: '✉', blurb: 'Your unread Slack messages in the chat, and Slack tools for her.' },
+  { id: 'phone', label: 'Phone', icon: '☏', blurb: 'Chat with her from your Android phone while Claude Code keeps working here.' },
   { id: 'about', label: 'About', icon: '❦', blurb: 'Version, your data, and credits.' },
 ] as const
 type TabId = (typeof TABS)[number]['id']
@@ -204,6 +207,7 @@ const TAB_LINES: Record<TabId, [string, Emotion]> = {
   claude: ['These go straight to Claude Code. I\'ll use them from the next session.', 'nod'],
   voice: ['My voice… is still a secret. Soon, {you}!', 'shy'],
   slack: ['I can keep an eye on your messages, {you}. I\'ll only send what you approve.', 'nod'],
+  phone: ['Take me with you, {you}? I\'ll keep working here while you\'re away.', 'shy'],
   about: ['Thank you for choosing me, {you}.', 'happy'],
 }
 const SPEED_SAMPLE = 'Ah, {you}! Is this pace comfortable? I can speak faster, slower… or all at once, if you like.'
@@ -698,6 +702,39 @@ function slackPane() {
   </div>`
 }
 
+function phonePane() {
+  return `<div class="set-cols">
+    ${card(
+      'Phone access',
+      `<div data-phone-desktop>` +
+        `<label class="set-toggle"><input type="checkbox" data-phone-enabled data-test="set-phone.enabled"><i></i>
+          <span><b>Let my phone connect</b><small>Your phone joins the chat running here, over your Wi-Fi or Tailscale. Claude Code stays on this computer.</small></span></label>` +
+        `<p class="set-voice-status" data-phone-status data-test="phone-status"></p>` +
+        `<div class="set-phone-pair" data-phone-pair hidden>
+          <div class="set-qr" data-phone-qr data-test="phone-qr"></div>
+          <div class="set-phone-side">
+            <ol class="set-steps">
+              <li>Install the Waifufy Code app on your Android phone (the APK from the release page).</li>
+              <li>Open it and scan this code. Or copy the pairing link to your phone and paste it there.</li>
+            </ol>
+            <div class="set-actions">
+              <button class="btn" type="button" data-act="phone-copy" data-test="set-phone.copy">Copy pairing link</button>
+              <button class="btn" type="button" data-act="phone-reset" data-test="set-phone.reset">New pairing code</button>
+            </div>
+          </div>
+        </div>` +
+        note('The code holds a password for this computer: only show it to your own phone. A new pairing code disconnects every phone. The first time, Windows may ask whether Waifufy Code may use the network: allow private networks. Away from home, Tailscale on both devices keeps it working.') +
+        `</div>` +
+        `<div data-phone-remote hidden>
+          <p class="set-voice-status" data-phone-paired data-test="phone-paired"></p>
+          <div class="set-actions"><button class="btn" type="button" data-act="phone-unpair" data-test="set-phone.unpair">Unpair this phone</button></div>
+          ${note('Settings here are your computer\'s: changes apply there too.')}
+        </div>`,
+      'wide',
+    )}
+  </div>`
+}
+
 function aboutPane() {
   return `<div class="set-cols">
     ${card(
@@ -727,7 +764,7 @@ function aboutPane() {
 
 const PANES: Record<TabId, () => string> = {
   you: youPane, waifu: waifuPane, roleplay: roleplayPane, appearance: appearancePane, motion: motionPane, claude: claudePane,
-  voice: voicePane, slack: slackPane, about: aboutPane,
+  voice: voicePane, slack: slackPane, phone: phonePane, about: aboutPane,
 }
 
 // ---------------------------------------------------------------- screen
@@ -746,6 +783,8 @@ export function settingsScreen(): Screen {
   let pendingDir: string | undefined
   let costumesTimer: number | undefined
   let about: { version: string; dataDir: string } | undefined
+  /** Phone access as the link last reported it (desktop windows only). */
+  let phone: RemoteStatus | undefined
   let customModel = false
   let research = { running: false, log: [] as string[], error: '', startedAt: 0 }
   /** A cancel was sent and its "Research cancelled." error hasn't come back yet, so it can't be blamed on a newer run. */
@@ -1072,6 +1111,9 @@ export function settingsScreen(): Screen {
         return void (visible && renderAbout())
       case 'voice_key':
         return void (visible && renderVoice())
+      case 'remote_status':
+        phone = m.status
+        return void (root && renderPhone())
       case 'research_progress':
         if (!research.running) return
         research.log.push(...m.text.split('\n').filter((l) => l.trim()))
@@ -1353,6 +1395,37 @@ export function settingsScreen(): Screen {
     q<HTMLButtonElement>('[data-act="voice-test"]').disabled = !key || !s.voice.voiceId.trim()
   }
 
+  /** Phone access: on the desktop its switch, status and pairing code; on a phone, what it is paired with. */
+  function renderPhone() {
+    const remote = ctx.link.remote
+    q('[data-phone-desktop]').hidden = remote
+    q('[data-phone-remote]').hidden = !remote
+    if (remote) {
+      const p = savedPairing()
+      q('[data-phone-paired]').textContent = `☏ Paired with your computer${p ? ` at ${p.hosts[0]}` : ''}`
+      return
+    }
+    const st = phone
+    q<HTMLInputElement>('[data-phone-enabled]').checked = !!st?.enabled
+    const el = q('[data-phone-status]')
+    el.dataset.state = st?.listening ? 'on' : 'off'
+    el.textContent = !st?.enabled
+      ? '☏ Off · nothing can connect from outside this computer.'
+      : st.error
+        ? `☏ Couldn't start: ${st.error}`
+        : `☏ On · ${st.clients ? `${st.clients} phone${st.clients === 1 ? '' : 's'} connected` : 'waiting for your phone'} · ${st.addresses.map((a) => `${a}:${st.port}`).join(' · ') || 'no network address'}`
+    const pairing = !!(st?.listening && st.pairUrl)
+    q('[data-phone-pair]').hidden = !pairing
+    const qr = q('[data-phone-qr]')
+    if (pairing && qr.dataset.url !== st!.pairUrl) {
+      const code = qrcode(0, 'M')
+      code.addData(st!.pairUrl!)
+      code.make()
+      qr.innerHTML = code.createSvgTag({ cellSize: 6, margin: 3, scalable: true })
+      qr.dataset.url = st!.pairUrl!
+    }
+  }
+
   /** Whether Slack is signed in, and as whom; which buttons apply. */
   function renderSlack() {
     const el = root.querySelector<HTMLElement>('[data-slack-status]')
@@ -1574,6 +1647,18 @@ export function settingsScreen(): Screen {
           () => ctx.toast('Manifest copied. Paste it at api.slack.com/apps.'),
           () => ctx.toast('Couldn\'t copy the manifest; select it and copy by hand.'),
         )
+      case 'phone-copy':
+        return navigator.clipboard.writeText(phone?.pairUrl ?? '').then(
+          () => ctx.toast('Pairing link copied. Paste it into the app on your phone.'),
+          () => ctx.toast('Couldn\'t copy the pairing link.'),
+        )
+      case 'phone-reset':
+        return void ctx
+          .confirm('New pairing code?', 'Every paired phone is disconnected and has to scan the new code.', 'New code', 'Keep this one')
+          .then((yes) => yes && ctx.link.send({ t: 'remote_reset' }))
+      case 'phone-unpair':
+        clearPairing()
+        return location.reload()
       case 'slack-apps':
         return ctx.link.send({ t: 'open', target: 'https://api.slack.com/apps' })
       case 'copy-source':
@@ -1679,6 +1764,15 @@ export function settingsScreen(): Screen {
       root.addEventListener('click', onClick)
       addEventListener('keydown', onKey)
       ctx.link.on(onServer)
+      // Phone access isn't a setting (its state and token live in the link): the switch asks the link directly.
+      root.addEventListener('change', (e) => {
+        const t = e.target as HTMLInputElement
+        if (t.dataset.phoneEnabled === undefined) return
+        ctx.link.send({ t: 'remote_set', enabled: t.checked })
+        if (t.checked) react('happy')
+      })
+      if (!ctx.link.remote) ctx.link.send({ t: 'remote_status' })
+      renderPhone()
       // A finished sign-in is the one change she reacts to; the rest only repaints the status.
       let slackWas = ctx.slack.status().signedIn
       ctx.slack.onChange(() => {

@@ -11,6 +11,7 @@ import { settingsScreen } from './screens/settings'
 import { titleScreen } from './screens/title'
 import { wizardScreen } from './screens/wizard'
 import { applyAppearance, createStore } from './state'
+import { pickRemoteFolder } from './remote-folder'
 import { createSlack } from './slack'
 import { createVoice } from './voice'
 
@@ -18,10 +19,16 @@ const STAGE_W = 1600
 const STAGE_H = 900
 const PETALS = 16
 
-// The 1600×900 stage is scaled to fit the window around its center (R: no scrolling, any window size).
+// The stage is scaled to fit the window around its center (R: no scrolling, any window size): 1600×900, or in
+// a window taller than wide (a phone) 900 wide and at least 1600 tall, taller still to fill a 9:20 screen
+// without bars. `data-orient` switches the portrait layout in every screen's CSS and the character's placements.
 function fit() {
-  const s = Math.min(innerWidth / STAGE_W, innerHeight / STAGE_H)
+  const portrait = innerHeight > innerWidth
+  const [w, h] = portrait ? [STAGE_H, Math.max(STAGE_W, Math.round((STAGE_H * innerHeight) / innerWidth))] : [STAGE_W, STAGE_H]
+  const s = Math.min(innerWidth / w, innerHeight / h)
   const stage = document.getElementById('stage')!
+  stage.style.height = portrait ? `${h}px` : ''
+  stage.dataset.orient = portrait ? 'portrait' : 'landscape'
   stage.style.transform = `translate(-50%, -50%) scale(${s})`
   stage.dataset.scale = String(s)
 }
@@ -31,7 +38,8 @@ fit()
 for (let k = 0; k < PETALS; k++) {
   const p = document.createElement('i')
   p.className = 'petal'
-  p.style.left = `${200 + Math.random() * 1500}px`
+  // A share of the stage width, so they cover the portrait stage too (they drift left as they fall).
+  p.style.left = `${12.5 + Math.random() * 94}%`
   p.style.animationDuration = `${9 + Math.random() * 9}s`
   p.style.animationDelay = `${-Math.random() * 18}s`
   document.getElementById('petals')!.appendChild(p)
@@ -147,7 +155,11 @@ const router: Router = {
 
 const voice = createVoice(link, store, greeting.voiceKey === true)
 const slack = createSlack(link, greeting.slack)
-const ctx: Ctx = { link, store, character, router, voice, slack, toast, confirm: confirmDialog, pickFolder, pickImages }
+const ctx: Ctx = {
+  link, store, character, router, voice, slack, toast, confirm: confirmDialog, pickImages,
+  // A phone picks among the computer's folders (remote-folder.ts); the OS dialog would browse the phone.
+  pickFolder: link.remote ? (title, dir) => pickRemoteFolder(link, store, title, dir) : pickFolder,
+}
 for (const [name, screen] of Object.entries(screens)) screen.mount(document.getElementById(`screen-${name}`)!, ctx)
 
 // WebView2 keeps the browser's reload keys. Reloading would drop the page's session (the link closes it), so they

@@ -710,8 +710,11 @@ export class App {
 
 // ---------------------------------------------------------------- launch
 
-/** Connects to a page target and installs the recorder; the page then loads `url`, or reloads, so the prelude runs first. */
-async function prepare(page, url) {
+/**
+ * Connects to a page target and installs the recorder; the page then loads `url`, or reloads, so the prelude runs first.
+ * `viewport` ('412x915@2.625') emulates a phone.
+ */
+async function prepare(page, url, viewport = process.env.WC_E2E_VIEWPORT) {
   const cdp = await Cdp.connect(page.webSocketDebuggerUrl)
   // Uncaught page errors, kept so a failed boot or test can say why.
   cdp.errors = []
@@ -725,6 +728,13 @@ async function prepare(page, url) {
   })
   await cdp.send('Page.enable')
   await cdp.send('Runtime.enable')
+  // WC_E2E_VIEWPORT=412x915@2.625: a phone (portrait layout, touch), before the page boots so it starts that size.
+  const vp = /^(\d+)x(\d+)(?:@([\d.]+))?$/.exec(viewport ?? '')
+  if (vp) {
+    const [, width, height, dpr] = vp
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: Number(width), height: Number(height), deviceScaleFactor: Number(dpr ?? 1), mobile: true })
+    await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true })
+  }
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: PRELUDE })
   if (url) await cdp.send('Page.navigate', { url })
   else await cdp.send('Page.reload', { ignoreCache: true })
@@ -785,6 +795,39 @@ export function seedSettings(patch) {
  * - `mock`: false runs the real Agent SDK (tests/e2e/real.mjs only).
  * - `env`: extra environment for the app and its sidecar.
  */
+/**
+ * A phone (phone access): its own headless Chrome at phone size with touch, loading the app as a phone paired by
+ * `pair` (a waifufy-code://pair link). Close it with `close()` like any app.
+ */
+export async function openPhone(pair, { viewport = '412x915@2.625' } = {}) {
+  const port = CDP_PORT + 1
+  const dataDir = mkdtempSync(join(tmpdir(), 'wc-phone-'))
+  const browser = BROWSERS.find((b) => existsSync(b))
+  if (!browser) throw new Error('no Chrome or Edge found; set WC_E2E_BROWSER')
+  const headless = process.env.WC_E2E_HEADED ? [] : ['--headless=new']
+  const proc = spawn(browser, [
+    ...headless,
+    `--remote-debugging-port=${port}`,
+    `--user-data-dir=${join(dataDir, 'browser')}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--mute-audio',
+    'about:blank',
+  ], { stdio: 'ignore' })
+  try {
+    const page = await pageTarget(port, Date.now() + CDP_BOOT_MS, (u) => u === 'about:blank')
+    const url = `${VITE_URL}?pair=${encodeURIComponent(pair)}`
+    const cdp = await prepare(page, url, viewport)
+    const app = new App({ cdp, dataDir, procs: [proc], target: 'browser' })
+    await bootWait(app, cdp, url)
+    return app
+  } catch (e) {
+    killTree(proc)
+    await removeDataDir(dataDir, [proc])
+    throw e
+  }
+}
+
 export async function launch(options = {}) {
   const { wizard = false, settings, mock = true, env: extra, target = process.env.WC_E2E_TARGET || 'app', tag = 'run' } = options
   // The previous launch's browser may still be exiting.
