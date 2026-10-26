@@ -11,3 +11,15 @@
 .pair-error { margin: 0; min-height: 1.4em; color: var(--bad); font-size: 21px; line-height: 1.4; }
 .pair-error:empty { display: none; }
 .pair-note { margin: 0; color: var(--text-faint); font-size: 18px; line-height: 1.5; }
+
+/* Scanning (pair.ts scanCode): the camera runs behind the page, so everything but a frame and Cancel turns
+   transparent until the scan ends. */
+.pair-scan { display: none; }
+html.scanning, html.scanning body, html.scanning #viewport, html.scanning #stage { background: transparent !important; }
+html.scanning #backdrop, html.scanning #chara, html.scanning .screen, html.scanning .pair-box { visibility: hidden; }
+html.scanning .pair { padding: 0; }
+html.scanning .pair-scan { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 48px; }
+.pair-scan p { margin: 0; padding: 14px 26px; border-radius: 16px; background: rgba(5, 7, 15, .72); color: #fff; font-size: 26px; text-align: center; }
+.pair-frame { width: min(600px, 70%); aspect-ratio: 1; border: 6px solid rgba(255, 255, 255, .92); border-radius: 36px;
+  box-shadow: 0 0 0 4000px rgba(5, 7, 15, .45); }
+.pair-scan .btn { min-height: 76px; min-width: 260px; font-size: 28px; }

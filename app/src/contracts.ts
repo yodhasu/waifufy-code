@@ -109,6 +109,11 @@ export type Screen = {
   hide(): void
   /** Esc pressed while this screen is on top and no overlay handled it. Return true if handled. */
   onEscape?(): boolean
+  /**
+   * The phone's back button (app/src/back.ts), when it should differ from Esc (in the chat, Esc stops her turn;
+   * back leaves for the title). Without it, back does what Esc does. Return true if handled.
+   */
+  onBack?(): boolean
 }
 
 /**

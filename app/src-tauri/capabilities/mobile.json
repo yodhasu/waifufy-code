@@ -2,7 +2,16 @@
   "$schema": "../gen/schemas/mobile-schema.json",
   "identifier": "mobile",
   "description": "The phone app: pairs with a desktop by scanning its QR code.",
-  "windows": ["main"],
-  "platforms": ["android", "iOS"],
-  "permissions": ["core:default", "barcode-scanner:default"]
+  "windows": [
+    "main"
+  ],
+  "platforms": [
+    "android",
+    "iOS"
+  ],
+  "permissions": [
+    "core:default",
+    "barcode-scanner:default",
+    "core:app:allow-exit"
+  ]
 }

@@ -938,6 +938,16 @@ export function chatScreen(): Screen {
   }
 
   async function leave(to: 'title' | 'saves') {
+    // A phone only watches the computer's session: leaving detaches it, and Join picks it up again.
+    if (ctx.link.remote) {
+      live = false
+      nextEpoch()
+      dialogue.setMuted(true)
+      setRunning(false)
+      asks.clear()
+      closeAllLayers()
+      return ctx.router.go(to)
+    }
     if (live && running) {
       const why = `${charName()} is still working. Leaving stops the current turn.`
       if (!(await ctx.confirm('Leave this session?', why, 'Leave', 'Stay'))) return
@@ -1548,6 +1558,16 @@ export function chatScreen(): Screen {
         lastEscAt = now
       }
       return false
+    },
+
+    onBack() {
+      // Popups and menus close first, as with Esc. An open prompt stays: it waits for an answer from either
+      // device, and joining again brings it back.
+      if (input.closePopups()) return true
+      const top = layers.at(-1)
+      if (top && top.el !== asksRoot()) return top.close(), true
+      void leave('title')
+      return true
     },
   }
 }

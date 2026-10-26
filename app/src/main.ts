@@ -11,6 +11,7 @@ import { settingsScreen } from './screens/settings'
 import { titleScreen } from './screens/title'
 import { wizardScreen } from './screens/wizard'
 import { applyAppearance, createStore } from './state'
+import { installBackButton } from './back'
 import { pickRemoteFolder } from './remote-folder'
 import { createSlack } from './slack'
 import { createVoice } from './voice'
@@ -188,6 +189,17 @@ addEventListener('keydown', (e) => {
   if (closeConfirm) return void (e.preventDefault(), closeConfirm(false))
   if (current && screens[current].onEscape?.()) e.preventDefault()
 })
+
+// The phone app's back button (back.ts). Only inside the Tauri shell: a browser posing as a phone has no back button.
+if (link.remote && '__TAURI_INTERNALS__' in window) {
+  installBackButton({
+    closeConfirm: () => (closeConfirm ? (closeConfirm(false), true) : false),
+    current: () => router.current(),
+    screen: () => screens[router.current()],
+    back: () => router.back(),
+    toast,
+  }).catch((e) => console.warn('[back] no back-button listener:', e))
+}
 
 // Expose a tiny hook for the E2E harness (tests/e2e): which screen is showing, and the link.
 ;(window as unknown as { __wc: unknown }).__wc = { router, store, link, character }

@@ -62,8 +62,11 @@ android {
         }
         getByName("release") {
             signingConfigs.findByName("release")?.let { signingConfig = it }
+            // No R8: Tauri reaches its plugins by reflection, and the barcode scanner (CameraX, ML Kit) ships no
+            // keep rules; the shrunk 0.6.0 release closed as soon as the camera started, most likely from this.
+            // A few MB is the price. MainActivity reports any crash on the next launch.
             optimization {
-               enable = true
+               enable = false
             }
             proguardFiles(
                 *fileTree(".") {
