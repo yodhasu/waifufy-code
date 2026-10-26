@@ -567,7 +567,7 @@ html[data-focus='1'] .chat .chat-status .ribbon { display: none; }
    the dialogue box, then her. The side panels are tabs of one sheet (Status, Quests, Actions); swipes on the
    text box open the log (up) or hide everything but her (down). With the keyboard up (data-compact) she is
    head and shoulders and the dialogue sits right above the composer. ---------- */
-.chat .quickmenu [data-test='qm-more'], .chat .ptabs, .chat .unhide { display: none; }
+.chat .quickmenu [data-test='qm-more'], .chat .sheet-tabs, .chat .unhide { display: none; }
 #stage[data-orient='portrait'] .chat { --pz: 2.1; }
 
 /* The dialogue box, its name plate and text. */
@@ -592,14 +592,14 @@ html[data-focus='1'] .chat .chat-status .ribbon { display: none; }
 #stage[data-orient='portrait'] .chat .chat-input { zoom: var(--pz); left: calc(24px / var(--pz)); right: calc(24px / var(--pz)); bottom: calc(24px / var(--pz)); }
 
 /* The panel sheet: tabs on top, one panel under them, over her. */
-#stage[data-orient='portrait'] .chat[data-panels] .ptabs { zoom: var(--pz); position: absolute; z-index: 8; top: calc(24px / var(--pz));
+#stage[data-orient='portrait'] .chat[data-panels] .sheet-tabs { zoom: var(--pz); position: absolute; z-index: 8; top: calc(24px / var(--pz));
   left: calc(24px / var(--pz)); right: calc(24px / var(--pz)); display: flex; gap: 4px; padding: 4px; border-radius: 14px;
   background: var(--panel-solid); border: 1px solid var(--gold-soft); box-shadow: var(--panel-shadow); }
-#stage[data-orient='portrait'] .chat[data-panels=''] .ptabs { display: none; }
-#stage[data-orient='portrait'] .chat .ptabs button { flex: 1; min-height: 44px; border: 0; border-radius: 10px; background: none; font: inherit;
+#stage[data-orient='portrait'] .chat[data-panels=''] .sheet-tabs { display: none; }
+#stage[data-orient='portrait'] .chat .sheet-tabs button { flex: 1; min-height: 44px; border: 0; border-radius: 10px; background: none; font: inherit;
   font-weight: 700; font-size: 14px; color: var(--text-soft); }
-#stage[data-orient='portrait'] .chat .ptabs button.on { color: var(--text-on-accent); background: var(--accent); }
-#stage[data-orient='portrait'] .chat .ptabs .pclose { flex: 0 0 44px; }
+#stage[data-orient='portrait'] .chat .sheet-tabs button.on { color: var(--text-on-accent); background: var(--accent); }
+#stage[data-orient='portrait'] .chat .sheet-tabs .pclose { flex: 0 0 44px; }
 #stage[data-orient='portrait'] .chat .chat-left, #stage[data-orient='portrait'] .chat .chat-right { display: none; zoom: var(--pz); z-index: 7;
   top: calc(140px / var(--pz)); bottom: calc(24px / var(--pz)); left: calc(24px / var(--pz)); right: calc(24px / var(--pz)); width: auto;
   overflow-y: auto; }

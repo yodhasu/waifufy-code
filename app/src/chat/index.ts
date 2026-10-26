@@ -1424,7 +1424,7 @@ export function chatScreen(): Screen {
       }
 
       const panelTabs = document.createElement('nav')
-      panelTabs.className = 'ptabs'
+      panelTabs.className = 'sheet-tabs'
       panelTabs.dataset.test = 'panel-tabs'
       panelTabs.innerHTML = PANEL_TABS.map(([id, label]) => `<button type="button" data-tab="${id}" data-test="ptab-${id}">${label}</button>`).join('')
         + '<button type="button" class="pclose" data-tab="close" data-test="ptab-close" aria-label="Close">✕</button>'
