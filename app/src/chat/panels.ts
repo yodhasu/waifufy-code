@@ -119,7 +119,13 @@ export function createPanels(
   left: HTMLElement,
   right: HTMLElement,
   deps: { openModels(): void; cycleMode(): void; openAction(id: string): void },
+  /** The phone's top bar (chat/index.ts): the session title, her hearts, and the context, plan and quest pills. */
+  bar?: HTMLElement,
 ): Panels {
+  const inBar = (sel: string, text: string) => {
+    const el = bar?.querySelector<HTMLElement>(sel)
+    if (el) el.textContent = text
+  }
   const legend = GROUP_ORDER.map((g) => `<span><b style="background:var(--c-${g})"></b>${g === 'mcp' ? 'MCP' : g}</span>`).join('')
   left.innerHTML = `
     <div class="profile">
@@ -257,6 +263,9 @@ export function createPanels(
   return {
     reset(info) {
       q(left, '.stitle').textContent = info.title
+      inBar('.pb-title', info.title)
+      inBar('.pb-ctx', '🧠 —')
+      inBar('.pb-five', '⏳ —')
       q(left, '.scwd').textContent = info.cwdShort
       q(left, '.day').title = info.cwd
       for (const id of ['cost', 'turns', 'api', 'tokens-in', 'tokens-out', 'cache', 'lines', 'elapsed']) stat(id).textContent = '—'
@@ -286,6 +295,8 @@ export function createPanels(
     },
     stats(s) {
       context(s.context)
+      if (s.context?.max) inBar('.pb-ctx', `🧠 ${Math.round((s.context.used / s.context.max) * 100)}%`)
+      if (s.limits.fiveHour) inBar('.pb-five', `⏳ ${Math.round(s.limits.fiveHour.pct)}%`)
       limit('five', s.limits.fiveHour)
       limit('week', s.limits.weekly)
       limit('opus', s.limits.weeklyOpus)
@@ -327,8 +338,10 @@ export function createPanels(
         return `<span class="${cls.filter(Boolean).join(' ')}"${fill}>♥</span>`
       }
       el.innerHTML = Array.from({ length: MAX_HEARTS }, (_, k) => heart(k)).join('')
+      inBar('.pb-hearts', '♥'.repeat(level) + '♡'.repeat(MAX_HEARTS - level))
     },
     todos(items) {
+      inBar('.pb-quests', items.length ? `◇ ${items.filter((t) => t.status === 'completed').length}/${items.length}` : '◇ 0')
       q(right, '.quests').innerHTML = items.length
         ? items.map((t) => `<li class="${t.status}" data-test="quest-item" data-status="${t.status}">${esc(t.content)}</li>`).join('')
         : '<li class="empty">No quests yet</li>'

@@ -19,6 +19,13 @@ export const PLACEMENTS: Record<Exclude<Placement, 'hidden'>, Spot> = {
   side: { x: 560, y: 0, scale: 0.74 },
 }
 
+/** A phone held sideways (Theater): she stands at the left, the dialogue and the composer take the right. */
+export const PHONE_LANDSCAPE: Record<Exclude<Placement, 'hidden'>, Spot> = {
+  chat: { x: -330, y: 30, scale: 1.05 },
+  title: { x: 340, y: 0, scale: 1 },
+  side: { x: 560, y: 0, scale: 0.74 },
+}
+
 /** The box centered on the 900-wide portrait stage. */
 const PORTRAIT_X = (STAGE_H - BOX_W) / 2 - BOX_LEFT
 

@@ -7,9 +7,9 @@ const KEY = 'wc-phone-tutorial'
 
 const CARDS: { icon: string; title: string; text: string }[] = [
   { icon: '☝', title: 'Tap the text box', text: 'Tap once to finish her line, again for the next page.' },
-  { icon: '↑', title: 'Swipe up on it', text: 'The backlog: everything she said, and every tool she used.' },
-  { icon: '↓', title: 'Swipe down to hide it', text: 'Just her, full screen. Tap anywhere to bring the text back.' },
-  { icon: '⋯', title: '⋯ has the rest', text: 'Status, quests, mode, costume and settings. Back leaves the chat: she keeps working on your computer.' },
+  { icon: '✎', title: 'Reply to talk', text: 'The big Reply button opens the keyboard. Sending closes it again.' },
+  { icon: '↕', title: 'Swipe on the text box', text: 'Up for the backlog of everything she said. Down to see just her; tap to bring the text back.' },
+  { icon: '⋯', title: 'The top bar', text: '✕ leaves the chat (she keeps working on your computer), 🔊 is her voice, ⋯ has the rest. Turn the phone sideways for the theater view.' },
 ]
 
 const seen = () => {

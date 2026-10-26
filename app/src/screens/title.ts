@@ -99,10 +99,9 @@ export function titleScreen(): Screen {
     const latest = saves[0]
     root.querySelector('.ttl-sub')!.textContent = `${name} · your Claude Code ${relationWord(s)}`
 
-    // A phone joins the computer's session, and leaves with the back button rather than Exit.
+    // A phone joins the computer's session; its Exit closes the app (the session goes on on the computer).
     item('join').hidden = !ctx.link.remote
     item('join').querySelector('.ttl-hint')!.textContent = `Pick up where ${name} is on your computer`
-    item('exit').hidden = ctx.link.remote
     const cont = item('continue')
     cont.hidden = !latest
     if (latest) {
@@ -182,6 +181,8 @@ export function titleScreen(): Screen {
   }
 
   async function exit() {
+    // The phone app has no sidecar to stop: it closes through Tauri's own exit, and her turn goes on on the computer.
+    if (ctx.link.remote) return void (await import('@tauri-apps/api/app')).exit(0).catch(() => window.close())
     const name = waifuName(ctx.store.get())
     if (turnRunning && !(await ctx.confirm('Quit now?', `${name} is still in the middle of a turn. Quitting stops it.`, 'Quit', 'Stay'))) return
     await invoke('quit').catch(() => window.close())

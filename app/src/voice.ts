@@ -54,8 +54,9 @@ export function createVoice(link: Link, store: Store, hasKeyAtStart: boolean): V
     if (ctx.state === 'suspended') void ctx.resume()
     return ctx
   }
-  // Autoplay rules want a gesture first; any key or click in the app counts.
-  for (const ev of ['pointerdown', 'keydown'] as const) addEventListener(ev, () => void ctx?.resume(), { capture: true, passive: true })
+  // Autoplay rules want a gesture first; any key or tap in the app counts. The context is made on that first gesture
+  // too, not when the first clip arrives: one made outside a gesture can start suspended (a phone's WebView).
+  for (const ev of ['pointerdown', 'keydown'] as const) addEventListener(ev, () => void audio(), { capture: true, passive: true })
 
   return {
     hasKey: () => hasKey,

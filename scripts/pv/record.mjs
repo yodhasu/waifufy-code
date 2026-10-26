@@ -215,7 +215,7 @@ try {
   let m = await sayOnCamera('fix the failing tests with your tools')
   if (format === 'mobile') {
     await sleep(1400)
-    await app.click(T('qm-more'))
+    await app.click(T('pb-more'))
     await sleep(500)
     await app.click(T('more-quests'))
     await sleep(1800)

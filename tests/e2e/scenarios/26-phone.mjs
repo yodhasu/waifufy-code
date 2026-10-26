@@ -27,7 +27,7 @@ export default {
   tests: [
     {
       r: 'R77',
-      name: 'Settings → Phone shows a pairing code; a phone pairs with it, in portrait, with Join instead of Exit',
+      name: 'Settings → Phone shows a pairing code; a phone pairs with it, in portrait, with Join and Exit',
       async run({ app }) {
         const pair = await enablePhone(app)
         assert((await app.text(T('phone-status'))).includes('waiting for your phone'), 'waiting')
@@ -35,7 +35,7 @@ export default {
         try {
           eq(await phone.eval(() => document.getElementById('stage').dataset.orient), 'portrait', 'portrait stage')
           await phone.waitVisible(T('title-join'))
-          assert(await phone.eval(() => document.querySelector('[data-test="title-exit"]').hidden), 'no Exit on a phone')
+          assert(!(await phone.eval(() => document.querySelector('[data-test="title-exit"]').hidden)), 'a phone has Exit too (it closes the app)')
           await app.waitFor(() => /1 phone connected/.test(document.querySelector('[data-test="phone-status"]')?.textContent ?? ''), { label: 'the desktop sees the phone' })
         } finally {
           await phone.close()
@@ -59,12 +59,18 @@ export default {
           await phone.waitVisible(T('tutorial'))
           await phone.click(T('tutorial-skip'))
           await phone.waitHidden(T('tutorial'))
+          // Pocket VN: the composer waits behind Reply.
+          await phone.waitVisible(T('qm-reply'))
+          assert(!(await phone.visible(T('chat-input'))), 'no composer until Reply')
+          await phone.click(T('qm-reply'))
           await phone.waitVisible(T('chat-input'))
           await phone.waitFor(() => !document.querySelector('[data-test="chat-input"]')?.disabled, { label: 'phone input enabled' })
           // Joining doesn't end the desktop's session.
           assert(!(await app.eval(() => window.__e2e.events.some((e) => e.t === 'ended'))), 'the desktop session still runs')
           // A message from the phone runs in the desktop's session, and the desktop shows the prompt it brings.
           await say(phone, 'permission please')
+          // Sending closes the composer again.
+          await phone.waitHidden(T('chat-input'))
           await phone.waitVisible(T('ask'), 15_000)
           await app.waitVisible(T('ask'), 15_000)
           await phone.click(`${T('ask')} ${T('ask-option')}`)
@@ -100,7 +106,7 @@ export default {
           // Only once: leaving and joining again goes straight to the chat.
           await phone.go('title')
           await phone.click(T('title-join'))
-          await phone.waitVisible(T('chat-input'))
+          await phone.waitVisible(T('qm-reply'))
           assert(!(await phone.visible(T('tutorial'))), 'the tutorial shows once')
 
           // Swipe up on the text box: the backlog.
@@ -116,7 +122,7 @@ export default {
           await phone.waitVisible('.dialogue')
 
           // ⋯ → Quests opens the panel sheet on that tab; tabs switch; ✕ closes it.
-          await phone.click(T('qm-more'))
+          await phone.click(T('pb-more'))
           await phone.click(T('more-quests'))
           await phone.waitVisible(T('panel-tabs'))
           await phone.waitVisible('.chat-right')
@@ -124,6 +130,35 @@ export default {
           await phone.waitVisible('.chat-left')
           await phone.click(T('ptab-close'))
           await phone.waitHidden(T('panel-tabs'))
+        } finally {
+          await phone.close()
+        }
+      },
+    },
+    {
+      r: 'R78',
+      name: 'a phone held sideways gets the Theater: the side bar, the composer beside her, Quests in the sheet',
+      async run({ app, project }) {
+        const pair = await enablePhone(app)
+        const start = await newGame(app, project)
+        await fastText(app)
+        const phone = await openPhone(pair, { viewport: '915x412@2.625' })
+        try {
+          eq(await phone.eval(() => document.getElementById('stage').dataset.orient), 'landscape', 'landscape stage')
+          await phone.click(T('title-join'))
+          // The tutorial is about the upright controls, so a phone held sideways skips it.
+          await phone.waitVisible(T('prail'))
+          await phone.waitVisible(T('chat-input'))
+          await phone.waitVisible(T('pb-leave'))
+          assert(!(await phone.visible(T('qm-log'))), 'the side bar replaces the quick menu')
+          await phone.click(T('rail-quests'))
+          await phone.waitVisible('.chat-right')
+          await phone.click(T('ptab-close'))
+          await phone.waitHidden(T('panel-tabs'))
+          // ✕ leaves for the title; the computer's session goes on.
+          await phone.click(T('pb-leave'))
+          await phone.waitVisible(T('title-join'))
+          assert(!(await app.eval((ep) => window.__e2e.events.some((e) => e.t === 'ended' && e.epoch === ep), start.epoch)), 'the session still runs')
         } finally {
           await phone.close()
         }

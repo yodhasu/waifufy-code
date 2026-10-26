@@ -91,6 +91,10 @@ const SWIPE_STRAIGHT = 1.5
 /** The phone's panel sheet: its tabs (Slack opens the inbox instead). */
 const PANEL_TABS = [['status', 'Status'], ['quests', 'Quests'], ['actions', 'Actions'], ['slack', 'Slack']] as const
 type PanelTab = 'status' | 'quests' | 'actions'
+/** Theater (a phone held sideways): the side bar at the right edge. Ids are quick-menu actions, or panel tabs. */
+const RAIL_ITEMS = [
+  ['log', '☰', 'Log'], ['auto', '▶', 'Auto'], ['stop', '■', 'Stop'], ['slack', '✉', 'Slack'], ['quests', '◇', 'Quests'], ['status', '♥', 'Status'],
+] as const
 /** The ⋯ sheet: what the phone's quick menu leaves out. Ids are quick-menu actions, or panel tabs. */
 const MORE_ITEMS = [
   ['status', '♥', 'Status'], ['quests', '◇', 'Quests'], ['actions', '⚒', 'Actions'], ['mode', '⇄', 'Mode'],
@@ -672,6 +676,8 @@ export function chatScreen(): Screen {
     running = on
     // The phone's STOP button lights up while she works (chat.css).
     root.classList.toggle('running', on)
+    const state = root.querySelector('.pb-state')
+    if (state) state.textContent = on ? `${charName()} is working` : `${charName()} is listening`
     ctx.character.setBusy(on)
     if (on) {
       turnStart = Date.now()
@@ -1329,7 +1335,7 @@ export function chatScreen(): Screen {
         ['log', 'LOG', 'Backlog (Ctrl+O)'], ['auto', 'AUTO', 'Auto-advance'], ['mode', 'MODE', 'Permission mode (Shift+Tab)'],
         ['cmd', 'CMD', 'Commands (/)'], ['stop', 'STOP', 'Interrupt (Esc)'], ['slack', 'SLACK', 'Slack inbox (/slack)'], ['costume', '👗', 'Costume (/costume)'],
         ['focus', 'FOCUS', 'Focus mode: just the prompt and replies (/focus · Ctrl+Shift+F)'], ['settings', '⚙', 'Settings (/config)'],
-        ['menu', 'MENU', 'Back to the title'], ['more', '⋯', 'More'],
+        ['menu', 'MENU', 'Back to the title'], ['more', '⋯', 'More'], ['reply', 'Reply', 'Write to her'],
       ].map(([id, label, tip]) => `<button type="button" data-test="qm-${id}" title="${tip}">${label}</button>`).join('')
       dlgEl.append(qm)
       autoBtn = qm.querySelector('[data-test="qm-auto"]')!
@@ -1338,6 +1344,8 @@ export function chatScreen(): Screen {
       const slackBadge = () => {
         const n = ctx.slack.status().signedIn ? ctx.slack.unreadCount() : 0
         slackBtn.dataset.badge = n ? String(n) : ''
+        const railSlack = root.querySelector<HTMLElement>('[data-test="rail-slack"]')
+        if (railSlack) railSlack.dataset.badge = n ? String(n) : ''
         slackBtn.title = n ? `Slack inbox (/slack): ${n} conversation${n === 1 ? '' : 's'} unread` : 'Slack inbox (/slack)'
       }
       ctx.slack.onChange(slackBadge)
@@ -1345,6 +1353,7 @@ export function chatScreen(): Screen {
       applyFocus()
       const qmActions: Record<string, () => void> = {
         more: openMore,
+        reply: () => compose(true),
         log: openLog,
         auto() {
           auto = !auto
@@ -1464,12 +1473,80 @@ export function chatScreen(): Screen {
         })
       }
 
+      // ---------------------------------------------------------------- phone: top bar, meter, side bar, Reply
+      // The phone layouts (chat.css): Pocket VN upright (the top bar, the meter pills under it, LOG AUTO Reply STOP
+      // SLACK at the bottom, the composer only while replying) and Theater sideways (the top bar over the right
+      // column, a side bar at the edge). The bar's title, hearts and pills are filled by the panels.
+      const bar = document.createElement('header')
+      bar.className = 'pbar'
+      bar.dataset.test = 'pbar'
+      bar.innerHTML = `<button type="button" class="pb-btn" data-act="leave" data-test="pb-leave" aria-label="Leave the chat">✕</button>
+        <div class="pb-t"><b class="pb-title"></b><small><span class="pb-hearts"></span> · <span class="pb-state"></span></small></div>
+        <button type="button" class="pb-btn" data-act="sound" data-test="pb-sound" aria-label="Her voice"></button>
+        <button type="button" class="pb-btn" data-act="more" data-test="pb-more" aria-label="More">⋯</button>
+        <nav class="pb-meter"><button type="button" data-act="status" class="pb-ctx" data-test="pb-ctx"></button>
+        <button type="button" data-act="status" class="pb-five" data-test="pb-five"></button>
+        <button type="button" data-act="quests" class="pb-quests" data-test="pb-quests"></button></nav>`
+      root.append(bar)
+      const rail = document.createElement('nav')
+      rail.className = 'prail'
+      rail.dataset.test = 'prail'
+      rail.innerHTML = RAIL_ITEMS.map(([id, icon, label]) => `<button type="button" data-act="${id}" data-test="rail-${id}"><span>${icon}</span>${label}</button>`).join('')
+      root.append(rail)
+      slackBadge()
+      const phoneAct = (act: string | undefined) => {
+        if (act === 'leave') return void leave('title')
+        if (act === 'sound') return toggleSound()
+        if (act === 'status' || act === 'quests' || act === 'actions') return openPanels(act)
+        if (act) qmActions[act]?.()
+      }
+      for (const el of [bar, rail]) el.addEventListener('click', (e) => phoneAct((e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act))
+
+      // Her voice: 🔊 turns it on or off, and on plays a short line at once, so a silent phone shows why.
+      const soundBtn = bar.querySelector<HTMLElement>('[data-act="sound"]')!
+      const paintSound = () => {
+        const on = ctx.voice.active()
+        soundBtn.textContent = on ? '🔊' : '🔇'
+        soundBtn.classList.toggle('off', !on)
+        bar.querySelector('.pb-state')!.textContent = running ? `${charName()} is working` : `${charName()} is listening`
+      }
+      ctx.voice.onChange(paintSound)
+      ctx.store.subscribe(paintSound)
+      function toggleSound() {
+        if (!ctx.voice.hasKey()) return ctx.toast(`${charName()}'s voice needs a Fish Audio key on your computer · Settings → Voice`, 4000)
+        const on = !settings().voice.enabled
+        ctx.store.update((s) => void (s.voice.enabled = on))
+        paintSound()
+        if (!on) return ctx.toast(`${charName()}'s voice is off`)
+        const line = settings().voice.language === 'ja' ? 'はい、レムの声です。' : `This is my voice, ${addressOf(settings())}.`
+        ctx.voice.clip(line).then(
+          (clip) => {
+            const pb = ctx.voice.play(clip)
+            ctx.character.setVoiceLevel(() => pb.level())
+            pb.onEnd(() => ctx.character.setVoiceLevel(undefined))
+          },
+          (e: Error) => ctx.toast(`Her voice didn't come: ${e.message}`, 5000),
+        )
+      }
+
+      // Upright, the composer shows only while replying (Reply), or while the keyboard is up; sending closes it.
+      function compose(on: boolean) {
+        root.dataset.compose = on ? 'on' : ''
+        if (on) input.focus()
+      }
+      const composerEl = root.querySelector<HTMLElement>('.chat-input')!
+      composerEl.addEventListener('focusout', () => setTimeout(() => {
+        const ta = composerEl.querySelector('textarea')
+        if (!composerEl.contains(document.activeElement) && !ta?.value.trim()) compose(false)
+      }, 0))
+
       panels = createPanels(root.querySelector('.chat-left')!, root.querySelector('.chat-right')!, {
         openModels,
         // Focus goes back to the composer, so typing goes there instead of re-pressing the badge with Space/Enter.
         cycleMode: () => (cycleMode(), input.focus()),
         openAction,
-      })
+      }, bar)
+      paintSound()
       asks = createAsks(asksRoot(), {
         ctx,
         name: charName,
@@ -1496,12 +1573,14 @@ export function chatScreen(): Screen {
         cwd: () => cwd,
         busy: () => running,
         submitNow(text, images) {
+          compose(false)
           if (!live || ended || !ready || !running) return say(text, images)
           ctx.link.send({ t: 'say', text, images, now: true, mood: mood() })
           addLog({ who: 'user', text })
           ctx.toast(`Sent now · ${charName()} reads it at her next step`)
         },
         submit(text, images) {
+          compose(false)
           if (!live || ended) {
             input.restore(text)
             const pics = images.length ? ` · attach your image${images.length > 1 ? 's' : ''} again after` : ''
@@ -1515,6 +1594,7 @@ export function chatScreen(): Screen {
           say(text, images)
         },
         shell(command) {
+          compose(false)
           if (!live || ended || !ready) {
             input.restore(`!${command}`)
             return ctx.toast(`${charName()} is not ready yet`)
@@ -1668,6 +1748,11 @@ export function chatScreen(): Screen {
       // Popups and menus close first, as with Esc. An open prompt stays: it waits for an answer from either
       // device, and joining again brings it back.
       if (input.closePopups()) return true
+      if (root.dataset.compose === 'on') {
+        root.dataset.compose = ''
+        ;(document.activeElement as HTMLElement | null)?.blur()
+        return true
+      }
       const top = layers.at(-1)
       if (top && top.el !== asksRoot()) return top.close(), true
       void leave('title')

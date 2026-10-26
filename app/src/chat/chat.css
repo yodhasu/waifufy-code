@@ -560,73 +560,80 @@ html[data-focus='1'] .chat .chat-status .ribbon { display: none; }
 .chat .modal.slack-compose textarea { width: 100%; resize: vertical; min-height: 120px; font-size: 15px; }
 .chat .modal.slack-compose .set-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 10px; }
 
-/* ---------- Portrait (a phone, base.css). The 900-wide stage is drawn at about half size on a phone, so text
-   and touch targets are sized for that: the dialogue scales with Settings' text size (×1.8, ~17 px on screen),
-   and overlays full of text (menus, prompts, the panel sheet, ⋯, the tutorial) are zoomed by --pz, laying out
-   at about a real phone's width. Bottom to top: the composer, a row of five quick buttons (LOG AUTO SLACK STOP ⋯),
-   the dialogue box, then her. The side panels are tabs of one sheet (Status, Quests, Actions); swipes on the
-   text box open the log (up) or hide everything but her (down). With the keyboard up (data-compact) she is
-   head and shoulders and the dialogue sits right above the composer. ---------- */
-.chat .quickmenu [data-test='qm-more'], .chat .sheet-tabs, .chat .unhide { display: none; }
-#stage[data-orient='portrait'] .chat { --pz: 2.1; }
+/* ---------- The phone layouts (docs/design/mobile-mockups.html). A phone draws the stage at about half size, so
+   text-heavy overlays are zoomed by --pz to lay out at a real phone's width, and the dialogue scales with Settings'
+   text size (×1.8, ~17 px on screen).
+   - Pocket VN (portrait, any tall window): she fills the screen; the top bar (✕ leave, title and hearts, 🔊, ⋯)
+     with the context, plan and quest pills under it; the dialogue card low; LOG AUTO Reply STOP SLACK in the thumb
+     zone. The composer shows only while replying; with the keyboard up (data-compact) she is head and shoulders.
+   - Theater (a phone held sideways): she stands left; the top bar, the dialogue and the composer take the right
+     column; a labeled side bar sits at the edge.
+   Side panels are tabs of one sheet (Status, Quests, Actions); swipes on the text box open the log (up) or hide
+   everything but her (down). ---------- */
+.chat .quickmenu :is([data-test='qm-more'], [data-test='qm-reply']), .chat .sheet-tabs, .chat .unhide, .chat .pbar, .chat .prail { display: none; }
+#stage[data-orient='portrait'] .chat, #stage[data-device='phone'][data-orient='landscape'] .chat { --pz: 2.1; }
 
-/* The dialogue box, its name plate and text. */
-#stage[data-orient='portrait'] .chat .dialogue { left: 24px; right: 24px; bottom: 290px; height: 420px; padding: 50px 40px 40px; }
-#stage[data-orient='portrait'] .chat .dlg-text { font-size: calc(var(--dialogue-font, 21px) * 1.8); }
-#stage[data-orient='portrait'] .chat .dlg-ja { left: 40px; right: 40px; bottom: 24px; font-size: calc(var(--dialogue-font, 21px) * 1.2); }
-#stage[data-orient='portrait'] .chat .nameplate { top: -38px; max-width: 620px; padding: 10px 44px 10px 30px; font-size: 40px; border-radius: 16px 34px 34px 16px; }
-#stage[data-orient='portrait'] .chat > .chat-status { left: 24px; right: 24px; bottom: 730px; }
-#stage[data-orient='portrait'] .chat .ribbon, #stage[data-orient='portrait'] .chat .spinner { max-width: 852px; zoom: 1.6; }
+/* ---------- shared by both phone layouts ---------- */
+:is(#stage[data-orient='portrait'], #stage[data-device='phone'][data-orient='landscape']) .chat {
+  /* The top bar: glass buttons around the title; the meter pills under it. */
+  & .pbar { zoom: var(--pz); position: absolute; z-index: 9; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+  & .pb-btn { flex: none; width: 48px; height: 48px; border-radius: 50%; border: 0; display: grid; place-items: center; font-size: 20px;
+    color: var(--text); background: var(--panel); backdrop-filter: blur(10px); box-shadow: var(--panel-shadow); }
+  & .pb-btn.off { opacity: .7; }
+  & .pb-t { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 0 4px; text-shadow: 0 1px 8px var(--panel-solid); }
+  & .pb-t b { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--heading); }
+  & .pb-t small { font-size: 12px; color: var(--text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  & .pb-hearts { color: var(--bad); letter-spacing: 1px; }
+  & .pb-meter { flex-basis: 100%; display: flex; gap: 8px; }
+  & .pb-meter button { border: 0; font: inherit; font-size: 12px; font-weight: 700; padding: 4px 12px; min-height: 32px; border-radius: 999px;
+    color: var(--text); background: var(--panel); backdrop-filter: blur(8px); font-family: var(--font-mono); }
 
-/* Five big quick buttons under the box; the rest live in ⋯. */
-#stage[data-orient='portrait'] .chat .quickmenu { left: -2px; right: -2px; bottom: -132px; height: 112px; padding: 6px; gap: 6px;
-  border-radius: 20px; background: var(--panel); backdrop-filter: blur(8px); border: 1px solid var(--gold-soft); }
-#stage[data-orient='portrait'] .chat .quickmenu button { display: none; flex: 1 1 0; min-height: 98px; padding: 0 6px; font-size: 32px; letter-spacing: .08em; border-radius: 14px; }
-#stage[data-orient='portrait'] .chat .quickmenu :is([data-test='qm-log'], [data-test='qm-auto'], [data-test='qm-slack'], [data-test='qm-stop'], [data-test='qm-more']) { display: block; }
-#stage[data-orient='portrait'] .chat .quickmenu [data-test='qm-more'] { flex: .6 1 0; font-size: 44px; }
-#stage[data-orient='portrait'] .chat .quickmenu [data-test='qm-slack']:not([data-badge=''])::after { top: 8px; right: 8px; min-width: 34px; height: 34px;
-  border-radius: 17px; font-size: 20px; line-height: 34px; }
-#stage[data-orient='portrait'] .chat.running .quickmenu [data-test='qm-stop'] { color: var(--text-on-accent); background: var(--bad); }
+  /* The dialogue text, sized for a phone. */
+  & .dlg-text { font-size: calc(var(--dialogue-font, 21px) * 1.8); }
+  & .dlg-ja { left: 40px; right: 40px; bottom: 24px; font-size: calc(var(--dialogue-font, 21px) * 1.2); }
+  & .nameplate { top: -38px; max-width: 620px; padding: 10px 44px 10px 30px; font-size: 40px; border-radius: 16px 34px 34px 16px; }
+  & .ribbon, & .spinner { max-width: 852px; zoom: 1.6; }
+  & .chat-input { zoom: var(--pz); }
 
-/* The composer at the bottom, at phone size. */
-#stage[data-orient='portrait'] .chat .chat-input { zoom: var(--pz); left: calc(24px / var(--pz)); right: calc(24px / var(--pz)); bottom: calc(24px / var(--pz)); }
+  /* The panel sheet: tabs on top, one panel under them. */
+  & .chat-left, & .chat-right { display: none; zoom: var(--pz); z-index: 7; width: auto; overflow-y: auto; }
+  &[data-panels] .sheet-tabs { zoom: var(--pz); position: absolute; z-index: 8; display: flex; gap: 4px; padding: 4px; border-radius: 14px;
+    background: var(--panel-solid); border: 1px solid var(--gold-soft); box-shadow: var(--panel-shadow); }
+  &[data-panels=''] .sheet-tabs { display: none; }
+  & .sheet-tabs button { flex: 1; min-height: 44px; border: 0; border-radius: 10px; background: none; font: inherit; font-weight: 700; font-size: 14px; color: var(--text-soft); }
+  & .sheet-tabs button.on { color: var(--text-on-accent); background: var(--accent); }
+  & .sheet-tabs .pclose { flex: 0 0 44px; }
+  &[data-panels='status'] .chat-left, &:is([data-panels='quests'], [data-panels='actions']) .chat-right { display: flex; animation: fade .2s; }
+  &[data-panels='quests'] .chat-right :is(.acts-title, .actions) { display: none; }
+  &[data-panels='actions'] .chat-right > :not(.acts-title, .actions) { display: none; }
 
-/* The panel sheet: tabs on top, one panel under them, over her. */
-#stage[data-orient='portrait'] .chat[data-panels] .sheet-tabs { zoom: var(--pz); position: absolute; z-index: 8; top: calc(24px / var(--pz));
-  left: calc(24px / var(--pz)); right: calc(24px / var(--pz)); display: flex; gap: 4px; padding: 4px; border-radius: 14px;
-  background: var(--panel-solid); border: 1px solid var(--gold-soft); box-shadow: var(--panel-shadow); }
-#stage[data-orient='portrait'] .chat[data-panels=''] .sheet-tabs { display: none; }
-#stage[data-orient='portrait'] .chat .sheet-tabs button { flex: 1; min-height: 44px; border: 0; border-radius: 10px; background: none; font: inherit;
-  font-weight: 700; font-size: 14px; color: var(--text-soft); }
-#stage[data-orient='portrait'] .chat .sheet-tabs button.on { color: var(--text-on-accent); background: var(--accent); }
-#stage[data-orient='portrait'] .chat .sheet-tabs .pclose { flex: 0 0 44px; }
-#stage[data-orient='portrait'] .chat .chat-left, #stage[data-orient='portrait'] .chat .chat-right { display: none; zoom: var(--pz); z-index: 7;
-  top: calc(140px / var(--pz)); bottom: calc(24px / var(--pz)); left: calc(24px / var(--pz)); right: calc(24px / var(--pz)); width: auto;
-  overflow-y: auto; }
-#stage[data-orient='portrait'] .chat[data-panels='status'] .chat-left,
-#stage[data-orient='portrait'] .chat:is([data-panels='quests'], [data-panels='actions']) .chat-right { display: flex; animation: fade .2s; }
-#stage[data-orient='portrait'] .chat[data-panels='quests'] .chat-right :is(.acts-title, .actions) { display: none; }
-#stage[data-orient='portrait'] .chat[data-panels='actions'] .chat-right > :not(.acts-title, .actions) { display: none; }
+  /* Swiped down: just her, and a tap anywhere to bring the rest back. */
+  &[data-hidden='on'] :is(.dialogue, .chat-input, .chat-status, .pbar, .prail) { visibility: hidden; }
+  &[data-hidden='on'] .unhide { display: block; position: absolute; inset: 0; z-index: 30; }
 
-/* Swiped down: just her, and a tap anywhere to bring the rest back. */
-#stage[data-orient='portrait'] .chat[data-hidden='on'] :is(.dialogue, .chat-input, .chat-status) { visibility: hidden; }
-#stage[data-orient='portrait'] .chat[data-hidden='on'] .unhide { display: block; position: absolute; inset: 0; z-index: 30; }
-
-/* Prompts, menus, ⋯ and the tutorial, at phone size. */
-#stage[data-orient='portrait'] .chat .ask { zoom: var(--pz); max-width: calc(852px / var(--pz)); max-height: calc(1500px / var(--pz)); }
-#stage[data-orient='portrait'] .chat .chat-modal .modal,
-#stage[data-orient='portrait'] .chat .chat-modal .modal.wide { zoom: var(--pz); inset: calc(60px / var(--pz)) calc(24px / var(--pz)); padding: 16px; }
-#stage[data-orient='portrait'] .chat .chat-modal .modal.side { inset: calc(24px / var(--pz)) calc(24px / var(--pz)) calc(24px / var(--pz)) auto; width: calc(600px / var(--pz)); }
-#stage[data-orient='portrait'] .chat .modal header { flex-wrap: wrap; }
-#stage[data-orient='portrait'] .chat .modal h2 { white-space: normal; letter-spacing: .1em; }
-#stage[data-orient='portrait'] .chat .modal .close { min-height: 44px; }
-#stage[data-orient='portrait'] .chat .mrow { min-height: 48px; }
-#stage[data-orient='portrait'] .chat .modal.slack-compose { inset: calc(300px / var(--pz)) calc(24px / var(--pz)) auto; width: auto; }
-#stage[data-orient='portrait'] .chat .modal.sheet { inset: auto calc(24px / var(--pz)) calc(24px / var(--pz)); }
+  /* Prompts, menus, ⋯ and the tutorial, at phone size. */
+  & .ask { zoom: var(--pz); width: calc(852px / var(--pz)); max-width: calc(852px / var(--pz)); max-height: calc(1500px / var(--pz)); }
+  & .ask :is(.choices, .diff, .plan, pre.cmd, .preview) { width: 100%; max-width: 100%; min-width: 0; }
+  & .ask .cols { flex-direction: column; width: 100%; }
+  & .ask.with-preview .choices { width: 100%; }
+  & .choice { min-height: 48px; }
+  & .choice:hover, & .choice:focus-visible { transform: none; }
+  & .diff :is(.diff-file, .dl) { overflow-wrap: anywhere; }
+  & .chat-modal .modal, & .chat-modal .modal.wide { zoom: var(--pz); inset: calc(60px / var(--pz)) calc(24px / var(--pz)); padding: 16px; }
+  & .chat-modal .modal.side { inset: calc(24px / var(--pz)) calc(24px / var(--pz)) calc(24px / var(--pz)) auto; width: calc(600px / var(--pz)); }
+  & .modal header { flex-wrap: wrap; }
+  & .modal header .mtools { flex-wrap: wrap; }
+  & .modal .msearch { width: 100%; min-width: 0; }
+  & .modal h2 { white-space: normal; letter-spacing: .1em; }
+  & .modal .close { min-height: 44px; }
+  & .mrow { min-height: 48px; }
+  & .modal.slack-compose { inset: calc(300px / var(--pz)) calc(24px / var(--pz)) auto; width: auto; }
+  & .modal.sheet { inset: auto calc(24px / var(--pz)) calc(24px / var(--pz)); }
+  & .modal.tutorial { inset: auto calc(48px / var(--pz)); top: calc(420px / var(--pz)); }
+}
 .chat .sheet-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .chat .sheet-grid .btn { min-height: 76px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 14px; }
 .chat .sheet-grid .btn span { font-size: 24px; line-height: 1; }
-#stage[data-orient='portrait'] .chat .modal.tutorial { inset: auto calc(48px / var(--pz)); top: calc(420px / var(--pz)); }
 .chat .tut-card { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 6px 4px; text-align: center; }
 .chat .tut-icon { width: 76px; height: 76px; border-radius: 50%; display: grid; place-items: center; font-size: 38px; color: var(--text-on-accent);
   background: linear-gradient(135deg, var(--accent-deep), var(--accent)); box-shadow: 0 8px 20px var(--accent-glow); }
@@ -638,19 +645,75 @@ html[data-focus='1'] .chat .chat-status .ribbon { display: none; }
 .chat .tut-row { display: flex; gap: 10px; }
 .chat .tut-row .btn { flex: 1; min-height: 48px; }
 
-/* Inside the zoomed prompt everything fits its width: the choices, a diff, a plan, a preview (stacked under the choices). */
-#stage[data-orient='portrait'] .chat .ask { width: calc(852px / var(--pz)); }
-#stage[data-orient='portrait'] .chat .ask :is(.choices, .diff, .plan, pre.cmd, .preview) { width: 100%; max-width: 100%; min-width: 0; }
-#stage[data-orient='portrait'] .chat .ask .cols { flex-direction: column; width: 100%; }
-#stage[data-orient='portrait'] .chat .ask.with-preview .choices { width: 100%; }
-#stage[data-orient='portrait'] .chat .choice { min-height: 48px; }
-#stage[data-orient='portrait'] .chat .choice:hover, #stage[data-orient='portrait'] .chat .choice:focus-visible { transform: none; }
-#stage[data-orient='portrait'] .chat .diff :is(.diff-file, .dl) { overflow-wrap: anywhere; }
-/* Menus with a search field (the backlog, /mcp…): the field takes its own line. */
-#stage[data-orient='portrait'] .chat .modal header .mtools { flex-wrap: wrap; }
-#stage[data-orient='portrait'] .chat .modal .msearch { width: 100%; min-width: 0; }
+/* ---------- Pocket VN (portrait) ---------- */
+#stage[data-orient='portrait'] .chat {
+  & .pbar { display: flex; top: calc(16px / var(--pz)); left: calc(16px / var(--pz)); right: calc(16px / var(--pz)); }
+  & .dialogue { left: 24px; right: 24px; bottom: 184px; height: 420px; padding: 50px 40px 40px; border-radius: 40px; }
+  & > .chat-status { left: 24px; right: 24px; bottom: 628px; }
 
-/* Keyboard up (compact): she is head and shoulders, the dialogue sits right on the composer, the quick row steps aside. */
-#stage[data-orient='portrait'][data-compact='on'] .chat .dialogue { bottom: 176px; height: 330px; }
-#stage[data-orient='portrait'][data-compact='on'] .chat .quickmenu,
-#stage[data-orient='portrait'][data-compact='on'] .chat > .chat-status { display: none; }
+  /* LOG AUTO Reply STOP SLACK, icons over labels, in the thumb zone; Reply is the big one. */
+  & .quickmenu { left: -2px; right: -2px; bottom: -160px; height: 128px; padding: 0; gap: 12px; background: none; border: 0; backdrop-filter: none; }
+  & .quickmenu button { display: none; flex: 1 1 0; min-height: 128px; padding: 0; border-radius: 36px; font-size: 22px; letter-spacing: .08em;
+    color: var(--text); background: var(--panel); backdrop-filter: blur(10px); box-shadow: var(--panel-shadow); }
+  & .quickmenu button::before { display: block; font-size: 44px; line-height: 1.2; letter-spacing: 0; }
+  & .quickmenu :is([data-test='qm-log'], [data-test='qm-auto'], [data-test='qm-reply'], [data-test='qm-stop'], [data-test='qm-slack']) { display: block; }
+  & .quickmenu [data-test='qm-log']::before { content: '☰'; }
+  & .quickmenu [data-test='qm-auto']::before { content: '▶'; }
+  & .quickmenu [data-test='qm-stop']::before { content: '■'; }
+  & .quickmenu [data-test='qm-slack']::before { content: '✉'; }
+  & .quickmenu [data-test='qm-reply'] { order: 0; flex: 2 1 0; font-size: 36px; font-weight: 800; letter-spacing: .04em; color: var(--text-on-accent);
+    background: linear-gradient(135deg, var(--accent-deep), var(--accent)); box-shadow: 0 16px 40px var(--accent-glow); }
+  & .quickmenu [data-test='qm-log'], & .quickmenu [data-test='qm-auto'] { order: -1; }
+  & .quickmenu [data-test='qm-stop'], & .quickmenu [data-test='qm-slack'] { order: 1; }
+  & .quickmenu button.on { color: var(--text-on-accent); background: var(--accent); }
+  & .quickmenu [data-test='qm-slack']:not([data-badge=''])::after { top: 8px; right: 12px; min-width: 40px; height: 40px; border-radius: 20px; font-size: 22px; line-height: 40px; }
+  &.running .quickmenu [data-test='qm-stop'] { color: var(--text-on-accent); background: var(--bad); }
+
+  /* The composer: only while replying (or with the keyboard up), where the buttons were. */
+  & .chat-input { display: none; left: calc(24px / var(--pz)); right: calc(24px / var(--pz)); bottom: calc(40px / var(--pz)); }
+  &[data-compose='on'] .chat-input { display: block; }
+  &[data-compose='on'] .quickmenu { display: none; }
+
+  /* The panel sheet sits under the top bar. */
+  &[data-panels] .sheet-tabs { top: calc(240px / var(--pz)); left: calc(24px / var(--pz)); right: calc(24px / var(--pz)); }
+  & .chat-left, & .chat-right { top: calc(340px / var(--pz)); bottom: calc(24px / var(--pz)); left: calc(24px / var(--pz)); right: calc(24px / var(--pz)); }
+
+  /* Prompts rise from the bottom, a VN choice stack in thumb reach. */
+  & .chat-ask { justify-content: flex-end; padding-bottom: 80px; }
+}
+/* Keyboard up (compact): she is head and shoulders, the dialogue sits right on the composer, the rest steps aside. */
+#stage[data-orient='portrait'][data-compact='on'] .chat {
+  & .dialogue { bottom: 176px; height: 330px; }
+  & .chat-input { bottom: calc(24px / var(--pz)); }
+  & .quickmenu, & > .chat-status, & .pb-meter { display: none; }
+}
+
+/* ---------- Theater (a phone held sideways) ---------- */
+#stage[data-device='phone'][data-orient='landscape'] .chat {
+  --col: 880px;
+  --rail: 200px;
+  & > .chat-left, & > .chat-right { display: none; }
+  & .pbar { display: flex; top: calc(16px / var(--pz)); left: calc(var(--col) / var(--pz)); right: calc(var(--rail) / var(--pz)); }
+  & .pb-meter { display: none; }
+  & .dialogue { left: var(--col); right: var(--rail); top: 170px; bottom: 170px; height: auto; padding: 46px 36px 30px; border-radius: 36px; }
+  & .quickmenu, & > .chat-status { display: none; }
+  & .chat-input { left: calc(var(--col) / var(--pz)); right: calc(var(--rail) / var(--pz)); bottom: calc(24px / var(--pz)); }
+
+  /* The side bar: icons over labels down the right edge. */
+  & .prail { zoom: var(--pz); display: flex; position: absolute; z-index: 9; top: 0; bottom: 0; right: 0; width: calc(var(--rail) / var(--pz));
+    flex-direction: column; justify-content: center; gap: 4px; padding: 8px; background: var(--panel); backdrop-filter: blur(10px); }
+  & .prail button { position: relative; min-height: 52px; border: 0; border-radius: 16px; background: none; font: inherit; font-size: 11px;
+    font-weight: 700; letter-spacing: .04em; color: var(--text); display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  & .prail button span { font-size: 20px; line-height: 1.1; }
+  & .prail [data-act='slack']:not([data-badge=''])::after { content: attr(data-badge); position: absolute; top: 4px; right: 14px; min-width: 18px; height: 18px;
+    border-radius: 9px; background: var(--accent); color: var(--text-on-accent); font-size: 11px; line-height: 18px; text-align: center; }
+  &.running .prail [data-act='stop'] { color: var(--bad); }
+
+  /* The panel sheet and prompts take the right column, beside her. */
+  &[data-panels] .sheet-tabs { top: calc(24px / var(--pz)); left: calc(var(--col) / var(--pz)); right: calc(var(--rail) / var(--pz)); }
+  & .chat-left, & .chat-right { position: absolute; top: calc(140px / var(--pz)); bottom: calc(24px / var(--pz)); left: calc(var(--col) / var(--pz));
+    right: calc(var(--rail) / var(--pz)); }
+  & .chat-ask { align-items: flex-end; padding-right: calc(var(--rail) + 40px); }
+  /* A prompt with a diff is taller than a sideways phone: it scrolls inside the screen. */
+  & .ask { max-height: calc(860px / var(--pz)); overflow-y: auto; justify-content: flex-start; }
+}

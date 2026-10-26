@@ -70,7 +70,7 @@ async function tourTheme(theme) {
   await app.key('Escape')
   await app.key('Escape')
   if (PORTRAIT) {
-    await app.click(T('qm-more'))
+    await app.click(T('pb-more'))
     await app.waitVisible(T('qm-sheet'))
     await shot(`${theme}-08c-more`)
     await app.click(T('more-quests'))
@@ -81,7 +81,7 @@ async function tourTheme(theme) {
   }
 
   // On a phone the costumes are in ⋯.
-  if (PORTRAIT) await app.click(T('qm-more')), await app.click(T('more-costume'))
+  if (PORTRAIT) await app.click(T('pb-more')), await app.click(T('more-costume'))
   else await app.click(T('qm-costume'))
   await app.waitVisible(T('costume-picker'))
   await shot(`${theme}-08-costumes`)

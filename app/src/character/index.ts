@@ -4,7 +4,7 @@ import './character.css'
 import { createDirector, type Actor } from './director.ts'
 import { createFx } from './fx.ts'
 import { createInteract } from './interact.ts'
-import { BOX_H, BOX_LEFT, BOX_W, HIDDEN_DROP, PLACEMENTS, portraitPlacements, STAGE_H, STAGE_W } from './layout.ts'
+import { BOX_H, BOX_LEFT, BOX_W, HIDDEN_DROP, PHONE_LANDSCAPE, PLACEMENTS, portraitPlacements, STAGE_H, STAGE_W } from './layout.ts'
 // The engine is imported on first use (see startStage): it throws at import when the Cubism core is missing.
 import type { Rig, Stage } from './live2d.ts'
 import type { Mark } from './motions.ts'
@@ -106,7 +106,8 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
 
   const stageScale = () => Number(stageEl.dataset.scale) || stageEl.getBoundingClientRect().width / STAGE_W || 1
   const portrait = () => stageEl.dataset.orient === 'portrait'
-  const spot = () => (portrait() ? portraitPlacements(stageEl.offsetHeight, stageEl.dataset.compact === 'on') : PLACEMENTS)[lastVisible]
+  const spot = () =>
+    (portrait() ? portraitPlacements(stageEl.offsetHeight, stageEl.dataset.compact === 'on') : stageEl.dataset.device === 'phone' ? PHONE_LANDSCAPE : PLACEMENTS)[lastVisible]
   const visibleScale = () => spot().scale
   const resolution = () => Math.min(MAX_RESOLUTION, (devicePixelRatio || 1) * stageScale() * visibleScale())
 

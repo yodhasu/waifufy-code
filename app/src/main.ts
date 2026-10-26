@@ -34,10 +34,13 @@ function fit() {
   const portrait = innerHeight > innerWidth
   const tall = Math.round((STAGE_H * innerHeight) / innerWidth)
   const compact = portrait && tall < COMPACT_H
-  const [w, h] = portrait ? [STAGE_H, compact ? Math.max(COMPACT_MIN_H, tall) : Math.max(STAGE_W, tall)] : [STAGE_W, STAGE_H]
-  const s = Math.min(innerWidth / w, innerHeight / h)
   const stage = document.getElementById('stage')!
+  // A phone held sideways (Theater) is wider than 16:9: the stage widens with it instead of leaving bars.
+  const wide = stage.dataset.device === 'phone' ? Math.max(STAGE_W, Math.round((STAGE_H * innerWidth) / innerHeight)) : STAGE_W
+  const [w, h] = portrait ? [STAGE_H, compact ? Math.max(COMPACT_MIN_H, tall) : Math.max(STAGE_W, tall)] : [wide, STAGE_H]
+  const s = Math.min(innerWidth / w, innerHeight / h)
   stage.style.height = portrait ? `${h}px` : ''
+  stage.style.width = !portrait && wide !== STAGE_W ? `${w}px` : ''
   stage.dataset.orient = portrait ? 'portrait' : 'landscape'
   stage.dataset.compact = compact ? 'on' : ''
   stage.style.transform = `translate(-50%, -50%) scale(${s})`
@@ -118,6 +121,9 @@ export function readAsDataUrl(file: Blob) {
 // ---------------------------------------------------------------- boot
 
 const link = await connect()
+// The phone app (paired with a computer) gets the phone layouts: Pocket VN upright, Theater sideways (chat.css).
+document.getElementById('stage')!.dataset.device = link.remote ? 'phone' : 'desktop'
+fit()
 const helloReply = link.next((m): m is Extract<typeof m, { t: 'hello' }> => m.t === 'hello', 30000)
 link.send({ t: 'hello' })
 const greeting = await helloReply
