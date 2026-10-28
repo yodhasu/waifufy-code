@@ -6,6 +6,8 @@
 //
 //   node scripts/pv/record.mjs mobile     1080×1920 portrait (TikTok, Reels, Shorts) → build/pv/Waifufy-Code-PV-mobile.mp4
 //   node scripts/pv/record.mjs desktop    1920×1080 landscape (README, X, YouTube)   → build/pv/Waifufy-Code-PV.mp4
+//   … --clean                              no captions or end card, for editing elsewhere → build/pv/clean-<format>.mp4,
+//                                          with build/pv/clean-<format>.json: when each beat starts, in video seconds
 //
 // Needs Chrome or Edge and ffmpeg on PATH (or WC_FFMPEG). Uses the e2e driver (tests/e2e/driver.mjs).
 
@@ -21,6 +23,8 @@ const FORMATS = {
 const format = process.argv[2] ?? 'mobile'
 const F = FORMATS[format]
 if (!F) throw new Error(`unknown format "${format}"; use ${Object.keys(FORMATS).join(' or ')}`)
+const clean = process.argv.includes('--clean')
+if (clean) F.file = `clean-${format}.mp4`
 
 // Read by the driver as it launches: a headless Chrome at exactly the video size.
 process.env.WC_E2E_TARGET = 'browser'
@@ -40,6 +44,8 @@ const PAT_SWING = 0.6
 
 let app
 const frames = []
+/** Clean cut: where each caption would have gone, in wall-clock seconds (the screencast's clock). */
+const beats = []
 
 // ---------------------------------------------------------------- capture
 
@@ -101,6 +107,7 @@ const CAPTION_CSS = `
   font: 600 ${format === 'mobile' ? '20px' : '24px'} 'JetBrains Mono', monospace; }`
 
 async function caption(text, sub = '') {
+  if (clean) return void (text && beats.push({ text, t: Date.now() / 1000 }))
   await app.eval((css, t, s) => {
     if (!document.getElementById('pv-style')) {
       const st = document.createElement('style')
@@ -128,6 +135,7 @@ async function caption(text, sub = '') {
 }
 
 async function endCard() {
+  if (clean) return void beats.push({ text: 'end', t: Date.now() / 1000 })
   await caption('')
   await app.eval(() => {
     const el = document.createElement('div')
@@ -268,6 +276,10 @@ try {
   await stopCapture()
   console.log(`captured ${frames.length} frames over ${(frames.at(-1).t - frames[0].t).toFixed(1)} s`)
   console.log(`wrote ${encode()}`)
+  if (clean) {
+    const at = beats.map((b) => ({ ...b, t: +(b.t - frames[0].t).toFixed(2) }))
+    writeFileSync(join(OUT, `clean-${format}.json`), JSON.stringify(at, null, 2))
+  }
 } finally {
   await app?.close()
   await stopVite?.()

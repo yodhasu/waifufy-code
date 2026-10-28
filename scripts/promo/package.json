@@ -1,0 +1,17 @@
+{
+  "name": "waifufy-code-promo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "audio": "node gen-audio.mjs",
+    "studio": "remotion studio src/index.tsx",
+    "render": "remotion render src/index.tsx Promo ../../build/pv/Waifufy-Code-Promo.mp4 --codec=h264 --crf=16"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.539",
+    "@remotion/google-fonts": "4.0.539",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.539"
+  }
+}
