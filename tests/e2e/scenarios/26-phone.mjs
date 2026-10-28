@@ -206,6 +206,8 @@ export default {
         const pair = await enablePhone(app)
         await newGame(app, project)
         await fastText(app)
+        // The app stays open across this file's tests: sessions they replaced ended before this mark.
+        const since = (await app.mark()).events
         const phone = await openPhone(pair)
         try {
           await fastText(phone)
@@ -223,7 +225,7 @@ export default {
           // Android killed the app: it starts again and goes straight back into the chat.
           await phone.eval(() => location.reload())
           await phone.waitFor(() => document.getElementById('stage')?.dataset.screen === 'chat', { label: 'the chat after a restart', timeout: 20_000 })
-          assert(!(await app.eval(() => window.__e2e.events.some((e) => e.t === 'ended'))), 'the desktop session still runs')
+          assert(!(await app.eval((f) => window.__e2e.events.slice(f).some((e) => e.t === 'ended'), since)), 'the desktop session still runs')
         } finally {
           await phone.close()
         }

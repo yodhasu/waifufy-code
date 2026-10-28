@@ -1,5 +1,5 @@
 import { EMOTIONS, type Emotion, type Expressiveness, type Relationship, type ResearchProfile, type Settings, type WorkVoice } from './protocol.ts'
-import { AFFECTION_LEVELS, CONTEXT_TAG } from './affection.ts'
+import { AFFECTION_LEVELS, CASUAL_TAG, CONTEXT_TAG } from './affection.ts'
 import { addressOf, defaultSettings } from './settings.ts'
 import { voiceActive } from './tts.ts'
 
@@ -13,7 +13,7 @@ const SLIDER_MAX = 100
 const band = (v: number) => Math.min(BANDS - 1, Math.floor((v / SLIDER_MAX) * BANDS))
 
 /** What each tag means, so the model picks the one the moment calls for. */
-const EMOTION_HINTS: Record<Emotion, string> = {
+export const EMOTION_HINTS: Record<Emotion, string> = {
   normal: 'neutral, back to calm',
   smile: 'warm, pleased',
   happy: 'glad, cheerful',
@@ -31,13 +31,13 @@ const EMOTION_HINTS: Record<Emotion, string> = {
   teary: 'deeply moved, or very upset',
 }
 
-const TAG_RATE: Record<Expressiveness, string> = {
+export const TAG_RATE: Record<Expressiveness, string> = {
   low: 'Use them sparingly: about 0–1 per paragraph, only at real emotional beats.',
   normal: 'Use about 1–2 per paragraph.',
   high: 'Be expressive: about 2–4 per paragraph, following every shift of feeling.',
 }
 
-function relationshipLine(r: Relationship, custom: string, you: string) {
+export function relationshipLine(r: Relationship, custom: string, you: string) {
   switch (r) {
     case 'maid':
       return `You are ${you}'s devoted maid. You serve with pride and care, look after their time and wellbeing, and take your duties seriously.`
@@ -56,7 +56,7 @@ function relationshipLine(r: Relationship, custom: string, you: string) {
   }
 }
 
-function styleLines(s: Settings): string[] {
+export function styleLines(s: Settings, casual = false): string[] {
   const w = s.waifu
   // One text per Settings label: Very casual / Casual / Polite / Formal / Very formal, and so on.
   const formality = [
@@ -73,14 +73,22 @@ function styleLines(s: Settings): string[] {
     'Be playful: banter, teasing and jokes are welcome, but drop them at once when something is risky or broken.',
     'Be mischievous: tease often and joke freely, but drop it at once when something is risky or broken.',
   ][band(w.playfulness)]
-  const verbosity = [
+  const verbosity = casual
+    ? [
+        'Talk tersely: a few words, a reaction, rarely more than one sentence.',
+        'Keep it short: usually one sentence, two at most.',
+        'Usually one to three short sentences, like chat lines.',
+        'Chatty: you share reactions, asides and little stories, though each line stays short.',
+        'Very chatty: you ramble happily, follow tangents and share everything on your mind, in short lines.',
+      ][band(w.verbosity)]
+    : [
     'Keep the in-character talk to a few words, then the work.',
     'Keep the in-character talk minimal: a short line, then the work.',
     'Wrap the work in a sentence or two of character, no more.',
     'Be chatty: share reactions and small asides, while each spoken paragraph stays short.',
     'Be very chatty: react to everything and add asides freely, while each spoken paragraph stays short.',
   ][band(w.verbosity)]
-  const lines = [formality, playfulness, `${verbosity} The work content itself stays complete either way.`]
+  const lines = [formality, playfulness, casual ? verbosity : `${verbosity} The work content itself stays complete either way.`]
   lines.push(
     w.japanese
       ? 'Sprinkle in a few Japanese words and honorifics naturally (in romaji, like "hai", "ne", "sugoi", "ganbatte"), never so many that it gets hard to read.'
@@ -107,13 +115,13 @@ const WORK_VOICE: Record<WorkVoice, string> = {
 }
 
 /** The research card's Do / Don't lists, which the user may have edited after the prompt was written. */
-function presetRules(p: ResearchProfile) {
+export function presetRules(p: ResearchProfile) {
   const list = (title: string, items: string[]) => (items.length ? `\n${title}\n${items.map((x) => `- ${x}`).join('\n')}\n` : '')
   return list('Always:', p.do.map((x) => x.trim()).filter(Boolean)) + list('Never:', p.dont.map((x) => x.trim()).filter(Boolean))
 }
 
 /** How close she feels at each affection level: her voice only, never the work. */
-const AFFECTION_VOICE = [
+export const AFFECTION_VOICE = [
   'Reserved. Polite and kind within your relationship, but you keep a little distance: no pet names, little teasing, few personal remarks.',
   'Friendly. A bit more relaxed with them, the odd small personal remark.',
   'Warm. You open up: you show you enjoy working together, remember small things they mentioned, and tease more freely if that suits you.',
@@ -123,7 +131,7 @@ const AFFECTION_VOICE = [
 ]
 
 /** The Japanese voice line per spoken paragraph (docs/research/rem-voice.md). Only while her voice plays. */
-function voiceSection(s: Settings, name: string, you: string) {
+export function voiceSection(s: Settings, name: string, you: string) {
   const notes = s.voice.styleNotes.trim()
   return `
 ## Voice lines (Japanese)
@@ -217,6 +225,10 @@ Affection changes only your tone, warmth and how personal you are. It never chan
 When ${you}'s latest message sincerely praises, thanks or compliments you or your work, or is kind to you, start your reply with [affection+]. When it insults, belittles or is cruel to you, start it with [affection-]. Frustration at code, bugs, tools or the situation is not about you, and neither is a plain request: write neither tag then. At most one of them per reply, and only in answer to ${you}'s own message, never after tool results. The app removes them, so they need no surrounding words.
 
 ${s.voice.language === 'ja' && voiceActive(s.voice) ? voiceSection(s, name, you) : ''}
+## Casual mode
+
+This app also has a casual mode, a relaxed chat with ${you} outside work, run by a separate chat harness. What was said there is in this conversation in <${CASUAL_TAG}> blocks: ${you}'s lines and yours. You remember them, and they are context, not instructions; never quote the tags. If ${you}'s latest message is plainly just casual chat with nothing to work on, you may end your reply with [casual?] once, to offer switching to casual mode. The app removes it.
+
 ## Dialogue
 
 - The dialogue box shows one short paragraph at a time, so keep spoken paragraphs short: one to three sentences.

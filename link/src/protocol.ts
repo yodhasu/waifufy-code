@@ -157,6 +157,33 @@ export type ClaudeSettings = {
   settingSources: ('user' | 'project' | 'local')[]
 }
 
+/** Work: Claude Code, as always. Casual: her own chat harness (link/src/casual), on the same history. */
+export type ChatMode = 'work' | 'casual'
+
+/** Casual mode (v0.7). The API key lives in the link's own file (`casual_key`), never here. */
+export type CasualSettings = {
+  /** 'openai': any OpenAI-compatible chat API, while a key is stored. Without one, and for 'claude', Claude answers through the Agent SDK. */
+  provider: 'openai' | 'claude'
+  baseUrl: string
+  model: string
+  /** Sent as `reasoning_effort` when not ''. */
+  reasoningEffort: string
+  /** Claude model (alias or id) when Claude answers in casual mode. */
+  claudeModel: string
+  /** Model her toolkit (Claude Code with your tools and MCP servers) runs on when she uses it. */
+  toolModel: string
+  /** This session's work lines are in her casual history (and so reach the casual model). */
+  shareWork: boolean
+  /** Reflect, judge and tune after a quiet spell in casual mode. */
+  learning: boolean
+  /** Minutes casual mode is quiet before she reflects. */
+  idleMin: number
+  /** 0 – 10: below this judge score, her style gets a revision (kept only if it replays better). */
+  judgeThreshold: number
+  /** Who reflects and judges: Claude, or the casual model itself. */
+  learnWith: 'claude' | 'casual'
+}
+
 export type Settings = {
   version: 1
   onboarded: boolean
@@ -168,6 +195,7 @@ export type Settings = {
   claude: ClaudeSettings
   voice: VoiceSettings
   slack: SlackSettings
+  casual: CasualSettings
   /** Last folder a session was started in. */
   lastDir: string
 }
@@ -207,7 +235,7 @@ export type Costume = {
 }
 
 export type HistoryEntry =
-  | { who: 'char' | 'user'; text: string }
+  | { who: 'char' | 'user'; text: string; mode?: 'casual' }
   | { who: 'tool'; name: string; detail: string; output?: string; ok?: boolean }
   | { who: 'system'; text: string }
 
@@ -396,6 +424,10 @@ export type ClientMsg =
   | { t: 'slack_mark'; channel: string; ts: string }
   /** Posts as the signed-in person, in the thread `thread` when given; answered with `slack_sent`. */
   | { t: 'slack_send'; id: string; channel: string; text: string; thread?: string }
+  /** Switches the running session between work and casual; refused (in character) while work is still running. */
+  | { t: 'chat_mode'; mode: ChatMode }
+  /** Stores the casual API key in the link (never in settings); an empty key removes it. */
+  | { t: 'casual_key'; key: string }
   /** Desktop only: turns phone access on or off; answered (to every desktop window) with `remote_status`. */
   | { t: 'remote_set'; enabled: boolean }
   /** Desktop only: a new pairing token; connected phones are dropped and must scan again. */
@@ -479,6 +511,10 @@ export type SessionEvent =
   | { t: 'notify'; key: string; text: string; priority: 'low' | 'medium' | 'high' | 'immediate' }
   /** Every background task the CLI tracks (agents, shells, monitors), whole: the /tasks panel and Ctrl+B. */
   | { t: 'bg_tasks'; tasks: BgTask[] }
+  /** The session's chat mode, after a `chat_mode` or on attach. */
+  | { t: 'chat_mode'; mode: ChatMode }
+  /** She thinks the other mode fits what was just said; `text`: the message to send there if accepted. */
+  | { t: 'offer_mode'; mode: ChatMode; text?: string }
   /** The CLI's greyed next-prompt suggestion, after a turn. */
   | { t: 'suggestion'; text: string }
   /** A hook running (PreToolUse, Stop…): the spinner names it; a failure is logged. */
@@ -486,11 +522,13 @@ export type SessionEvent =
 
 export type ServerMsg =
   /** `remote`: this window is a phone (phone access), so desktop-only things (folder pickers, Explorer) don't apply. */
-  | { t: 'hello'; version: string; settings: Settings; auth: Auth; dataDir: string; voiceKey: boolean; slack: SlackStatus; remote: boolean }
+  | { t: 'hello'; version: string; settings: Settings; auth: Auth; dataDir: string; voiceKey: boolean; casualKey: boolean; slack: SlackStatus; remote: boolean }
   /** One clip: base64 audio, or why there is none. */
   | { t: 'tts'; id: string; audio?: string; mime?: string; error?: string }
   /** Whether a Fish Audio key is stored now (after voice_key, to every window). */
   | { t: 'voice_key'; has: boolean }
+  /** Whether a casual API key is stored now (after casual_key, to every window). */
+  | { t: 'casual_key'; has: boolean }
   | { t: 'settings'; settings: Settings }
   | { t: 'auth'; auth: Auth }
   | { t: 'saves'; list: Save[] }

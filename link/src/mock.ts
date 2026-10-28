@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { fileControl } from './config-files.ts'
 import { elicitContent, elicitFields } from './elicit.ts'
 import { permissionOptions } from './perm-options.ts'
-import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
+import type { CanUseTool, PermissionUpdate } from '@anthropic-ai/claude-agent-sdk'
 import {
   EMOTIONS,
   type Command,
@@ -384,6 +384,15 @@ class MockSession implements SessionApi {
   answerPermission(id: string, decision: PermissionAnswer['decision'], message?: string) {
     this.answer(id, { kind: 'permission', decision, message })
   }
+
+  /** Casual exchanges the mock "transcript" got (casual/modes.ts). */
+  readonly appended: string[] = []
+
+  appendContext(text: string) {
+    this.appended.push(text)
+  }
+
+  permit: CanUseTool = async (_name, input) => ({ behavior: 'allow', updatedInput: input })
 
   answerQuestion(id: string, answers: Record<string, string>) {
     this.answer(id, { kind: 'question', answers })

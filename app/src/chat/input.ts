@@ -30,6 +30,8 @@ export type InputHost = {
   stop?(): void
   /** The mode chip in the box: the next permission mode, as Shift+Tab. */
   cycleMode?(): void
+  /** The Work / Casual switch left of the box. */
+  toggleChat?(): void
 }
 
 /**
@@ -67,6 +69,10 @@ export type InputApi = {
   setRunning(on: boolean): void
   /** The permission mode chip in the box: its label and the mode it stands for (its colour). */
   setMode(label: string, mode: string): void
+  /** Work or casual: the switch's label, and the permission chip only in work mode. */
+  setChat(mode: 'work' | 'casual'): void
+  /** Her offer to switch modes, as a bar over the composer; gone on either answer or the next message. */
+  offer(text: string, onAccept: () => void): void
 }
 
 /** True for events that come from the composer (see InputApi). */
@@ -212,7 +218,11 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
         <div class="wci-hist-list"></div>
       </div>
       <div class="wci-queue"></div>
+      <div class="wci-offer" data-test="mode-offer" hidden><span></span>
+        <button type="button" class="btn primary" data-test="mode-offer-yes">Switch</button>
+        <button type="button" class="btn" data-test="mode-offer-no">Not now</button></div>
       <div class="wci-bar">
+        <button type="button" class="wci-chat" data-test="chat-mode" data-chat="work" title="Work or casual chat with her"><b>⚙</b><small>WORK</small></button>
         <button type="button" class="wci-attach" data-test="chat-attach" title="Attach files or images (or paste / drop them)" aria-label="Attach files">${ICON_CLIP}</button>
         <input type="file" class="wci-pick" data-test="chat-pick" multiple hidden>
         <div class="wci-box" data-test="input-mode" data-mode="normal">
@@ -236,6 +246,10 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
   const sendBtn = q<HTMLButtonElement>('.wci-send')
   const attachBtn = q<HTMLButtonElement>('.wci-attach')
   const permBtn = q<HTMLButtonElement>('.wci-perm')
+  const chatBtn = q<HTMLButtonElement>('.wci-chat')
+  const offerEl = q('.wci-offer')
+  let chatMode: 'work' | 'casual' = 'work'
+  let permShown = false
   const slashPop = q('.wci-slash')
   const atPop = q('.wci-at')
   const histPop = q('.wci-hist')
@@ -820,6 +834,16 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
     ta.focus()
   })
   permBtn.addEventListener('click', () => (host.cycleMode?.(), ta.focus()))
+  chatBtn.addEventListener('click', () => (host.toggleChat?.(), ta.focus()))
+  let offerYes: (() => void) | undefined
+  const hideOffer = () => ((offerEl.hidden = true), (offerYes = undefined))
+  offerEl.querySelector('[data-test="mode-offer-yes"]')!.addEventListener('click', () => {
+    const yes = offerYes
+    hideOffer()
+    yes?.()
+    ta.focus()
+  })
+  offerEl.querySelector('[data-test="mode-offer-no"]')!.addEventListener('click', () => (hideOffer(), ta.focus()))
   refreshSend()
 
   // ---------------------------------------------------------------- images (R17)
@@ -1082,9 +1106,24 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
       refreshSend()
     },
     setMode(label, mode) {
-      permBtn.hidden = false
+      permShown = true
+      permBtn.hidden = chatMode === 'casual'
       permBtn.textContent = label
       permBtn.dataset.mode = mode
+    },
+    setChat(mode) {
+      chatMode = mode
+      chatBtn.dataset.chat = mode
+      chatBtn.innerHTML = mode === 'casual' ? '<b>♡</b><small>CASUAL</small>' : '<b>⚙</b><small>WORK</small>'
+      chatBtn.setAttribute('aria-label', mode === 'casual' ? 'Casual chat: switch to work' : 'Work: switch to casual chat')
+      permBtn.hidden = mode === 'casual' || !permShown
+      wrap.dataset.chat = mode
+      hideOffer()
+    },
+    offer(text, onAccept) {
+      offerEl.querySelector('span')!.textContent = text
+      offerYes = onAccept
+      offerEl.hidden = false
     },
   }
 }

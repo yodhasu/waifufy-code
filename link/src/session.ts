@@ -18,7 +18,7 @@ import {
   type SDKMessage,
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk'
-import { AFFECTION_TAGS, moodNote, stripContext, type AffectionTag, type Mood } from './affection.ts'
+import { AFFECTION_TAGS, moodNote, OFFER_TAGS, stripContext, type AffectionTag, type Mood } from './affection.ts'
 import { mcpLogin, mcpLogout } from './auth.ts'
 import { fileControl } from './config-files.ts'
 import { elicitContent, elicitFields } from './elicit.ts'
@@ -236,6 +236,7 @@ const TAG_ALIASES: Record<string, Emotion> = {
 const emotionOf = (word: string): Emotion | undefined =>
   (EMOTIONS as readonly string[]).includes(word) ? (word as Emotion) : TAG_ALIASES[word]
 const isAffectionTag = (word: string): word is AffectionTag => Object.hasOwn(AFFECTION_TAGS, word)
+const isOfferTag = (word: string) => (OFFER_TAGS as readonly string[]).includes(word)
 const LONGEST_TAG = Math.max(...[...EMOTIONS, ...Object.keys(TAG_ALIASES), ...Object.keys(AFFECTION_TAGS)].map((e) => e.length)) + 2
 /** Her spoken line for a paragraph (persona "Voice lines"): only the voice says it. */
 const VOICE_OPEN = '<ja>'
@@ -265,17 +266,20 @@ export class TagParser {
   private onFace: (e: Emotion) => void
   private onAffection: (tag: AffectionTag) => void
   private onVoice: (line: string) => void
+  private onOffer: (tag: string) => void
 
   constructor(
     onText: (s: string) => void,
     onFace: (e: Emotion) => void,
     onAffection: (tag: AffectionTag) => void = () => {},
     onVoice: (line: string) => void = () => {},
+    onOffer: (tag: string) => void = () => {},
   ) {
     this.onText = onText
     this.onFace = onFace
     this.onAffection = onAffection
     this.onVoice = onVoice
+    this.onOffer = onOffer
   }
 
   feed(s: string) {
@@ -349,6 +353,15 @@ export class TagParser {
           i = close + 1
           continue
         }
+        // Her offer to switch modes: never shown.
+        if (close !== -1 && close - i <= LONGEST_TAG && isOfferTag(word)) {
+          this.text(text)
+          text = ''
+          this.afterTag = true
+          this.onOffer(word)
+          i = close + 1
+          continue
+        }
       }
       text += c
       i++
@@ -412,6 +425,8 @@ class Session implements SessionApi {
   private feltThisTurn = false
   /** The affection level the model was last told; a note goes out again only when it moves. */
   private toldLevel?: number
+  /** Her mood as the model was last told it (casual/heart.ts), work-tone only. */
+  private toldFeel?: string
   private textOpen = false
   /** Content block types of the main agent's message being streamed, by index. */
   private blocks = new Map<number, string>()
@@ -467,6 +482,7 @@ class Session implements SessionApi {
       (emotion) => this.emit({ t: 'face', emotion }),
       (tag) => this.felt(tag),
       (text) => this.emit({ t: 'voice', text }),
+      () => this.emit({ t: 'offer_mode', mode: 'casual' }),
     )
   }
 
@@ -619,8 +635,9 @@ class Session implements SessionApi {
 
   /** The note in front of a message: on the first message, when the level moved, or when a rest reminder is due. */
   private moodText(mood: Mood | undefined) {
-    if (!mood || (mood.level === this.toldLevel && !mood.change && !mood.restAfterMs)) return ''
+    if (!mood || (mood.level === this.toldLevel && !mood.change && !mood.restAfterMs && (mood.feel ?? '') === (this.toldFeel ?? ''))) return ''
     this.toldLevel = mood.level
+    this.toldFeel = mood.feel
     return moodNote(mood, addressOf(this.opts.settings))
   }
 
@@ -669,6 +686,16 @@ class Session implements SessionApi {
     }
     this.scheduleContextRefresh()
   }
+
+  appendContext(text: string) {
+    if (this.ended) return
+    const uuid = randomUUID()
+    this.silent.add(uuid)
+    this.inbox.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, shouldQuery: false, uuid })
+    this.scheduleContextRefresh()
+  }
+
+  permit: CanUseTool = (name, input, o) => this.ask(name, input, o)
 
   async interrupt() {
     this.stopShells()

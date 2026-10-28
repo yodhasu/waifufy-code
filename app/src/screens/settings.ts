@@ -25,6 +25,7 @@ const TABS = [
   { id: 'appearance', label: 'Appearance', icon: '❀', blurb: 'Theme, colors, the dialogue box, the scene and her costume.' },
   { id: 'motion', label: 'Text & Motion', icon: '♪', blurb: 'How fast she talks and how alive she feels.' },
   { id: 'claude', label: 'Claude', icon: '⚙', blurb: 'Defaults for new sessions, passed straight to Claude Code.' },
+  { id: 'casual', label: 'Casual', icon: '♡', blurb: 'Casual mode: her own chat harness, its model, her memory and how she learns.' },
   { id: 'voice', label: 'Voice', icon: '♫', blurb: 'Her spoken voice through Fish Audio, in sync with the text and her lips.' },
   { id: 'slack', label: 'Slack', icon: '✉', blurb: 'Your unread Slack messages in the chat, and Slack tools for her.' },
   { id: 'phone', label: 'Phone', icon: '☏', blurb: 'Chat with her from your Android phone while Claude Code keeps working here.' },
@@ -43,6 +44,7 @@ const DEFAULTS: {
   motion: MotionSettings
   claude: ClaudeSettings
   voice: Settings['voice']
+  casual: Settings['casual']
 } = {
   profile: {
     displayName: 'Master', callMe: 'Master', honorific: 'kun', customHonorific: '', pronouns: 'he/him', title: 'Developer', about: '',
@@ -75,6 +77,10 @@ const DEFAULTS: {
     enabled: true, voiceId: DEFAULT_VOICE_ID, model: 's2.1-pro-free', language: 'ja', speed: 1, volume: 80, subtitles: true,
     styleNotes: REM_VOICE_STYLE,
   },
+  casual: {
+    provider: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-6-luna', reasoningEffort: 'none', claudeModel: 'sonnet',
+    toolModel: 'haiku', shareWork: true, learning: true, idleMin: 60, judgeThreshold: 7, learnWith: 'claude',
+  },
 }
 
 /** What "Reset section to defaults" restores on each tab. Roleplay and About hold nothing to reset. */
@@ -83,6 +89,7 @@ const RESET: Partial<Record<TabId, (s: Settings) => void>> = {
   waifu: (s) => void (s.waifu = structuredClone(DEFAULTS.waifu)),
   appearance: (s) => void (s.appearance = { ...structuredClone(DEFAULTS.appearance), modelsDir: s.appearance.modelsDir }),
   voice: (s) => void (s.voice = structuredClone(DEFAULTS.voice)),
+  casual: (s) => void (s.casual = structuredClone(DEFAULTS.casual)),
   motion: (s) => void (s.motion = structuredClone(DEFAULTS.motion)),
   claude: (s) => void (s.claude = structuredClone(DEFAULTS.claude)),
 }
@@ -205,6 +212,7 @@ const TAB_LINES: Record<TabId, [string, Emotion]> = {
   appearance: ['How do I look, {you}?', 'shy'],
   motion: ['Is this pace comfortable, {you}? I can speak faster… or slower, just for you.', 'smile'],
   claude: ['These go straight to Claude Code. I\'ll use them from the next session.', 'nod'],
+  casual: ['Just the two of us, talking about anything… I\'d like that, {you}.', 'shy'],
   voice: ['My voice… is still a secret. Soon, {you}!', 'shy'],
   slack: ['I can keep an eye on your messages, {you}. I\'ll only send what you approve.', 'nod'],
   phone: ['Take me with you, {you}? I\'ll keep working here while you\'re away.', 'shy'],
@@ -661,6 +669,54 @@ function voicePane() {
   </div>`
 }
 
+const CASUAL_PROVIDERS: Opt[] = [
+  { v: 'openai', label: 'OpenAI-compatible API', hint: 'GPT, OpenRouter, a local server… with your key. Without a key, Claude answers.' },
+  { v: 'claude', label: 'Claude', hint: 'Through your Claude subscription, stripped of Claude Code: no extra key or bill.' },
+]
+const LEARN_WITH: Opt[] = [
+  { v: 'claude', label: 'Claude', hint: 'Reflects and judges on your subscription' },
+  { v: 'casual', label: 'The casual model', hint: 'Uses the same API as casual chat' },
+]
+
+function casualPane() {
+  return `<div class="set-cols">
+    ${card(
+      'Who answers',
+      `<p class="set-voice-status" data-casual-status data-test="casual-status"></p>` +
+        seg('casual.provider', CASUAL_PROVIDERS, 'list') +
+        row(
+          'API key',
+          `<div class="set-path"><input class="field" type="password" data-casual-key data-test="set-casual.key" autocomplete="off" spellcheck="false" placeholder="Paste your API key">
+          <button class="btn" type="button" data-act="casual-key-save" data-test="set-casual.key-save">Save</button>
+          <button class="btn" type="button" data-act="casual-key-remove" data-test="set-casual.key-remove">Remove</button></div>`,
+          'Kept by the app, never in settings',
+        ) +
+        row('API address', text('casual.baseUrl', 'placeholder="https://api.openai.com/v1"'), 'Any OpenAI-compatible /chat/completions') +
+        row('Model', text('casual.model', 'placeholder="gpt-6-luna"')) +
+        row('Reasoning effort', text('casual.reasoningEffort', 'placeholder="none"'), 'Sent as reasoning_effort when set') +
+        row('Claude model', text('casual.claudeModel', 'placeholder="sonnet"'), 'When Claude answers') +
+        note('Casual mode is a much smaller harness than Claude Code: her own prompt, short replies, and a history window that stays cached between turns, so a long evening of chatting costs cents, not dollars.'),
+      'wide',
+    )}
+    ${card(
+      'Tools and work',
+      row('Toolkit model', text('casual.toolModel', 'placeholder="haiku"'), 'Claude Code with your tools and MCP servers') +
+        note('When casual chat needs something talking cannot give (the web, your Slack, a file), she hands it to Claude Code with your own tools and MCP servers, then answers from its report. It only looks things up and never edits files; asking for real work offers to switch to work mode.') +
+        toggle('casual.shareWork', 'Work lines in casual chat', "She remembers this session's work conversation in casual mode. Off keeps your work out of the casual model's requests."),
+      'wide',
+    )}
+    ${card(
+      'Learning',
+      toggle('casual.learning', 'Reflect after a quiet spell', 'She remembers facts and moments, learns what works with you, and is judged on how she did.') +
+        row('Quiet for', range('casual.idleMin', 5, 240, 5), 'Minutes before she reflects') +
+        row('Revise below', range('casual.judgeThreshold', 0, 10, 0.5), 'Judge score out of 10') +
+        row('Who reflects', seg('casual.learnWith', LEARN_WITH)) +
+        note('Below the score, a critic rewrites only her chat style and example lines, and the rewrite is kept only if it beats the old one on a replay of your real messages. Her character, personality and feelings are never edited. Her memory lives in the data folder under <code>memory/</code>.'),
+      'wide',
+    )}
+  </div>`
+}
+
 function slackPane() {
   return `<div class="set-cols">
     ${card(
@@ -764,7 +820,7 @@ function aboutPane() {
 
 const PANES: Record<TabId, () => string> = {
   you: youPane, waifu: waifuPane, roleplay: roleplayPane, appearance: appearancePane, motion: motionPane, claude: claudePane,
-  voice: voicePane, slack: slackPane, phone: phonePane, about: aboutPane,
+  casual: casualPane, voice: voicePane, slack: slackPane, phone: phonePane, about: aboutPane,
 }
 
 // ---------------------------------------------------------------- screen
@@ -1111,6 +1167,8 @@ export function settingsScreen(): Screen {
         return void (visible && renderAbout())
       case 'voice_key':
         return void (visible && renderVoice())
+      case 'casual_key':
+        return void (visible && renderCasual())
       case 'remote_status':
         phone = m.status
         return void (root && renderPhone())
@@ -1395,6 +1453,19 @@ export function settingsScreen(): Screen {
     q<HTMLButtonElement>('[data-act="voice-test"]').disabled = !key || !s.voice.voiceId.trim()
   }
 
+  /** Which model answers in casual mode, and why. */
+  function renderCasual(s = ctx.store.get()) {
+    const el = root.querySelector<HTMLElement>('[data-casual-status]')
+    if (!el) return
+    const key = ctx.casual.hasKey()
+    const api = s.casual.provider === 'openai' && key
+    el.dataset.state = api ? 'on' : 'off'
+    el.textContent = api
+      ? `♡ ${s.casual.model.trim() || 'gpt-6-luna'} answers · key stored · Claude steps in if it fails`
+      : `♡ Claude (${s.casual.claudeModel.trim() || 'sonnet'}) answers through your subscription${s.casual.provider === 'openai' ? ' · no API key stored yet' : ''}`
+    q<HTMLButtonElement>('[data-act="casual-key-remove"]').disabled = !key
+  }
+
   /** Phone access: on the desktop its switch, status and pairing code; on a phone, what it is paired with. */
   function renderPhone() {
     const remote = ctx.link.remote
@@ -1480,6 +1551,7 @@ export function settingsScreen(): Screen {
     for (const el of qa('[data-out]')) el.textContent = FORMAT[el.dataset.out!]?.(Number(getAt(s, el.dataset.out!))) ?? ''
     for (const g of qa('[data-seg]')) paintSeg(g, s)
     renderVoice(s)
+    renderCasual(s)
     renderSlack()
     for (const el of qa('[data-when]')) {
       const [path, v] = el.dataset.when!.split('=')
@@ -1604,6 +1676,18 @@ export function settingsScreen(): Screen {
         ctx.toast('Key saved. Her voice starts with the next session.')
         return react('happy')
       }
+      case 'casual-key-save': {
+        const input = q<HTMLInputElement>('[data-casual-key]')
+        if (!input.value.trim()) return ctx.toast('Paste an API key first.')
+        ctx.casual.setKey(input.value.trim())
+        input.value = ''
+        ctx.toast('Key saved. Casual mode uses it from her next reply.')
+        return react('happy')
+      }
+      case 'casual-key-remove':
+        ctx.casual.setKey('')
+        ctx.toast('Key removed. Claude answers in casual mode now.')
+        return react('nod')
       case 'voice-key-remove':
         ctx.voice.setKey('')
         ctx.toast('Key removed. She stays silent from the next session.')

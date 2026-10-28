@@ -130,6 +130,9 @@
 .chat .party .running { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
 .chat .party .done { opacity: .5; }
 .chat .party .failed { border-color: var(--bad); color: var(--bad); }
+.chat .party .bg-chip { font: inherit; font-size: 11.5px; padding: 4px 9px; border-radius: 8px; background: var(--chip); color: var(--text);
+  border: 1px solid var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); cursor: pointer; }
+.chat .party .bg-chip[hidden] { display: none; }
 
 .chat .actions { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 6px;
   mask-image: linear-gradient(180deg, var(--text) 82%, transparent); }
@@ -718,6 +721,10 @@ html[data-focus='1'] .chat .chat-status .ribbon { display: none; }
   & .chat-input { display: none; left: calc(24px / var(--pz)); right: calc(24px / var(--pz)); bottom: calc(36px / var(--pz)); }
   &[data-compose='on'] .chat-input { display: block; }
   &[data-compose='on'] .quickmenu { display: none; }
+  /* Narrow: the Work / Casual switch keeps its icon only. */
+  & .wci-chat { width: 44px; }
+  & .wci-chat small { display: none; }
+  & .wci-offer { margin-left: 0; }
 
   /* The panel sheet sits under the plate. */
   &[data-panels] .sheet-tabs { top: calc(250px / var(--pz)); left: calc(24px / var(--pz)); right: calc(24px / var(--pz)); }

@@ -123,6 +123,8 @@ export type Panels = {
   hearts(points: number, change?: 'up' | 'down'): void
   todos(items: Todo[]): void
   agent(m: AgentMsg): void
+  /** How many background tasks (shells, agents, monitors) are still running: a chip in the party, 0 hides it. */
+  background(running: number): void
   /** Adds a tool row, or refreshes it after its state changed. */
   tool(t: ToolRecord): void
   /** Elapsed play time for the "Together" gauge; also ticks the clock. */
@@ -141,7 +143,7 @@ const GROUP_ORDER = ['system', 'tools', 'mcp', 'memory', 'messages']
 export function createPanels(
   left: HTMLElement,
   right: HTMLElement,
-  deps: { openModels(): void; cycleMode(): void; openAction(id: string): void },
+  deps: { openModels(): void; cycleMode(): void; openAction(id: string): void; openTasks?(): void },
   /** The phone's top bar (chat/index.ts): the session title, her hearts, and the context, plan and quest pills. */
   bar?: HTMLElement,
 ): Panels {
@@ -207,6 +209,14 @@ export function createPanels(
   const modeBtn = q<HTMLButtonElement>(left, '[data-test="badge-mode"]')
   const actionsEl = q(right, '.actions')
   const partyEl = q(right, '.party')
+  const bgChip = document.createElement('button')
+  bgChip.type = 'button'
+  bgChip.className = 'bg-chip running'
+  bgChip.dataset.test = 'bg-chip'
+  bgChip.title = 'Running in the background (opens /tasks)'
+  bgChip.hidden = true
+  bgChip.onclick = () => deps.openTasks?.()
+  partyEl.append(bgChip)
   modelBtn.onclick = () => deps.openModels()
   modeBtn.onclick = () => deps.cycleMode()
   actionsEl.addEventListener('click', (e) => {
@@ -407,6 +417,10 @@ export function createPanels(
       chip.dataset.status = m.status
       chip.title = m.description
       chip.textContent = `👥 ${oneLine(m.description, AGENT_LABEL_CHARS) || 'helper'}`
+    },
+    background(running) {
+      bgChip.hidden = running === 0
+      bgChip.textContent = `⏳ ${running} in background`
     },
     tool: renderRow,
     tick(playMs) {

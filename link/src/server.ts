@@ -17,6 +17,10 @@ import { research } from './research.ts'
 import { deleteSave, errorText, getSave, isSaveId, listSaves, loadHistory, remember, renameSave, saveMeta, shortPath, unhide } from './saves.ts'
 import type { SessionApi, SessionFactory } from './session-api.ts'
 import { createSession } from './session.ts'
+import { scheduleLearning } from './casual/learn.ts'
+import { openMemory } from './casual/memory.ts'
+import { characterSlug, moodVoiceSpeed, withModes } from './casual/modes.ts'
+import { hasCasualKey, setCasualKey } from './casual/providers.ts'
 import { DATA_DIR, loadSettings, saveSettings } from './settings.ts'
 import * as slack from './slack.ts'
 import { addresses, REMOTE_PORT, remoteEnabled, remoteStatus, remoteTokenOk, resetRemoteToken, setRemoteEnabled } from './remote.ts'
@@ -119,7 +123,7 @@ process.on('unhandledRejection', (e) => console.error('[link] unhandled rejectio
 process.on('uncaughtException', (e) => console.error('[link] uncaught exception:', e))
 
 const mock = MOCK ? await import('./mock.ts') : undefined
-const factory: SessionFactory = mock?.createMockSession ?? createSession
+const factory: SessionFactory = withModes(mock?.createMockSession ?? createSession)
 /** Mock mode never spends model turns: research gets the scripted stand-in too. */
 const runResearchQuery = mock?.mockResearch ?? research
 
@@ -316,7 +320,7 @@ function said(ws: WebSocket, e: Extract<SessionEvent, { t: 'said' }>) {
 }
 
 /** Events a joining window doesn't need again: the moment's face and voice, the spinner, transient notes. */
-const UNJOURNALED = new Set<SessionEvent['t']>(['face', 'voice', 'affection', 'progress', 'notify', 'hook', 'suggestion'])
+const UNJOURNALED = new Set<SessionEvent['t']>(['face', 'voice', 'affection', 'progress', 'notify', 'hook', 'suggestion', 'offer_mode'])
 
 const size = (e: SessionEvent) => JSON.stringify(e).length
 
@@ -341,6 +345,15 @@ function record(live: Live, e: SessionEvent) {
 }
 
 // ---------------------------------------------------------------- services
+
+// A reflection a closed app never got to: she catches up shortly after the link starts (casual/learn.ts).
+if (!MOCK) {
+  setTimeout(() => {
+    void loadSettings().then((s) => {
+      if (s.casual.learning) scheduleLearning({ settings: s, memory: openMemory(characterSlug(s)), claudePath, idleMs: s.casual.idleMin * 60_000 })
+    })
+  }, 60_000).unref()
+}
 
 const auth = createAuth(claudePath, (a) => broadcast({ t: 'auth', auth: a }))
 void auth.refresh()
@@ -390,7 +403,7 @@ type Live = {
 }
 
 /** Session events that each replace the one before; replayed to a window that attaches. */
-const STATE_EVENTS = new Set<SessionEvent['t']>(['started', 'ready', 'session_id', 'commands', 'stats', 'todos', 'bg_tasks', 'state'])
+const STATE_EVENTS = new Set<SessionEvent['t']>(['started', 'ready', 'session_id', 'commands', 'stats', 'todos', 'bg_tasks', 'state', 'chat_mode'])
 const ASK_EVENTS = new Set<SessionEvent['t']>(['ask_permission', 'ask_question', 'ask_plan', 'ask_elicit'])
 
 let current: Live | undefined
@@ -612,7 +625,7 @@ async function handle(ws: WebSocket, m: ClientMsg) {
         }
       }
       return sendTo(ws, {
-        t: 'hello', version: VERSION, settings: await loadSettings(), auth: await auth.get(), dataDir: DATA_DIR, voiceKey: hasVoiceKey(), slack: slack.status(),
+        t: 'hello', version: VERSION, settings: await loadSettings(), auth: await auth.get(), dataDir: DATA_DIR, voiceKey: hasVoiceKey(), casualKey: hasCasualKey(), slack: slack.status(),
         remote: remoteSockets.has(ws),
       })
     case 'settings_set': {
@@ -626,7 +639,7 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       const id = m.id
       // Answered on its own time: a slow clip must not hold up the messages behind it.
       void loadSettings()
-        .then((s) => synthesize(m.text, s.voice))
+        .then((s) => synthesize(m.text, { ...s.voice, speed: s.voice.speed * moodVoiceSpeed() }))
         .then((clip) => sendTo(ws, { t: 'tts', id, audio: clip.audio.toString('base64'), mime: clip.mime }))
         .catch((e) => sendTo(ws, { t: 'tts', id, error: e instanceof Error ? e.message : String(e) }))
       return
@@ -635,6 +648,10 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       need(typeof m.key === 'string' && m.key.length < KEY_MAX, 'key')
       await setVoiceKey(m.key)
       return broadcast({ t: 'voice_key', has: hasVoiceKey() })
+    case 'casual_key':
+      need(typeof m.key === 'string' && m.key.length < KEY_MAX, 'key')
+      await setCasualKey(m.key)
+      return broadcast({ t: 'casual_key', has: hasCasualKey() })
     case 'auth_check':
 
       return sendTo(ws, { t: 'auth', auth: await auth.refresh() })
@@ -689,6 +706,9 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       return live().shell(m.command)
     case 'interrupt':
       return current?.session?.interrupt()
+    case 'chat_mode':
+      need(m.mode === 'work' || m.mode === 'casual', 'mode')
+      return live().setChatMode?.(m.mode)
     case 'mode':
       need(MODES.includes(m.mode), 'mode')
       return live().setMode(m.mode)

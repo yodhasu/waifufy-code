@@ -39,7 +39,15 @@ export type Mood = {
   change?: 'up' | 'down'
   /** The app has been open this long and a rest reminder is due. */
   restAfterMs?: number
+  /** How she feels right now (casual/heart.ts), added by the link: it colors her tone, never the work. */
+  feel?: string
 }
+
+/** Casual-mode exchanges, appended to the work transcript without a turn so both modes share one history. */
+export const CASUAL_TAG = 'waifufy-casual'
+
+/** Her offer to switch to casual mode, at the end of a work reply; the link removes it. */
+export const OFFER_TAGS = ['casual?'] as const
 
 /** The hidden note that rides in front of a user message. Removed from history and the rewind list. */
 export const CONTEXT_TAG = 'waifufy-context'
@@ -53,6 +61,7 @@ const hours = (ms: number) => {
 
 export function moodNote(mood: Mood, you: string): string {
   const lines = [`Affection level: ${mood.level} of ${AFFECTION_LEVELS}.`]
+  if (mood.feel) lines.push(mood.feel)
   if (mood.change === 'up') lines.push(`It just rose: you feel closer to ${you}. Let it show a little in this reply.`)
   if (mood.change === 'down') lines.push(`It just fell: what ${you} said stung. Let it show briefly, then carry on as helpfully as ever.`)
   if (mood.restAfterMs) {

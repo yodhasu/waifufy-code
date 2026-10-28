@@ -39,17 +39,25 @@ run(`git push origin ${branch}`)
 const notes = join(tmpdir(), `waifufy-${tag}-notes.md`)
 writeFileSync(
   notes,
-  `Waifufy Code ${version}
+  `Waifufy Code ${version}: work and casual
 
-**Desktop**
-- Reworked VN interface: the quick bar on its own row, one Say / Stop / Queue button, the permission mode in the composer, clearer contrast in light and dark
-- The composer formats as you type: \`\`\` + Enter opens a code block, \`code\` and **bold** show as they will read
-- Drop, paste or attach any kind of file, not only images
-- Lighter on resources: the character animates at 30 fps when the window is in the background
+She's still the real Claude Code when you work, and now just herself when you don't.
 
-**Phone**
-- Joining a running session brings all of it: what was said, every action, the prompts still waiting
-- Stays in the session when Android puts the app in the background, and goes straight back in after a restart
+**Casual mode**
+- A **Work / Casual** switch next to the composer (or \`/casual\` and \`/work\`). Casual runs on its own small chat harness built for talking, not coding: short natural lines, no assistant voice, her own opinions and moods
+- **One history for both modes**: switch mid-session and she remembers everything, the work you did together and what you talked about after
+- **Any model**: GPT or anything OpenAI-compatible with your own key (Settings → Casual), or Claude through your subscription when there's no key. If the API fails, Claude steps in
+- **Cheap by design**: a compact prompt that stays cached between turns and a history window that moves in chunks, so a long evening of chatting costs cents
+- **Her toolkit**: when chat needs something talking can't give (the web, your Slack, a file), she hands it to Claude Code with your own tools and MCP servers. It only looks things up; real work offers to switch to work mode
+- She **won't switch while work is still running** (a turn, a background task or a helper agent): she asks you to wait, in character, and pressing on costs a little affection
+
+**Feelings and memory**
+- **Emotions she feels, not picks**: joy, sadness, anger, surprise and fear rise with what you say and settle back over time, at her personality's pace. Affection decides how hard things land. You never see the numbers, only her face, voice and words
+- **Long-term memory**: facts about you, moments in her own words, and what works with you, looked up locally for free and brought up naturally
+- **She learns after a quiet spell**: she reflects, a judge scores how she did, and below the bar a critic tunes only her chat style. The new style is kept only if it beats the old one on your real messages. Her character is never edited
+
+**Also**
+- Running background tasks show as a chip next to the party; click it for /tasks
 
 Install: \`Waifufy-Code-${version}-setup.exe\` on Windows, the \`.apk\` on Android (arm64).
 `,
@@ -63,6 +71,8 @@ try {
 if (draft === 'false') throw new Error(`${tag} is already published; not touching it`)
 if (draft === 'true') {
   run(`gh release upload ${tag} ${assets} --clobber`)
+  // Otherwise an older draft keeps its old title and notes.
+  run(`gh release edit ${tag} --title "Waifufy Code ${version}" --notes-file "${notes}"`)
 } else {
   run(`gh release create ${tag} ${assets} --draft --target ${branch} --title "Waifufy Code ${version}" --notes-file "${notes}"`)
 }

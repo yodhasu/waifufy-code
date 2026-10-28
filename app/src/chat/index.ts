@@ -2,7 +2,7 @@
 // lifecycle and wires the link's events to the dialogue, the panels, the choice menus and the input.
 
 import { getCurrentWindow, UserAttentionType } from '@tauri-apps/api/window'
-import type { BgTask, Command, HistoryEntry, Image, ModelChoice, PermissionModeName, ServerMsg, SessionEvent, Stats } from '../../../link/src/protocol.ts'
+import type { BgTask, ChatMode, Command, HistoryEntry, Image, ModelChoice, PermissionModeName, ServerMsg, SessionEvent, Stats } from '../../../link/src/protocol.ts'
 import { AFFECTION_LEVELS, clampPoints, levelOf, levelStart, type Mood } from '../../../link/src/affection.ts'
 import type { ChatParams, Ctx, Gesture, Screen } from '../contracts'
 import { addressOf } from '../screens/title'
@@ -208,6 +208,10 @@ export function chatScreen(): Screen {
   /** The model as the CLI reports it (resolved id) or as last picked (alias). */
   let model: string | undefined
   let mode: PermissionModeName = 'default'
+  /** Work (Claude Code) or casual (her own chat harness); the link has the last word (chat_mode). */
+  let chatMode: ChatMode = 'work'
+  /** A message her switch offer carries: sent once the switch to that mode is confirmed. */
+  let offered: { mode: ChatMode; text?: string } | undefined
   let autoSeen = false
   let bypassAvailable = false
   /** `!` commands sent and not yet answered with their output. */
@@ -284,7 +288,7 @@ export function chatScreen(): Screen {
     ? running ? `${charName()} is working… (sending queues)` : `Speak to ${charName()}…`
     : running
       ? `${charName()} is working… (Enter queues · Esc interrupts)`
-      : `Speak to ${charName()}…  ( / commands · @ files · ! shell )`)
+      : chatMode === 'casual' ? `Chat with ${charName()}…  ♡` : `Speak to ${charName()}…  ( / commands · @ files · ! shell )`)
   const nextEpoch = () => (epoch = Math.max(epoch + 1, Date.now()))
 
   const pager = createPager({
@@ -818,6 +822,23 @@ export function chatScreen(): Screen {
     return true
   }
 
+  function onChatMode(next: ChatMode) {
+    const changed = next !== chatMode
+    chatMode = next
+    input.setChat(next)
+    root?.setAttribute('data-chat', next)
+    if (ready && !ended) input.setEnabled(true, placeholder())
+    if (changed && !replaying) ctx.toast(next === 'casual' ? `Casual mode · just you and ${charName()}` : 'Work mode · Claude Code')
+    const carried = offered
+    offered = undefined
+    if (carried?.mode === next && carried.text) window.setTimeout(() => say(carried.text!, []), 0)
+  }
+
+  function toggleChat() {
+    if (!live || ended) return
+    ctx.link.send({ t: 'chat_mode', mode: chatMode === 'work' ? 'casual' : 'work' })
+  }
+
   function cycleMode() {
     if (!live || ended) return
     // The CLI's cycle: bypass only when the session started with it, auto only when the model offers it.
@@ -954,6 +975,10 @@ export function chatScreen(): Screen {
     dialogue.show({ kind: 'narration', text: `${charName()} is getting ready…` })
     input.setEnabled(false, `${charName()} is getting ready…`)
     bgTasks = []
+    chatMode = 'work'
+    panels?.background(0)
+    offered = undefined
+    input?.setChat('work')
   }
 
   /**
@@ -1311,12 +1336,24 @@ export function chatScreen(): Screen {
         return updateSpinner()
       case 'bg_tasks':
         bgTasks = m.tasks
+        panels.background(bgTasks.filter((t) => t.status === 'running' || t.status === 'pending').length)
         for (const fn of taskWatchers) fn(bgTasks)
         return
       case 'notify':
         return onNotify(m)
       case 'suggestion':
         return input.suggest(m.text)
+      case 'chat_mode':
+        return onChatMode(m.mode)
+      case 'offer_mode':
+        if (m.mode === chatMode || replaying) return
+        return input.offer(
+          m.mode === 'work' ? `${charName()} thinks this is work. Switch to work mode${m.text ? ' and send it there' : ''}?` : `Just chatting? Switch to casual mode with ${charName()}?`,
+          () => {
+            offered = { mode: m.mode, text: m.text }
+            ctx.link.send({ t: 'chat_mode', mode: m.mode })
+          },
+        )
       case 'hook':
         return onHook(m)
       case 'state':
@@ -1651,6 +1688,7 @@ export function chatScreen(): Screen {
         // Focus goes back to the composer, so typing goes there instead of re-pressing the badge with Space/Enter.
         cycleMode: () => (cycleMode(), input.focus()),
         openAction,
+        openTasks: () => input.run('/tasks'),
       }, bar)
       // The mode shows in two places: the badge in the left panel and the chip in the composer.
       const panelMode = panels.mode.bind(panels)
@@ -1761,6 +1799,7 @@ export function chatScreen(): Screen {
         advance: () => dialogue.advance(),
         stop: () => void (interrupt() || ctx.toast(`${charName()} isn't working on anything right now`)),
         cycleMode,
+        toggleChat,
       }
       input = createInput(root.querySelector('.chat-input')!, host)
       input.setEnabled(false, `${charName()} is getting ready…`)

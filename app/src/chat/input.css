@@ -17,6 +17,19 @@
 /* The same slot interrupts her while she works (input.ts refreshSend). */
 .wci-send[data-job='stop'] { background: var(--bad-fill); box-shadow: 0 8px 20px color-mix(in oklab, var(--bad) 40%, transparent); }
 .wci-attach { display: grid; place-items: center; color: var(--text-soft); }
+/* Work or casual (v0.7): the same session, a different harness. Casual tints the box rose. */
+.wci-chat { flex: none; width: 58px; height: 50px; border-radius: 16px; border: 1.5px solid var(--gold-soft); background: var(--input);
+  display: grid; place-items: center; align-content: center; gap: 1px; color: var(--text-soft); box-shadow: var(--panel-shadow);
+  transition: border-color .15s, box-shadow .15s, color .15s; }
+.wci-chat b { font-size: 16px; line-height: 1; }
+.wci-chat small { font-size: 9px; font-weight: 800; letter-spacing: .1em; }
+.wci-chat:hover, .wci-chat:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-glow); outline: none; }
+.wci-chat[data-chat='casual'] { color: #d4587a; border-color: color-mix(in oklab, #d4587a 55%, transparent); }
+.wci[data-chat='casual'] .wci-box { border-color: color-mix(in oklab, #d4587a 45%, var(--gold-soft)); }
+.wci-offer { display: flex; align-items: center; gap: 10px; margin: 0 0 8px 68px; padding: 8px 10px 8px 14px; border-radius: 14px;
+  background: var(--panel); border: 1px solid var(--gold-soft); box-shadow: var(--panel-shadow); font-size: 13.5px; }
+.wci-offer[hidden] { display: none; }
+.wci-offer span { flex: 1; min-width: 0; }
 /* The permission mode, where you look while typing; a click cycles it like Shift+Tab. */
 .wci-perm { flex: none; margin: 12px 0 0 12px; height: 23px; padding: 0 10px; border-radius: 999px; border: 1px solid currentColor;
   background: none; color: var(--gold-ink); font-size: 11.5px; font-weight: 700; white-space: nowrap; }

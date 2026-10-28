@@ -94,6 +94,19 @@ export function defaultSettings(): Settings {
       styleNotes: REM_VOICE_STYLE,
     },
     slack: { clientId: '' },
+    casual: {
+      provider: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-6-luna',
+      reasoningEffort: 'none',
+      claudeModel: 'sonnet',
+      toolModel: 'haiku',
+      shareWork: true,
+      learning: true,
+      idleMin: 60,
+      judgeThreshold: 7,
+      learnWith: 'claude',
+    },
     lastDir: '',
   }
 }
@@ -132,6 +145,11 @@ export async function loadSettings(): Promise<Settings> {
   // Only an empty folder gets the default here. A saved folder that is missing right now (an external drive not
   // plugged in yet) is kept; listing and serving costumes fall back to the default on their own meanwhile.
   if (!s.appearance.modelsDir) s.appearance.modelsDir = defaultModelsDir()
+  const c = s.casual
+  if (c.provider !== 'claude') c.provider = 'openai'
+  if (c.learnWith !== 'casual') c.learnWith = 'claude'
+  c.idleMin = Math.max(1, Math.min(24 * 60, Math.round(Number(c.idleMin)) || 60))
+  c.judgeThreshold = Math.max(0, Math.min(10, Number(c.judgeThreshold) || 7))
   return s
 }
 

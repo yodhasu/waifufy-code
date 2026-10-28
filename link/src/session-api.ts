@@ -1,5 +1,6 @@
+import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk'
 import type { Mood } from './affection.ts'
-import type { CtlOp, Image, PermissionModeName, SessionEvent, Settings } from './protocol.ts'
+import type { ChatMode, CtlOp, Image, PermissionModeName, SessionEvent, Settings } from './protocol.ts'
 
 /** Contract between server.ts and a session implementation: session.ts (real SDK) or mock.ts (E2E tests). */
 export type SessionOptions = {
@@ -40,6 +41,12 @@ export interface SessionApi {
   /** The user's answer to an `ask_elicit`; throws when an accepted form doesn't fit the server's schema. */
   answerElicit(id: string, action: 'accept' | 'decline' | 'cancel', content?: Record<string, unknown>): void
   answerPlan(id: string, decision: 'auto' | 'manual' | 'keep', message?: string): void
+  /** Adds a user-role text to the transcript without a turn (a casual exchange, so work mode remembers it). */
+  appendContext(text: string): void
+  /** The permission check a side run (her casual toolkit) asks through: the same prompts as the session's own tools. */
+  permit: CanUseTool
+  /** Work or casual (casual/modes.ts wraps every session with it). */
+  setChatMode?(mode: ChatMode): Promise<void>
 }
 
 export type SessionFactory = (opts: SessionOptions) => SessionApi

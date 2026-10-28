@@ -90,6 +90,8 @@ export type Ctx = {
   voice: Voice
   /** The Slack sign-in and unread inbox (app/src/slack.ts). */
   slack: Slack
+  /** Casual mode's API key, kept by the link: whether one is stored, and storing or removing it. */
+  casual: { hasKey(): boolean; setKey(key: string): void }
   /** Shows a transient message at the top of the stage. */
   toast(text: string, ms?: number): void
   /** A VN-style yes/no dialog; resolves true for yes. */

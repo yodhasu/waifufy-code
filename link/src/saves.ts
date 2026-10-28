@@ -3,7 +3,8 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promise
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { getSessionInfo, getSessionMessages, listSessions, renameSession, type SDKSessionInfo, type SessionMessage } from '@anthropic-ai/claude-agent-sdk'
-import { AFFECTION_TAGS, CONTEXT_TAG, clampPoints, levelOf } from './affection.ts'
+import { AFFECTION_TAGS, CONTEXT_TAG, OFFER_TAGS, clampPoints, levelOf } from './affection.ts'
+import { parseCasual } from './casual/block.ts'
 import { EMOTIONS, type HistoryEntry, type Save } from './protocol.ts'
 import { DATA_DIR, loadSettings } from './settings.ts'
 import { clip, describeTool, toolLabel, toolOutput } from './tools.ts'
@@ -318,7 +319,7 @@ export async function saveMeta(id: string, patch: MetaPatch, thumb?: string, cwd
 
 // ---------------------------------------------------------------- history
 
-const TAG_WORDS = [...EMOTIONS, ...Object.keys(AFFECTION_TAGS)].map((w) => w.replace(/[+-]/g, '\\$&'))
+const TAG_WORDS = [...EMOTIONS, ...Object.keys(AFFECTION_TAGS), ...OFFER_TAGS].map((w) => w.replace(/[+?-]/g, '\\$&'))
 const TAGS = new RegExp(`[ \\t]*\\[(?:${TAG_WORDS.join('|')})\\][ \\t]*`, 'gi')
 /** `[smile] Hi! [happy]Done [nod].` → `Hi! Done.`: one space stays between words, none at an edge or before punctuation. */
 /** Her spoken Japanese lines (persona "Voice lines"): only the voice says them, the backlog shows the English. */
@@ -368,6 +369,13 @@ const output = (text: string): HistoryEntry[] => {
  * commands with theirs (shell.ts records input and output together, the CLI in two messages).
  */
 function userLines(raw: string): HistoryEntry[] {
+  const casual = parseCasual(raw)
+  if (casual.length) {
+    return casual.flatMap(({ you, her }): HistoryEntry[] => [
+      ...(you ? [{ who: 'user' as const, text: you, mode: 'casual' as const }] : []),
+      ...(stripTags(her).trim() ? [{ who: 'char' as const, text: stripTags(her).trim(), mode: 'casual' as const }] : []),
+    ])
+  }
   const text = raw.replace(HIDDEN, '').trim()
   if (!text) return []
   if (text.startsWith('[Request interrupted')) return [{ who: 'system', text: INTERRUPTED }]
@@ -457,7 +465,7 @@ export async function loadHistory(id: string, cwd: string, upTo?: string): Promi
   const push = (e: HistoryEntry) => {
     const last = out.at(-1)
     // The CLI stores each streamed text block as its own message; one reply reads better as one line.
-    if (e.who === 'char' && last?.who === 'char') last.text = `${last.text}\n\n${e.text}`
+    if (e.who === 'char' && last?.who === 'char' && last.mode === e.mode) last.text = `${last.text}\n\n${e.text}`
     else out.push(e)
   }
 

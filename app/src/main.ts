@@ -176,8 +176,14 @@ const router: Router = {
 
 const voice = createVoice(link, store, greeting.voiceKey === true)
 const slack = createSlack(link, greeting.slack)
+let casualKey = greeting.casualKey === true
+link.on((m) => {
+  if (m.t === 'casual_key') casualKey = m.has
+  if (m.t === 'hello') casualKey = m.casualKey === true
+})
+const casual = { hasKey: () => casualKey, setKey: (key: string) => link.send({ t: 'casual_key', key }) }
 const ctx: Ctx = {
-  link, store, character, router, voice, slack, toast, confirm: confirmDialog, pickImages,
+  link, store, character, router, voice, slack, casual, toast, confirm: confirmDialog, pickImages,
   // A phone picks among the computer's folders (remote-folder.ts); the OS dialog would browse the phone.
   pickFolder: link.remote ? (title, dir) => pickRemoteFolder(link, store, title, dir) : pickFolder,
 }
