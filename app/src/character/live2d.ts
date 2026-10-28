@@ -76,6 +76,8 @@ export type Stage = {
   /** Re-renders at a new pixel density (devicePixelRatio × CSS scale), keeping the box size. */
   setResolution(resolution: number): void
   setRunning(on: boolean): void
+  /** Caps the frame rate: idle breathing doesn't need 60 frames a second on a phone or a window in the back. */
+  setFps(fps: number): void
 }
 
 /** The caller places `app.canvas` in the page. */
@@ -104,6 +106,9 @@ export async function createStage(resolution: number): Promise<Stage> {
     setRunning(on) {
       if (on === app.ticker.started) return
       on ? app.ticker.start() : app.ticker.stop()
+    },
+    setFps(fps) {
+      app.ticker.maxFPS = fps
     },
   }
 }

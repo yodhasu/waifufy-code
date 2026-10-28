@@ -6,6 +6,7 @@ import type { BgTask, Command, HistoryEntry, Image, ModelChoice, PermissionModeN
 import { AFFECTION_LEVELS, clampPoints, levelOf, levelStart, type Mood } from '../../../link/src/affection.ts'
 import type { ChatParams, Ctx, Gesture, Screen } from '../contracts'
 import { addressOf } from '../screens/title'
+import { ICONS, type IconName } from '../icons'
 import { esc, fmtK } from '../ui'
 import { createAsks, type Asks } from './asks'
 import { APP_COMMANDS, findAppCommand, runCli, type CommandHost } from './commands'
@@ -20,13 +21,19 @@ import {
 } from './dialogue'
 import { createInput, fromInput, type InputApi, type InputHost } from './input'
 import {
-  createPanels, doing, isShell, MODE_LABELS, oneLine, toolIcon, toolLabel, type Panels, type ToolRecord,
+  createPanels, doing, isShell, MODE_LABELS, oneLine, relPath, toolIcon, toolLabel, type Panels, type ToolRecord,
 } from './panels'
 
 /** A finished turn this long earns her "success" gesture. */
 const SUCCESS_MIN_SECONDS = 20
 /** Remembers Focus mode across launches. */
 const FOCUS_KEY = 'wc.focus'
+/** Set on a phone while it is in the computer's chat: an app restart (Android killed it) goes straight back in. */
+export const JOINED_KEY = 'wc.phone.joined'
+/** The phone tutorial waits this long after joining, so the replay and an open prompt land first. */
+const TUTORIAL_DELAY_MS = 600
+/** SKIP stays on this long after her turn, so its last page still flies past before reading speed comes back. */
+const SKIP_SETTLE_MS = 1500
 /** A headpat earns a point at most this often, so stroking her nonstop can't fill the hearts. */
 const HEADPAT_POINT_MS = 5 * 60_000
 /** With the app open this long, her next reply carries a rest reminder; then again every as long. */
@@ -88,19 +95,33 @@ const LAYER_Z_BASE = 50
 const SWIPE_PX = 50
 const SWIPE_MS = 700
 const SWIPE_STRAIGHT = 1.5
+/** The quick menu: `|` a divider, `-` the gap before the right-hand group. Empty label: an icon button. */
+const QM_ITEMS: [string, string, string][] = [
+  ['log', 'LOG', 'Backlog (Ctrl+O)'], ['auto', 'AUTO', 'Auto-advance'], ['skip', 'SKIP', 'Skip to the next choice (hold Ctrl)'], ['|', '', ''],
+  ['mode', 'MODE', 'Permission mode (Shift+Tab)'], ['cmd', 'CMD', 'Commands (/ or Ctrl+K)'],
+  ['focus', 'FOCUS', 'Focus mode: just the prompt and replies (/focus · Ctrl+Shift+F)'], ['|', '', ''],
+  ['slack', 'SLACK', 'Slack inbox (/slack)'], ['-', '', ''],
+  ['costume', '', 'Costume (/costume)'], ['settings', '', 'Settings (/config)'], ['menu', 'MENU', 'Back to the title'],
+  // The phone's own: the Reply / Stop slot, and ⋯.
+  ['reply', 'REPLY', 'Write to her'], ['stop', 'STOP', 'Interrupt (Esc)'], ['more', 'MORE', 'More'],
+]
+const QM_ICON: Record<string, IconName> = {
+  log: 'log', auto: 'auto', skip: 'skip', mode: 'mode', cmd: 'cmd', focus: 'focus', slack: 'slack', costume: 'costume',
+  settings: 'settings', menu: 'menu', reply: 'reply', stop: 'stop', more: 'more',
+}
 /** The phone's panel sheet: its tabs (Slack opens the inbox instead). */
 const PANEL_TABS = [['status', 'Status'], ['quests', 'Quests'], ['actions', 'Actions'], ['slack', 'Slack']] as const
 type PanelTab = 'status' | 'quests' | 'actions'
 /** Theater (a phone held sideways): the side bar at the right edge. Ids are quick-menu actions, or panel tabs. */
-const RAIL_ITEMS = [
-  ['log', '☰', 'Log'], ['auto', '▶', 'Auto'], ['stop', '■', 'Stop'], ['slack', '✉', 'Slack'], ['quests', '◇', 'Quests'], ['status', '♥', 'Status'],
-] as const
+const RAIL_ITEMS: [string, IconName, string][] = [
+  ['log', 'log', 'LOG'], ['auto', 'auto', 'AUTO'], ['quests', 'quest', 'QUEST'], ['status', 'heart', 'STATUS'], ['slack', 'slack', 'SLACK'],
+]
 /** The ⋯ sheet: what the phone's quick menu leaves out. Ids are quick-menu actions, or panel tabs. */
-const MORE_ITEMS = [
-  ['status', '♥', 'Status'], ['quests', '◇', 'Quests'], ['actions', '⚒', 'Actions'], ['mode', '⇄', 'Mode'],
-  ['cmd', '/', 'Commands'], ['costume', '👗', 'Costume'], ['focus', '◎', 'Focus'], ['settings', '⚙', 'Settings'],
-  ['menu', '⌂', 'Title'],
-] as const
+const MORE_ITEMS: [string, IconName, string][] = [
+  ['status', 'heart', 'Status'], ['quests', 'quest', 'Quests'], ['actions', 'actions', 'Actions'], ['mode', 'mode', 'Mode'],
+  ['cmd', 'cmd', 'Commands'], ['costume', 'costume', 'Costume'], ['focus', 'focus', 'Focus'], ['settings', 'settings', 'Settings'],
+  ['menu', 'title', 'Title'],
+]
 const BASE_CYCLE: PermissionModeName[] = ['default', 'acceptEdits', 'plan']
 
 type LogEntry =
@@ -158,12 +179,17 @@ export function chatScreen(): Screen {
   let ribbonEl: HTMLElement
   let spinnerEl: HTMLElement
   let autoBtn: HTMLElement
+  let skipBtn: HTMLElement | undefined
 
   // Session state. `epoch` tags every session event; anything from an older start is dropped. Epochs grow
   // across page loads too: after a webview reload the sidecar still reports the old page's session ending.
   let epoch = 0
   /** A phone's `attach` is out: the link answers with the running session's epoch, or none. */
   let attaching = false
+  /** Playing a joined session's past back (`replay`): no typewriter, faces, voice, saves or sends. */
+  let replaying = false
+  /** The phone's first-chat tutorial, held back while a prompt is open. */
+  let tutorialDue = false
   let live = false
   let ready = false
   let ended = false
@@ -229,7 +255,7 @@ export function chatScreen(): Screen {
   const names = () => ({ char: charName(), user: settings().profile.displayName })
   const playMs = () => basePlayMs + (startedAt ? Date.now() - startedAt : 0)
   // Focus mode keeps her still: no gestures while you work (docs/research/ux-research.md §5).
-  const gesture = (g: Gesture) => settings().motion.gestures && !focusOn && ctx.character.gesture(g)
+  const gesture = (g: Gesture) => !replaying && settings().motion.gestures && !focusOn && ctx.character.gesture(g)
   let focusOn = readFocus()
 
   /**
@@ -253,15 +279,18 @@ export function chatScreen(): Screen {
     dialogue?.setFocus(focusOn)
     root?.querySelector('[data-test="qm-focus"]')?.classList.toggle('on', focusOn)
   }
-  const placeholder = () => (running
-    ? `${charName()} is working… (Enter queues · Esc interrupts)`
-    : `Speak to ${charName()}…  ( / commands · @ files · ! shell )`)
+  // A phone's composer is narrow and has no Esc: the short version.
+  const placeholder = () => (ctx.link.remote
+    ? running ? `${charName()} is working… (sending queues)` : `Speak to ${charName()}…`
+    : running
+      ? `${charName()} is working… (Enter queues · Esc interrupts)`
+      : `Speak to ${charName()}…  ( / commands · @ files · ! shell )`)
   const nextEpoch = () => (epoch = Math.max(epoch + 1, Date.now()))
 
   const pager = createPager({
     page(p) {
       // Asked for as soon as the paragraph is complete, so the clip is usually there when its page shows.
-      if (p.voice && ctx.voice.active()) p.voice.line.clip ??= voiceClip(p.voice.line)
+      if (p.voice && ctx.voice.active() && !replaying) p.voice.line.clip ??= voiceClip(p.voice.line)
       // A getter: a <ja> line written after its paragraph's blank line still reaches these pages.
       dialogue.push({ kind: 'char', text: p.text, collapsed: p.collapsed, get voice() { return p.voice } })
     },
@@ -270,7 +299,7 @@ export function chatScreen(): Screen {
       addLog({ who: 'char', text: full })
       lastLine = clipLine(full)
     },
-    emote: (e) => ctx.character.emote(e),
+    emote: (e) => !replaying && ctx.character.emote(e),
   })
 
   /** Her clip for a line; a failure is told once per session and the text goes on unvoiced. */
@@ -419,7 +448,7 @@ export function chatScreen(): Screen {
     let body: string
     if (e.who === 'tool') {
       const t = e.tool
-      body = `<details><summary><b>${esc(toolLabel(t.name))}</b> <code>${esc(oneLine(t.detail, LOG_DETAIL_CHARS))}</code>`
+      body = `<details><summary><b>${esc(toolLabel(t.name))}</b> <code title="${esc(t.detail)}">${esc(oneLine(relPath(t.detail, cwd), LOG_DETAIL_CHARS))}</code>`
         + ` <em class="${t.state}">${toolState(t)}</em></summary>`
         + (t.input ? `<div class="k">Input</div><pre>${esc(t.input)}</pre>` : '')
         + (t.output !== undefined ? `<div class="k">Output</div><pre>${esc(t.output) || '(empty)'}</pre>` : '')
@@ -607,7 +636,7 @@ export function chatScreen(): Screen {
     const live = [...tools.values()].reverse()
     const t = live.find((x) => x.state === 'run' && !x.sub) ?? live.find((x) => x.state === 'run')
     ribbonEl.classList.toggle('show', !!t && running)
-    if (t) ribbonEl.innerHTML = doing(charName(), t.name, t.detail)
+    if (t) ribbonEl.innerHTML = doing(charName(), t.name, relPath(t.detail, cwd))
   }
 
   /**
@@ -677,8 +706,9 @@ export function chatScreen(): Screen {
     // The phone's STOP button lights up while she works (chat.css).
     root.classList.toggle('running', on)
     const state = root.querySelector('.pb-state')
-    if (state) state.textContent = on ? `${charName()} is working` : `${charName()} is listening`
+    if (state) state.textContent = on ? 'working' : 'listening'
     ctx.character.setBusy(on)
+    input.setRunning(on)
     if (on) {
       turnStart = Date.now()
       phaseStart = turnStart
@@ -831,7 +861,46 @@ export function chatScreen(): Screen {
   function follow(e: number, o: { cwd: string; title?: string }) {
     attaching = false
     reset(o, e)
+    if (ctx.link.remote) rememberJoined(true)
     dialogue.show({ kind: 'narration', text: `Joining ${charName()}…` })
+  }
+
+  /**
+   * A joined session's past, as the link kept it: every event runs through the usual handlers (the LOG, the panels,
+   * the quests), but without the typewriter, faces, voice or saves; the last page shows at the end, as when you look
+   * back at a VN you left running.
+   */
+  function playReplay(events: SessionEvent[]) {
+    const { show, push } = dialogue
+    let last: DisplayPage | undefined
+    replaying = true
+    dialogue.show = dialogue.push = (p: DisplayPage) => void (last = p)
+    try {
+      for (const e of events) onSession(e)
+    } finally {
+      dialogue.show = show
+      dialogue.push = push
+      replaying = false
+    }
+    // The page shows as it was; it is not read aloud again (a joined phone would ask for a clip at every reconnect).
+    if (last) dialogue.show({ ...last, voice: undefined })
+  }
+
+  /** The phone's tutorial, once nothing waits for an answer. */
+  function maybeTutorial() {
+    if (!tutorialDue || asks.isOpen()) return
+    tutorialDue = false
+    phoneTutorial({ modal })
+  }
+
+  /** On a phone, being in the computer's chat survives the app being killed in the background (main.ts re-joins). */
+  function rememberJoined(on: boolean) {
+    try {
+      if (on) localStorage.setItem(JOINED_KEY, String(Date.now()))
+      else localStorage.removeItem(JOINED_KEY)
+    } catch {
+      // Storage off: Join by hand after a restart.
+    }
   }
 
   /** The phone's "join": asks the link for the running session (answered by `attached`). */
@@ -871,7 +940,8 @@ export function chatScreen(): Screen {
     pager.reset()
     asks.clear()
     closeAllLayers()
-    running = false
+    // Through setRunning, so the STOP slot, the plate and the root class follow (ready is false here: the input stays off).
+    setRunning(false)
     ctx.character.setBusy(false)
     ctx.character.setPlacement('chat')
     panels.reset({ title: title || `A new day with ${charName()}`, cwd, cwdShort: cwd })
@@ -962,6 +1032,7 @@ export function chatScreen(): Screen {
   async function leave(to: 'title' | 'saves') {
     // A phone only watches the computer's session: leaving detaches it, and Join picks it up again.
     if (ctx.link.remote) {
+      rememberJoined(false)
       live = false
       nextEpoch()
       dialogue.setMuted(true)
@@ -1028,7 +1099,11 @@ export function chatScreen(): Screen {
     }
     gesture('greet')
     // A phone's first chat starts with the touch tutorial (once), over the session it opened on.
-    if (ctx.link.remote && document.getElementById('stage')?.dataset.orient === 'portrait') phoneTutorial({ modal })
+    if (ctx.link.remote && document.getElementById('stage')?.dataset.orient === 'portrait') {
+      tutorialDue = true
+      // After the replay and any open prompt, which come right behind this event.
+      window.setTimeout(maybeTutorial, TUTORIAL_DELAY_MS)
+    }
   }
 
   function fromHistory(h: HistoryEntry, i: number): LogEntry {
@@ -1043,6 +1118,8 @@ export function chatScreen(): Screen {
 
   function onTurnEnd(m: Extract<SessionEvent, { t: 'turn_end' }>) {
     pager.end()
+    // SKIP reads ahead within a turn; the next one starts at reading speed again.
+    if (!replaying) window.setTimeout(stopSkip, SKIP_SETTLE_MS)
     setRunning(false)
     for (const t of tools.values()) {
       if (t.state !== 'run') continue
@@ -1072,7 +1149,9 @@ export function chatScreen(): Screen {
       if (error !== lastError) addLog({ who: 'error', text: error })
     }
     lastError = undefined
-    saveAfterStats()
+    if (replaying) return
+    // The computer owns the save: a phone writing its own play time and thumbnail would undo the desktop's.
+    if (!ctx.link.remote) saveAfterStats()
     if (m.interrupted) return
     // She is waiting for you now, unless a queued message goes out next.
     if (!queued.length) callForAttention()
@@ -1081,6 +1160,8 @@ export function chatScreen(): Screen {
 
   function onError(m: Extract<SessionEvent, { t: 'error' }>) {
     addLog({ who: 'error', text: m.message })
+    // An old error in a joined session's past is history, not this window's state (a login fixed since, say).
+    if (replaying) return
     lastError = m.message
     if (m.kind === 'auth') {
       authFailed = true
@@ -1145,6 +1226,18 @@ export function chatScreen(): Screen {
       return dialogue.push({ kind: 'system', mono: true, text: page.text, collapsed: page.collapsed })
     }
     dialogue.push({ kind: 'narration', text: m.text })
+  }
+
+  /** A line sent from the other window (the desktop, or a phone): it joins this chat as if typed here. */
+  function onSaid(m: Extract<SessionEvent, { t: 'said' }>) {
+    const pics = Array.from({ length: m.images ?? 0 }, (_, i) => ` [Image #${i + 1}]`).join('')
+    const text = m.shell ? `!${m.text}` : m.text + pics
+    addLog({ who: 'user', text })
+    // Its output comes back as shell_result like a command typed here, and STOP stops it.
+    if (m.shell) shellsRunning++
+    if (m.shell) dialogue.push({ kind: 'narration', text: `Running \`${oneLine(m.text, SHELL_NARRATION_CHARS)}\`…` })
+    else dialogue.push(userPage((m.text || '(image)') + pics))
+    if (!replaying && !m.shell) setRunning(true)
   }
 
   function onShell(m: Extract<SessionEvent, { t: 'shell_result' }>) {
@@ -1212,6 +1305,7 @@ export function chatScreen(): Screen {
         if (!visible) ctx.toast(`${charName()} needs your answer in the chat`, 4000)
         callForAttention()
         return updateSpinner()
+      case 'said': return onSaid(m)
       case 'ask_cancel':
         asks.cancel(m.id)
         return updateSpinner()
@@ -1226,7 +1320,8 @@ export function chatScreen(): Screen {
       case 'hook':
         return onHook(m)
       case 'state':
-        if (m.state === 'running') setRunning(true)
+        // Waiting on a prompt (requires_action) is still her turn: STOP stays, and messages queue.
+        if (m.state !== 'idle') setRunning(true)
         return updateSpinner()
       case 'stats':
         stats = m.stats
@@ -1248,6 +1343,7 @@ export function chatScreen(): Screen {
   function stopSkip() {
     clearTimeout(skipTimer)
     skipTimer = undefined
+    skipBtn?.classList.remove('on')
     dialogue.setSkip(false)
   }
 
@@ -1330,15 +1426,15 @@ export function chatScreen(): Screen {
       })
       const qm = document.createElement('nav')
       qm.className = 'quickmenu'
-      // On a phone only LOG, AUTO, SLACK, STOP and ⋯ show (chat.css): fewer, bigger buttons; ⋯ opens the rest.
-      qm.innerHTML = [
-        ['log', 'LOG', 'Backlog (Ctrl+O)'], ['auto', 'AUTO', 'Auto-advance'], ['mode', 'MODE', 'Permission mode (Shift+Tab)'],
-        ['cmd', 'CMD', 'Commands (/)'], ['stop', 'STOP', 'Interrupt (Esc)'], ['slack', 'SLACK', 'Slack inbox (/slack)'], ['costume', '👗', 'Costume (/costume)'],
-        ['focus', 'FOCUS', 'Focus mode: just the prompt and replies (/focus · Ctrl+Shift+F)'], ['settings', '⚙', 'Settings (/config)'],
-        ['menu', 'MENU', 'Back to the title'], ['more', '⋯', 'More'], ['reply', 'Reply', 'Write to her'],
-      ].map(([id, label, tip]) => `<button type="button" data-test="qm-${id}" title="${tip}">${label}</button>`).join('')
-      dlgEl.append(qm)
+      qm.setAttribute('aria-label', 'Quick menu')
+      // Its own row under the dialogue box (desktop), or the thumb tiles (phone, chat.css): the same buttons. STOP
+      // lives in the Say slot on the desktop and in the Reply slot on a phone.
+      qm.innerHTML = QM_ITEMS.map(([id, label, tip]) => id === '|' ? '<span class="qsep" aria-hidden="true"></span>' : id === '-'
+        ? '<span class="qgap" aria-hidden="true"></span>'
+        : `<button type="button" data-test="qm-${id}" title="${tip}"${label ? '' : ` aria-label="${tip}"`}>${ICONS[QM_ICON[id] ?? 'tool']}${label ? `<span>${label}</span>` : ''}</button>`).join('')
+      root.append(qm)
       autoBtn = qm.querySelector('[data-test="qm-auto"]')!
+      skipBtn = qm.querySelector<HTMLElement>('[data-test="qm-skip"]')!
       // SLACK carries how many conversations have unread messages, as the link's scan finds them.
       const slackBtn = qm.querySelector<HTMLElement>('[data-test="qm-slack"]')!
       const slackBadge = () => {
@@ -1353,13 +1449,21 @@ export function chatScreen(): Screen {
       applyFocus()
       const qmActions: Record<string, () => void> = {
         more: openMore,
-        reply: () => compose(true),
         log: openLog,
         auto() {
           auto = !auto
           autoBtn.classList.toggle('on', auto)
+          autoBtn.setAttribute('aria-pressed', String(auto))
           dialogue.setAuto(auto)
         },
+        // Ctrl held, as a toggle: reads ahead to the next choice (or her last page), then turns itself off.
+        skip() {
+          if (skipBtn?.classList.contains('on')) return stopSkip()
+          if (layers.length) return
+          skipBtn?.classList.add('on')
+          dialogue.setSkip(true)
+        },
+        reply: () => compose(true),
         mode: cycleMode,
         cmd: openSlash,
         stop: () => void (interrupt() || ctx.toast(`${charName()} isn't working on anything right now`)),
@@ -1462,7 +1566,7 @@ export function chatScreen(): Screen {
           title: 'More',
           cls: 'sheet',
           body: `<div class="sheet-grid">${MORE_ITEMS.map(([id, icon, label]) =>
-            `<button type="button" class="btn" data-id="${id}" data-test="more-${id}"><span>${icon}</span>${label}</button>`).join('')}</div>`,
+            `<button type="button" class="btn" data-id="${id}" data-test="more-${id}">${ICONS[icon]}<span>${label}</span></button>`).join('')}</div>`,
         })
         m.el.querySelector('.sheet-grid')!.addEventListener('click', (e) => {
           const id = (e.target as HTMLElement).closest<HTMLElement>('[data-id]')?.dataset.id
@@ -1480,18 +1584,19 @@ export function chatScreen(): Screen {
       const bar = document.createElement('header')
       bar.className = 'pbar'
       bar.dataset.test = 'pbar'
-      bar.innerHTML = `<button type="button" class="pb-btn" data-act="leave" data-test="pb-leave" aria-label="Leave the chat">✕</button>
-        <div class="pb-t"><b class="pb-title"></b><small><span class="pb-hearts"></span> · <span class="pb-state"></span></small></div>
+      // The session plate: the same title, hearts and state the desktop shows in its panels, on one glass bar.
+      bar.innerHTML = `<div class="pb-plate"><button type="button" class="pb-btn" data-act="leave" data-test="pb-leave" aria-label="Leave the chat" title="Leave (she keeps working on your computer)">${ICONS.close}</button>
+        <button type="button" class="pb-t" data-act="status" aria-label="Status"><b class="pb-title"></b><small><span class="pb-hearts"></span><i class="pb-dot"></i><span class="pb-state"></span></small></button>
         <button type="button" class="pb-btn" data-act="sound" data-test="pb-sound" aria-label="Her voice"></button>
-        <button type="button" class="pb-btn" data-act="more" data-test="pb-more" aria-label="More">⋯</button>
-        <nav class="pb-meter"><button type="button" data-act="status" class="pb-ctx" data-test="pb-ctx"></button>
-        <button type="button" data-act="status" class="pb-five" data-test="pb-five"></button>
-        <button type="button" data-act="quests" class="pb-quests" data-test="pb-quests"></button></nav>`
+        <button type="button" class="pb-btn" data-act="more" data-test="pb-more" aria-label="More">${ICONS.more}</button></div>
+        <nav class="pb-meter" aria-label="Meters"><button type="button" data-act="status" class="pb-ctx pill" data-test="pb-ctx"></button>
+        <button type="button" data-act="status" class="pb-five pill" data-test="pb-five"></button>
+        <button type="button" data-act="quests" class="pb-quests pill" data-test="pb-quests"></button></nav>`
       root.append(bar)
       const rail = document.createElement('nav')
       rail.className = 'prail'
       rail.dataset.test = 'prail'
-      rail.innerHTML = RAIL_ITEMS.map(([id, icon, label]) => `<button type="button" data-act="${id}" data-test="rail-${id}"><span>${icon}</span>${label}</button>`).join('')
+      rail.innerHTML = RAIL_ITEMS.map(([id, icon, label]) => `<button type="button" data-act="${id}" data-test="rail-${id}">${ICONS[icon]}<span>${label}</span></button>`).join('')
       root.append(rail)
       slackBadge()
       const phoneAct = (act: string | undefined) => {
@@ -1506,9 +1611,10 @@ export function chatScreen(): Screen {
       const soundBtn = bar.querySelector<HTMLElement>('[data-act="sound"]')!
       const paintSound = () => {
         const on = ctx.voice.active()
-        soundBtn.textContent = on ? '🔊' : '🔇'
+        soundBtn.innerHTML = on ? ICONS.voiceOn : ICONS.voiceOff
+        soundBtn.setAttribute('aria-label', on ? 'Her voice is on' : 'Her voice is off')
         soundBtn.classList.toggle('off', !on)
-        bar.querySelector('.pb-state')!.textContent = running ? `${charName()} is working` : `${charName()} is listening`
+        bar.querySelector('.pb-state')!.textContent = running ? 'working' : 'listening'
       }
       ctx.voice.onChange(paintSound)
       ctx.store.subscribe(paintSound)
@@ -1546,6 +1652,9 @@ export function chatScreen(): Screen {
         cycleMode: () => (cycleMode(), input.focus()),
         openAction,
       }, bar)
+      // The mode shows in two places: the badge in the left panel and the chip in the composer.
+      const panelMode = panels.mode.bind(panels)
+      panels.mode = (m) => (panelMode(m), input?.setMode(MODE_LABELS[m] ?? m, m))
       paintSound()
       asks = createAsks(asksRoot(), {
         ctx,
@@ -1554,6 +1663,7 @@ export function chatScreen(): Screen {
         gesture,
         markdown,
         typing: () => input?.isTyping() ?? false,
+        cwd: () => cwd,
         onChange(open) {
           // Skipping never runs through a question: it stops at every choice menu.
           if (open) stopSkip()
@@ -1563,6 +1673,7 @@ export function chatScreen(): Screen {
           const has = layers.some((l) => l.el === el)
           if (open && !has) pushLayer({ el, close: () => asks.escape(), key: (e) => asks.key(e) })
           if (!open && has) dropLayer(el)
+          if (!open) maybeTutorial()
           updateSpinner()
         },
       })
@@ -1648,6 +1759,8 @@ export function chatScreen(): Screen {
           return false
         },
         advance: () => dialogue.advance(),
+        stop: () => void (interrupt() || ctx.toast(`${charName()} isn't working on anything right now`)),
+        cycleMode,
       }
       input = createInput(root.querySelector('.chat-input')!, host)
       input.setEnabled(false, `${charName()} is getting ready…`)
@@ -1669,9 +1782,11 @@ export function chatScreen(): Screen {
           if (!attaching) return
           if (m.epoch !== undefined) return follow(m.epoch, { cwd: '' })
           attaching = false
+          rememberJoined(false)
           ctx.toast(`Nothing is running on your computer. Start or load a session.`)
           return ctx.router.go('title')
         }
+        if (m.t === 'replay') return void (m.epoch === epoch && live && playReplay(m.events))
         if (!('epoch' in m)) return
         if (m.epoch === epoch && live) return onSession(m)
         // Another window started a session (a phone, or the desktop while a phone watches): the link runs one at a
@@ -1686,6 +1801,9 @@ export function chatScreen(): Screen {
         if (s === 'down') return void (linkDropped = live && !ended)
         if (!linkDropped || !live || ended) return
         linkDropped = false
+        // A phone lost its connection (the app went to the background, Wi-Fi changed), not the session: the
+        // computer kept it running. Join it again; the replay brings back whatever happened meanwhile.
+        if (ctx.link.remote) return attach()
         onEnded({ t: 'ended', reason: 'crashed' })
       })
       ctx.store.subscribe((s) => {

@@ -3,6 +3,10 @@
 
 import type { Limit, ModelChoice, PermissionModeName, SessionEvent, Settings, Stats, Todo } from '../../../link/src/protocol.ts'
 import { AFFECTION_LEVELS, affectionProgress } from '../../../link/src/affection.ts'
+import { ICONS, type IconName } from '../icons'
+import { relPath } from '../paths'
+
+export { relPath }
 import { esc, fmtDur, fmtK, resetsIn } from '../ui'
 
 export const MODE_LABELS: Record<PermissionModeName, string> = {
@@ -25,13 +29,32 @@ const LIMIT_WARN_PCT = 80
 /** resetsAt arrives in epoch seconds from rate-limit events and in ms elsewhere. */
 const EPOCH_MS_THRESHOLD = 1e12
 
-const ICONS: Record<string, string> = {
-  Read: '📖', Write: '✒️', Edit: '✒️', MultiEdit: '✒️', NotebookEdit: '✒️', Bash: '⚔️', PowerShell: '⚔️',
-  Grep: '🔍', Glob: '🔍', WebFetch: '🌐', WebSearch: '🌐', Skill: '✦', Agent: '👥', Task: '👥',
-  TodoWrite: '📜', TaskCreate: '📜', TaskUpdate: '📜', TaskList: '📜', TaskGet: '📜',
-  AskUserQuestion: '❔', ExitPlanMode: '🗺️', EnterPlanMode: '🗺️',
+const TOOL_ICONS: Record<string, IconName> = {
+  Read: 'read', Write: 'edit', Edit: 'edit', MultiEdit: 'edit', NotebookEdit: 'edit', Bash: 'shell', PowerShell: 'shell',
+  Grep: 'search', Glob: 'search', WebFetch: 'web', WebSearch: 'web', Skill: 'skill', Agent: 'agent', Task: 'agent',
+  TodoWrite: 'todo', TaskCreate: 'todo', TaskUpdate: 'todo', TaskList: 'todo', TaskGet: 'todo',
+  AskUserQuestion: 'ask', ExitPlanMode: 'plan', EnterPlanMode: 'plan',
 }
-export const toolIcon = (name: string) => ICONS[name] ?? (name.startsWith('mcp__') ? '🔌' : '✧')
+export const toolIcon = (name: string) => ICONS[TOOL_ICONS[name] ?? (name.startsWith('mcp__') ? 'plug' : 'tool')]
+const FILE_TOOLS = new Set(['Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
+
+/**
+ * An action row's two lines: "Tool · target" and a detail. A file tool's target is the file's name and its detail
+ * the folder, relative to the project (an absolute C:\Users\…\AppData path says nothing in 310px).
+ */
+export function actionText(name: string, detail: string, cwd: string): { title: string; sub: string } {
+  const label = toolLabel(name)
+  const line = oneLine(detail, 400)
+  if (FILE_TOOLS.has(name) && line) {
+    const path = relPath(line.replace(/\s+\(.*\)$/, ''), cwd)
+    const cut = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+    const extra = line.match(/\s+\((.*)\)$/)?.[1]
+    const dir = cut >= 0 ? path.slice(0, cut + 1) : './'
+    return { title: `${label} · ${path.slice(cut + 1)}`, sub: extra ? `${dir} · ${extra}` : dir }
+  }
+  return { title: label, sub: relPath(line, cwd) }
+}
+
 export const isShell = (name: string) => name === 'Bash' || name === 'PowerShell'
 
 export function oneLine(s: string, max = 90) {
@@ -126,6 +149,16 @@ export function createPanels(
     const el = bar?.querySelector<HTMLElement>(sel)
     if (el) el.textContent = text
   }
+  /** A phone pill: a ring that fills like the desktop gauge, its key, the number; amber from LIMIT_WARN_PCT. */
+  const pill = (sel: string, key: string, pct?: number) => {
+    const el = bar?.querySelector<HTMLElement>(sel)
+    if (!el) return
+    const p = pct === undefined ? 0 : Math.max(0, Math.min(100, Math.round(pct)))
+    el.style.setProperty('--p', `${p}%`)
+    el.classList.toggle('warn', p >= LIMIT_WARN_PCT)
+    el.innerHTML = `<span class="ring"></span><span class="k">${key}</span>${pct === undefined ? '—' : `${p}%`}`
+    el.setAttribute('aria-label', `${key} ${pct === undefined ? 'unknown' : `${p} percent`}`)
+  }
   const legend = GROUP_ORDER.map((g) => `<span><b style="background:var(--c-${g})"></b>${g === 'mcp' ? 'MCP' : g}</span>`).join('')
   left.innerHTML = `
     <div class="profile">
@@ -139,18 +172,18 @@ export function createPanels(
     </div>
     <div class="section-title">Status</div>
     <div class="stat">
-      <div class="ico">♥</div><div class="label">Memory · context</div><div class="val" data-test="stat-context">—</div>
+      <div class="ico">${ICONS.context}</div><div class="label">Context</div><div class="val" data-test="stat-context">—</div>
       <div class="bar ctx"><div class="used"></div><div class="buffer"></div></div>
     </div>
     <div class="legend">${legend}<span><b class="hatch"></b>reserve</span></div>
-    ${limitRow('five', '⚡', 'Stamina · 5-hour limit')}
-    ${limitRow('week', '☾', 'Weekly limit')}
-    ${limitRow('opus', '✧', 'Weekly · Opus')}
-    <div class="grid2">
-      ${chip('cost', '✦ Gold spent')}${chip('turns', '❖ Turns')}
-      ${chip('elapsed', '⏳ Together')}${chip('api', '⚙ API time')}
-      ${chip('tokens-in', '↓ Tokens in')}${chip('tokens-out', '↑ Tokens out')}
-      ${chip('cache', '⟳ Cache · hit')}${chip('lines', '± Lines')}
+    ${limitRow('five', ICONS.stamina, '5-hour limit')}
+    ${limitRow('week', ICONS.week, 'Weekly limit')}
+    ${limitRow('opus', ICONS.opus, 'Weekly · Opus')}
+    <div class="grid3">
+      ${chip('cost', 'Spent')}${chip('turns', 'Turns')}${chip('elapsed', 'Together')}
+      <div class="chip" title="Tokens in ↓ · out ↑"><div class="k">Tokens</div><div class="v"><span data-test="stat-tokens-in">—</span> ↓ <span data-test="stat-tokens-out">—</span> ↑</div></div>
+      ${chip('cache', 'Cache hit')}${chip('lines', 'Lines')}
+      <span hidden data-test="stat-api"></span>
     </div>
     <div class="badges">
       <button class="badge model" type="button" data-test="badge-model" title="Change model (/model)">—</button>
@@ -161,7 +194,7 @@ export function createPanels(
       <div class="day"><span class="stitle"></span><small class="scwd"></small></div><div class="clock">--:--</div>
     </div>`
   right.innerHTML = `
-    <div class="section-title">Quest</div>
+    <div class="section-title quest-title">Quest<em></em></div>
     <ul class="quests"></ul>
     <div class="section-title">Party</div>
     <div class="party"><span class="leader"></span></div>
@@ -183,6 +216,8 @@ export function createPanels(
 
   let models: ModelChoice[] = []
   let modelId: string | undefined
+  /** The project folder, so action rows show paths inside it. */
+  let cwd = ''
   const rows = new Map<string, HTMLElement>()
   const seen = new Set<string>()
   const agents = new Map<string, HTMLElement>()
@@ -255,17 +290,21 @@ export function createPanels(
     el.className = `act ${t.state}${t.sub ? ' sub' : ''}`
     el.dataset.state = t.state
     el.title = `${toolLabel(t.name)}${t.detail ? ` · ${oneLine(t.detail, ACTION_TITLE_CHARS)}` : ''}\nClick for details`
-    const glyph = t.state === 'run' ? '●' : t.state === 'ok' ? '✔' : t.state === 'err' ? '✖' : '◌'
-    el.innerHTML = `<span class="ai">${toolIcon(t.name)}</span><span class="ab"><span class="an">${esc(toolLabel(t.name))}</span>`
-      + `<span class="ad">${esc(oneLine(t.detail, ACTION_DETAIL_CHARS))}</span></span><span class="as">${glyph}</span>`
+    const { title, sub } = actionText(t.name, t.detail, cwd)
+    const glyph = t.state === 'run' ? ICONS.run : t.state === 'ok' ? ICONS.ok : t.state === 'err' ? ICONS.err : ICONS.stop
+    const state = t.state === 'run' ? 'running' : t.state === 'ok' ? 'done' : t.state === 'err' ? 'failed' : 'stopped'
+    el.setAttribute('aria-label', `${title}, ${sub}, ${state}`)
+    el.innerHTML = `<span class="ai">${toolIcon(t.name)}</span><span class="ab"><span class="an">${esc(title)}</span>`
+      + `<span class="ad">${esc(oneLine(sub, ACTION_DETAIL_CHARS))}</span></span><span class="as">${glyph}</span>`
   }
 
   return {
     reset(info) {
+      cwd = info.cwd
       q(left, '.stitle').textContent = info.title
       inBar('.pb-title', info.title)
-      inBar('.pb-ctx', '🧠 —')
-      inBar('.pb-five', '⏳ —')
+      pill('.pb-ctx', 'CTX')
+      pill('.pb-five', '5H')
       q(left, '.scwd').textContent = info.cwdShort
       q(left, '.day').title = info.cwd
       for (const id of ['cost', 'turns', 'api', 'tokens-in', 'tokens-out', 'cache', 'lines', 'elapsed']) stat(id).textContent = '—'
@@ -289,24 +328,26 @@ export function createPanels(
       portrait.innerHTML = p.avatar ? `<img alt="" src="${esc(p.avatar)}">` : `<span>${esc(initial)}</span>`
       q(left, '.pname').textContent = p.displayName
       q(left, '.sub').textContent = [p.title, `with ${s.waifu.name}`].filter(Boolean).join(' · ')
-      q(left, '.hint').textContent = `${s.waifu.name}'s affection · praise and headpats warm her up`
+      q(left, '.hint').title = `${s.waifu.name}'s affection · praise and headpats warm her up`
       q(right, '.leader').textContent = `✧ ${s.waifu.name}`
       q(right, '.acts-title').textContent = `${s.waifu.name}'s actions`
     },
     stats(s) {
       context(s.context)
-      if (s.context?.max) inBar('.pb-ctx', `🧠 ${Math.round((s.context.used / s.context.max) * 100)}%`)
-      if (s.limits.fiveHour) inBar('.pb-five', `⏳ ${Math.round(s.limits.fiveHour.pct)}%`)
+      if (s.context?.max) pill('.pb-ctx', 'CTX', (s.context.used / s.context.max) * 100)
+      if (s.limits.fiveHour) pill('.pb-five', '5H', s.limits.fiveHour.pct)
       limit('five', s.limits.fiveHour)
       limit('week', s.limits.weekly)
       limit('opus', s.limits.weeklyOpus)
       stat('cost').textContent = `$${s.costUsd.toFixed(2)}`
       stat('turns').textContent = String(s.turns)
       stat('api').textContent = fmtDur(s.apiMs)
+      stat('elapsed').parentElement!.title = `API time ${fmtDur(s.apiMs)}`
       stat('tokens-in').textContent = fmtK(s.tokensIn)
       stat('tokens-out').textContent = fmtK(s.tokensOut)
       const read = s.cacheRead + s.cacheWrite + s.tokensIn
-      stat('cache').textContent = `${fmtK(s.cacheRead)} · ${read ? `${Math.round((s.cacheRead / read) * 100)}%` : '—'}`
+      stat('cache').textContent = read ? `${Math.round((s.cacheRead / read) * 100)}%` : '—'
+      stat('cache').title = `${fmtK(s.cacheRead)} tokens read from the cache`
       stat('lines').innerHTML = s.linesAdded === undefined && s.linesRemoved === undefined
         ? '—'
         : `<span class="add">+${s.linesAdded ?? 0}</span> <span class="del">−${s.linesRemoved ?? 0}</span>`
@@ -338,10 +379,17 @@ export function createPanels(
         return `<span class="${cls.filter(Boolean).join(' ')}"${fill}>♥</span>`
       }
       el.innerHTML = Array.from({ length: MAX_HEARTS }, (_, k) => heart(k)).join('')
-      inBar('.pb-hearts', '♥'.repeat(level) + '♡'.repeat(MAX_HEARTS - level))
+      q(left, '.hint').textContent = `${level} / ${MAX_HEARTS}`
+      const hearts = bar?.querySelector<HTMLElement>('.pb-hearts')
+      if (hearts) {
+        hearts.innerHTML = Array.from({ length: MAX_HEARTS }, (_, k) => `<span class="${k < level ? 'on' : ''}">♥</span>`).join('')
+        hearts.setAttribute('aria-label', `Affection ${level} of ${MAX_HEARTS}`)
+      }
     },
     todos(items) {
-      inBar('.pb-quests', items.length ? `◇ ${items.filter((t) => t.status === 'completed').length}/${items.length}` : '◇ 0')
+      const qb = bar?.querySelector<HTMLElement>('.pb-quests')
+      if (qb) qb.innerHTML = `<span class="gem">◆</span><span class="k">QUEST</span>${items.length ? `${items.filter((t) => t.status === 'completed').length}/${items.length}` : '0'}`
+      q(right, '.quest-title em').textContent = items.length ? `${items.filter((t) => t.status === 'completed').length} / ${items.length}` : ''
       q(right, '.quests').innerHTML = items.length
         ? items.map((t) => `<li class="${t.status}" data-test="quest-item" data-status="${t.status}">${esc(t.content)}</li>`).join('')
         : '<li class="empty">No quests yet</li>'

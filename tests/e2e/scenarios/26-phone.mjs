@@ -165,6 +165,71 @@ export default {
       },
     },
     {
+      r: 'R78',
+      name: 'a joining phone gets the whole session: the desktop\'s actions, its lines, an open prompt above the tutorial',
+      async run({ app, project }) {
+        const pair = await enablePhone(app)
+        await newGame(app, project)
+        await fastText(app)
+        await say(app, 'tools please')
+        await turnEnd(app)
+        await say(app, 'permission please')
+        await app.waitVisible(T('ask'), 15_000)
+        const deskActs = await app.eval(() => document.querySelectorAll('.chat .act').length)
+        const phone = await openPhone(pair)
+        try {
+          await fastText(phone)
+          await phone.click(T('title-join'))
+          // The prompt open on the desktop shows on the phone too, and the first-chat tutorial waits behind it.
+          await phone.waitVisible(T('ask'), 15_000)
+          assert(!(await phone.visible(T('tutorial'))), 'the tutorial covers the prompt')
+          eq(await phone.eval(() => document.querySelectorAll('.chat .act').length), deskActs, 'the same actions as the desktop')
+          await phone.click(`${T('ask')} ${T('ask-option')}`)
+          await app.waitHidden(T('ask'), 10_000)
+          await phone.waitVisible(T('tutorial'))
+          await phone.click(T('tutorial-skip'))
+          await turnEnd(app)
+          // The LOG has what the desktop said.
+          await phone.click(T('qm-log'))
+          await phone.waitVisible(T('log'))
+          assert((await phone.text(T('log'))).includes('tools please'), 'the desktop\'s line is in the phone\'s LOG')
+          await phone.key('Escape')
+        } finally {
+          await phone.close()
+        }
+      },
+    },
+    {
+      r: 'R78',
+      name: 'a phone that loses its connection (Android in the background) stays in the session; a restart goes back in',
+      async run({ app, project }) {
+        const pair = await enablePhone(app)
+        await newGame(app, project)
+        await fastText(app)
+        const phone = await openPhone(pair)
+        try {
+          await fastText(phone)
+          await phone.eval(() => localStorage.setItem('wc-phone-tutorial', '1'))
+          await phone.click(T('title-join'))
+          await phone.waitVisible(T('qm-reply'))
+          await phone.eval(() => window.__e2e.dropLinks())
+          await phone.waitFor(() => /Joining|ready|today/i.test(document.querySelector('.dialogue')?.textContent ?? ''), { label: 'back in the session', timeout: 10_000 })
+          assert(!/stopped unexpectedly/.test(await chatText(phone)), 'the phone ended the session')
+          // What she does meanwhile on the desktop reaches the phone through the new connection.
+          await say(app, 'permission please')
+          await phone.waitVisible(T('ask'), 15_000)
+          await app.click(`${T('ask')} ${T('ask-option')}`)
+          await turnEnd(app)
+          // Android killed the app: it starts again and goes straight back into the chat.
+          await phone.eval(() => location.reload())
+          await phone.waitFor(() => document.getElementById('stage')?.dataset.screen === 'chat', { label: 'the chat after a restart', timeout: 20_000 })
+          assert(!(await app.eval(() => window.__e2e.events.some((e) => e.t === 'ended'))), 'the desktop session still runs')
+        } finally {
+          await phone.close()
+        }
+      },
+    },
+    {
       r: 'R77',
       name: 'a new pairing code drops the phone back to the pairing screen',
       async run({ app }) {

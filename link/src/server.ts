@@ -7,6 +7,7 @@ import { format } from 'node:util'
 import { WebSocket, WebSocketServer } from 'ws'
 import { listCostumes, serveModel, serveThumb } from './assets.ts'
 import { asMood } from './affection.ts'
+import { putAttachment } from './attachments.ts'
 import { createAuth } from './auth.ts'
 import { hasVoiceKey, setVoiceKey, synthesize } from './tts.ts'
 import { searchFiles } from './files.ts'
@@ -39,6 +40,10 @@ const KEY_MAX = 512
 const CLOSE_WAIT_MS = 3_000
 /** With no app connected for this long, the running session is closed: nobody can see or answer it. */
 const ORPHAN_MS = 60_000
+/** Phones are pinged this often; one that misses a ping is dropped, so its next connection starts clean. */
+const PING_MS = Number(process.env.WC_PING_MS ?? 15_000)
+/** How much of a session a joining window is replayed, at most (oldest dropped first). */
+const JOURNAL_MAX_BYTES = 4 * 1024 * 1024
 
 // ---------------------------------------------------------------- logging
 
@@ -186,6 +191,25 @@ function broadcastLocal(m: ServerMsg) {
 
 /** Connections that came in through the phone listener. */
 const remoteSockets = new WeakSet<WebSocket>()
+/**
+ * A phone in a pocket or in the background loses its connection without closing it. Each one is pinged; one that
+ * didn't answer the last ping is dropped, so it reconnects (and re-joins) cleanly instead of writing into a dead socket.
+ */
+const alive = new WeakMap<WebSocket, boolean>()
+setInterval(() => {
+  for (const ws of phones?.wss.clients ?? []) {
+    if (alive.get(ws) === false) {
+      ws.terminate()
+      continue
+    }
+    alive.set(ws, false)
+    try {
+      ws.ping()
+    } catch {
+      ws.terminate()
+    }
+  }
+}, PING_MS).unref()
 let phones: { http: ReturnType<typeof createServer>; wss: WebSocketServer } | undefined
 let phoneError: string | undefined
 
@@ -202,10 +226,14 @@ async function syncPhones() {
     })
     const pws = new WebSocketServer({
       server,
+      // Over Wi-Fi or Tailscale: a joining phone's replay can be megabytes of text, which compresses well.
+      perMessageDeflate: { threshold: 1024 },
       verifyClient: ({ req }: { req: IncomingMessage }) => remoteTokenOk(new URL(req.url ?? '/', 'http://link').searchParams.get('token') ?? ''),
     })
     pws.on('connection', (ws) => {
       remoteSockets.add(ws)
+      alive.set(ws, true)
+      ws.on('pong', () => alive.set(ws, true))
       serve(ws)
       broadcastLocal({ t: 'remote_status', status: phoneStatus() })
       ws.on('close', () => broadcastLocal({ t: 'remote_status', status: phoneStatus() }))
@@ -248,22 +276,68 @@ function stopPhones() {
 async function attach(ws: WebSocket) {
   const live = current
   if (!live?.session) return sendTo(ws, { t: 'attached' })
-  sendTo(ws, { t: 'attached', epoch: live.epoch })
   const started = live.latest.get('started') as Extract<SessionEvent, { t: 'started' }> | undefined
   const id = live.session.sessionId()
-  const history = id ? await loadHistory(id, live.cwd).catch(() => started?.history ?? []) : started?.history ?? []
+  // The slow reads first: everything from `attached` on goes out in one synchronous block, so no event of the
+  // running session can slip in between and reach this window twice (live, then again in the replay).
+  const history = live.journal.length && !live.trimmed ? started?.history ?? [] : id ? await loadHistory(id, live.cwd).catch(() => started?.history ?? []) : started?.history ?? []
   const save = id ? await getSave(id, live.cwd).catch(() => started?.save) : started?.save
-  if (current !== live) return
+  if (current !== live || ws.readyState !== WebSocket.OPEN) return
+  sendTo(ws, { t: 'attached', epoch: live.epoch })
+  // The transcript as it was when the session started; what happened since comes in the replay, so nothing shows twice.
+  // A journal that outgrew its cap starts from the fresh transcript instead, and replays only the current turn.
   if (started) sendTo(ws, { ...started, history, ...(save ? { save } : {}), resumed: true, epoch: live.epoch })
+  // Then the state as it is now (running or not, stats, quests), so it wins over what the replay ends on.
+  sendTo(ws, { t: 'replay', epoch: live.epoch, events: live.trimmed ? sinceLastTurn(live.journal) : live.journal })
   for (const [t, e] of live.latest) if (t !== 'started') sendTo(ws, { ...e, epoch: live.epoch } as ServerMsg)
   for (const e of live.asks.values()) sendTo(ws, { ...e, epoch: live.epoch } as ServerMsg)
+}
+
+/** The journal from the last finished turn on: what a fresh transcript doesn't hold yet. */
+function sinceLastTurn(journal: SessionEvent[]) {
+  const at = journal.findLastIndex((e) => e.t === 'turn_end')
+  return journal.slice(at + 1)
 }
 
 /** An answer from one window closes the same prompt in the others (the desktop and a phone both show it). */
 function answered(ws: WebSocket, id: string) {
   const live = current
   if (!live?.asks.delete(id)) return
+  record(live, { t: 'ask_cancel', id })
   broadcast({ t: 'ask_cancel', id, epoch: live.epoch }, ws)
+}
+
+/** What a window sent her, to the other windows (and the journal), so a phone and the desktop read the same chat. */
+function said(ws: WebSocket, e: Extract<SessionEvent, { t: 'said' }>) {
+  const live = current
+  if (!live?.session) return
+  record(live, e)
+  broadcast({ ...e, epoch: live.epoch }, ws)
+}
+
+/** Events a joining window doesn't need again: the moment's face and voice, the spinner, transient notes. */
+const UNJOURNALED = new Set<SessionEvent['t']>(['face', 'voice', 'affection', 'progress', 'notify', 'hook', 'suggestion'])
+
+const size = (e: SessionEvent) => JSON.stringify(e).length
+
+/** Keeps a session event for the replay a joining window gets: text deltas joined, oldest dropped past the cap. */
+function record(live: Live, e: SessionEvent) {
+  if (UNJOURNALED.has(e.t) || STATE_EVENTS.has(e.t) || ASK_EVENTS.has(e.t)) return
+  const last = live.journal.at(-1)
+  if (e.t === 'text' && last?.t === 'text') {
+    // Counted as it will be sent (escapes included), so trimming takes off what was added.
+    live.journalBytes -= size(last)
+    last.delta += e.delta
+    live.journalBytes += size(last)
+  } else {
+    const copy = structuredClone(e)
+    live.journal.push(copy)
+    live.journalBytes += size(copy)
+  }
+  while (live.journalBytes > JOURNAL_MAX_BYTES && live.journal.length > 1) {
+    live.journalBytes -= size(live.journal.shift()!)
+    live.trimmed = true
+  }
 }
 
 // ---------------------------------------------------------------- services
@@ -308,6 +382,11 @@ type Live = {
   latest: Map<SessionEvent['t'], SessionEvent>
   /** Prompts still waiting on an answer, by id, in the order they came. */
   asks: Map<string, SessionEvent>
+  /** Everything else since the start, for the replay a joining window gets (record()). */
+  journal: SessionEvent[]
+  journalBytes: number
+  /** The journal lost its oldest events to the cap: a joiner gets the fresh transcript plus the current turn. */
+  trimmed: boolean
 }
 
 /** Session events that each replace the one before; replayed to a window that attaches. */
@@ -335,9 +414,10 @@ function makeLive(epoch: number, cwd: string): Live {
     if (STATE_EVENTS.has(e.t)) live.latest.set(e.t, e)
     if (ASK_EVENTS.has(e.t)) live.asks.set((e as { id: string }).id, e)
     if (e.t === 'ask_cancel') live.asks.delete(e.id)
+    record(live, e)
     broadcast({ ...e, epoch } as ServerMsg)
   }
-  const live: Live = { epoch, cwd, closing: false, ended, emit, latest: new Map(), asks: new Map() }
+  const live: Live = { epoch, cwd, closing: false, ended, emit, latest: new Map(), asks: new Map(), journal: [], journalBytes: 0, trimmed: false }
   return live
 }
 
@@ -579,6 +659,12 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       const r = await listCostumes(isStr(m.dir) ? m.dir : undefined)
       return sendTo(ws, { t: 'costumes', ...r })
     }
+    case 'file_put':
+      need(isStr(m.id) && m.id.length < KEY_MAX && isStr(m.name) && isStr(m.data), 'id, name, data')
+      return putAttachment(m.name, m.data).then(
+        (path) => sendTo(ws, { t: 'file_put', id: m.id, path }),
+        (e) => sendTo(ws, { t: 'file_put', id: m.id, error: errorText(e) }),
+      )
     case 'trust_check':
     case 'trust_accept': {
       need(isStr(m.cwd) && m.cwd.trim(), 'cwd')
@@ -595,9 +681,11 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       return closeCurrent()
     case 'say':
       need(isStr(m.text), 'text')
+      said(ws, { t: 'said', text: m.text, ...(Array.isArray(m.images) && m.images.length ? { images: m.images.length } : {}) })
       return live().say(m.text, Array.isArray(m.images) ? m.images : undefined, m.now === true, asMood(m.mood))
     case 'shell':
       need(isStr(m.command), 'command')
+      said(ws, { t: 'said', text: m.command, shell: true })
       return live().shell(m.command)
     case 'interrupt':
       return current?.session?.interrupt()

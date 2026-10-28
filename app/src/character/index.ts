@@ -26,6 +26,8 @@ const CROSSFADE_MS = 450
 const HIDE_MS = 700
 const RESIZE_DEBOUNCE_MS = 150
 const MAX_RESOLUTION = 2
+const FPS_FRONT = 60
+const FPS_BACK = 30
 const JPEG_QUALITY = 0.86
 // The stage backdrop as base.css #stage paints it, for the snapshot: sky color stops, the sun's center height and
 // its ellipse radii (fractions of the stage), where the sun has faded out, and the floor shade's height.
@@ -126,6 +128,11 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
     if (document.hidden) interact.reset()
     updateRunning()
   })
+  // Full motion only where it is watched: 60 fps in the focused desktop window, 30 on a phone (battery) or while
+  // another window is in front. Her breathing and blinks look the same at 30.
+  const updateFps = () => stage?.setFps(stageEl.dataset.device !== 'phone' && document.hasFocus() ? FPS_FRONT : FPS_BACK)
+  addEventListener('focus', updateFps)
+  addEventListener('blur', updateFps)
 
   function applyPlacement() {
     const { x, y, scale } = spot()
@@ -235,6 +242,7 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
     box.insertBefore(s.app.canvas, fxLayer)
     stage = s
     updateRunning()
+    updateFps()
     return s
   }
 

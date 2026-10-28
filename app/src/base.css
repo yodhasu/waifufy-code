@@ -50,11 +50,19 @@ input, textarea, select { font: inherit; color: var(--text); }
 .btn { border: 1.5px solid var(--gold-soft); background: var(--panel-inset); border-radius: 12px; padding: 8px 18px; font-weight: 700;
   transition: border-color .15s, box-shadow .15s, transform .15s; }
 .btn:not(:disabled):hover, .btn:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); outline: none; }
-.btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent-deep)); color: var(--text-on-accent); border-color: transparent; }
-.btn.danger { border-color: var(--bad); color: var(--bad); }
+.btn.primary { background: linear-gradient(135deg, var(--fill-strong), var(--fill-deep)); color: var(--text-on-accent); border-color: transparent; }
+.btn.danger { border-color: var(--bad); color: var(--bad-ink); }
 .field { width: 100%; border-radius: 12px; border: 1.5px solid var(--gold-soft); background: var(--input); padding: 9px 14px; outline: none; }
 .field:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
 code, .mono { font-family: var(--font-mono); }
+
+/* The icon set (icons.ts): stroke icons that take the text colour. */
+.ic { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+  vertical-align: middle; }
+.ic.fill { fill: currentColor; stroke: none; }
+
+/* One focus ring for every control, solid and at least 3:1 on every surface, in both themes. */
+:is(button, a, [tabindex], input, select, textarea):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 .overlay { position: absolute; inset: 0; background: var(--overlay); backdrop-filter: blur(2px); display: none;
   align-items: center; justify-content: center; z-index: 50; }
@@ -91,3 +99,9 @@ code, .mono { font-family: var(--font-mono); }
 #stage[data-orient='portrait'] #toast { max-width: 840px; text-align: center; }
 #stage[data-orient='portrait'] #confirm .box { width: 840px; }
 #stage[data-orient='portrait'] #confirm .row .btn { flex: 1; }
+
+/* ---------- A phone (the Android remote): no frosted glass. Blurring what is behind every panel each frame costs a
+   phone's GPU more than anything else on screen; the panels go nearly opaque instead, and half the petals fall. */
+#stage[data-device='phone'] { --panel: color-mix(in oklab, var(--panel-solid) 94%, transparent); }
+#stage[data-device='phone'] *, #stage[data-device='phone'] *::before { backdrop-filter: none !important; }
+#stage[data-device='phone'] .petal:nth-child(2n) { display: none; }

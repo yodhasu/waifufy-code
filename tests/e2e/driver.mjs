@@ -231,6 +231,8 @@ const PRELUDE = `(() => {
     if (!s) throw new Error('no open link socket to inject into')
     s.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(m) }))
   }
+  // Closes the link's sockets the way Android does to an app in the background (the page stays, the connection goes).
+  e2e.dropLinks = () => sockets.filter((x) => x.url.includes('token=') && x.readyState === 1).forEach((x) => x.close())
   e2e.isVisible = (el) => {
     const r = el.getBoundingClientRect()
     if (r.width === 0 || r.height === 0) return false

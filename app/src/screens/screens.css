@@ -4,7 +4,7 @@
 
 /* Nameplate tab shared by the title quote and the wizard's speech box. */
 .ttl-name, .wz-name { position: absolute; top: -15px; left: 18px; padding: 3px 16px; border-radius: 10px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep)); color: var(--text-on-accent);
+  background: linear-gradient(135deg, var(--fill-strong), var(--fill-deep)); color: var(--text-on-accent);
   font-family: var(--font-title); font-weight: 800; font-size: 14px; letter-spacing: .16em; box-shadow: 0 4px 14px var(--accent-glow); }
 
 /* ================================================================ title */
@@ -79,7 +79,7 @@
   font-family: var(--font-title); font-weight: 800; font-size: 18px; color: var(--text-soft); outline: none; transition: border-color .15s, box-shadow .15s; }
 .sv-arrow { background: none; border-color: transparent; font-size: 13px; }
 .sv-tab:hover, .sv-tab:focus-visible, .sv-arrow:not(:disabled):hover, .sv-arrow:focus-visible { border-color: var(--accent); color: var(--heading); }
-.sv-tab.on { background: linear-gradient(135deg, var(--accent), var(--accent-deep)); color: var(--text-on-accent); border-color: transparent;
+.sv-tab.on { background: linear-gradient(135deg, var(--fill-strong), var(--fill-deep)); color: var(--text-on-accent); border-color: transparent;
   box-shadow: 0 0 18px var(--accent-glow); }
 
 .sv-grid-wrap { flex: 1; min-height: 0; }
@@ -119,7 +119,7 @@
 .sv-actions button { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border-radius: 10px; font-size: 15px;
   border: 1.5px solid var(--gold-soft); background: var(--panel-solid); color: var(--heading); outline: none; transition: border-color .15s, box-shadow .15s; }
 .sv-actions button:hover, .sv-actions button:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
-.sv-actions [data-act='load'] { background: linear-gradient(135deg, var(--accent), var(--accent-deep)); color: var(--text-on-accent); border-color: transparent; }
+.sv-actions [data-act='load'] { background: linear-gradient(135deg, var(--fill-strong), var(--fill-deep)); color: var(--text-on-accent); border-color: transparent; }
 .sv-actions [data-act='delete']:hover, .sv-actions [data-act='delete']:focus-visible { border-color: var(--bad); box-shadow: 0 0 0 3px var(--hover); }
 
 .sv-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 0 6px; }
@@ -161,7 +161,7 @@
 .wz-dot.done { color: var(--text-soft); border-bottom-color: var(--gold-soft); }
 .wz-dot.done i { background: var(--gold); border-color: transparent; color: var(--text-on-accent); }
 .wz-dot.on { color: var(--heading); border-bottom-color: var(--accent); }
-.wz-dot.on i { background: linear-gradient(135deg, var(--accent), var(--accent-deep)); border-color: transparent; color: var(--text-on-accent);
+.wz-dot.on i { background: linear-gradient(135deg, var(--fill-strong), var(--fill-deep)); border-color: transparent; color: var(--text-on-accent);
   box-shadow: 0 0 12px var(--accent-glow); }
 .wz-dot:not(:disabled):hover, .wz-dot:focus-visible { color: var(--heading); }
 .wz-dot:disabled { opacity: 1; }
@@ -250,24 +250,31 @@
 #stage[data-orient='portrait'] #screen-title .ttl-logo { left: 48px; top: 120px; width: auto; right: 48px; }
 #stage[data-orient='portrait'] .ttl-logo h1 { font-size: 84px; }
 #stage[data-orient='portrait'] .ttl-sub::before { width: 340px; }
-#stage[data-orient='portrait'] #screen-title .ttl-menu { left: 48px; right: 48px; top: auto; bottom: 96px; width: auto; }
-#stage[data-orient='portrait'] .ttl-item { min-height: 76px; }
+/* At phone size: zoomed like the chat's chrome (--pz), so the labels read at 17pt and each row is a 52pt target. */
+#stage[data-orient='portrait'] #screen-title .ttl-menu { zoom: 2.1; left: calc(24px / 2.1); right: calc(24px / 2.1); top: auto; bottom: calc(72px / 2.1);
+  width: auto; gap: 8px; }
+#stage[data-orient='portrait'] .ttl-item { min-height: 52px; padding: 8px 18px 9px 44px; border-radius: 14px; }
+#stage[data-orient='portrait'] .ttl-item::before { left: 18px; top: 14px; font-size: 12px; }
+#stage[data-orient='portrait'] .ttl-item.on::before { left: 16px; top: 11px; }
+#stage[data-orient='portrait'] .ttl-label { font-size: 17px; }
+#stage[data-orient='portrait'] .ttl-hint { font-size: 12px; }
+#stage[data-orient='portrait'] #screen-title .ttl-foot { zoom: 2.1; bottom: calc(16px / 2.1); }
 #stage[data-orient='portrait'] .ttl-item.on { transform: none; }
-#stage[data-orient='portrait'] .ttl-hint b { max-width: 420px; }
+#stage[data-orient='portrait'] .ttl-hint b { max-width: 180px; }
 #stage[data-orient='portrait'] #screen-title .ttl-quote,
 #stage[data-orient='portrait'] .ttl-item[data-id='continue'] .ttl-label::after { display: none; }
-#stage[data-orient='portrait'] #screen-title .ttl-foot { left: 48px; right: 48px; justify-content: center; }
+#stage[data-orient='portrait'] #screen-title .ttl-foot { left: calc(24px / 2.1); right: calc(24px / 2.1); justify-content: center; }
 
 /* Save/Load: two slots a row, four rows a page; the slot actions always show (there is no hover on a phone). */
-#stage[data-orient='portrait'] #screen-saves .sv-page { padding: 26px 24px 22px; }
-#stage[data-orient='portrait'] .sv-head { height: auto; flex-wrap: wrap; gap: 12px; }
-#stage[data-orient='portrait'] .sv-heading h2 { font-size: 40px; letter-spacing: .2em; }
-#stage[data-orient='portrait'] .sv-tab, #stage[data-orient='portrait'] .sv-arrow { height: 44px; }
-#stage[data-orient='portrait'] .sv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(4, minmax(0, 1fr)); gap: 16px; }
+#stage[data-orient='portrait'] #screen-saves .sv-page { zoom: 2.1; padding: 14px 12px 12px; }
+#stage[data-orient='portrait'] .sv-head { height: auto; flex-wrap: wrap; gap: 8px; }
+#stage[data-orient='portrait'] .sv-heading h2 { font-size: 26px; letter-spacing: .2em; }
+#stage[data-orient='portrait'] .sv-tab, #stage[data-orient='portrait'] .sv-arrow { height: 36px; }
+#stage[data-orient='portrait'] .sv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(4, minmax(0, 1fr)); gap: 8px; }
 #stage[data-orient='portrait'] .sv-actions { opacity: 1; transform: none; }
-#stage[data-orient='portrait'] .sv-actions button { width: 44px; height: 44px; }
+#stage[data-orient='portrait'] .sv-actions button { width: 36px; height: 36px; }
 #stage[data-orient='portrait'] .sv-keys { display: none; }
-#stage[data-orient='portrait'] .sv-hint { height: auto; min-height: 44px; padding: 8px 18px; }
+#stage[data-orient='portrait'] .sv-hint { height: auto; min-height: 40px; padding: 6px 12px; }
 #stage[data-orient='portrait'] .sv-bar-btn { flex: 1; min-width: 0; }
 
 /* The wizard stays a desktop screen (a phone uses the desktop's settings); it is centered so nothing is cut off. */

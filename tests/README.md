@@ -5,6 +5,10 @@ Everything here runs without spending plan budget, except `e2e/real.mjs`, which 
 | What | Command | Needs |
 |---|---|---|
 | Mock session unit check | `node tests/unit/mock.test.mjs` | Node 24 |
+| Phone continuity (join, replay, re-join, heartbeat) | `node tests/unit/continuity.test.mjs` | Node 24; port 47920 free |
+| Project-relative paths | `node tests/unit/paths.test.mjs` | Node 24 |
+| Any-file attachments (`file_put`, kept under the data folder) | `node tests/unit/files.test.mjs` | Node 24 |
+| Composer live formatting (code fences, Enter in a block) | `node tests/unit/format.test.mjs` | Node 24 |
 | Slack service unit check (mock workspace) | `node tests/unit/slack.test.mjs` | Node 24 |
 | E2E suite (mock session) | `node tests/e2e/run.mjs` | a dev-config debug build (below), or Chrome/Edge for `WC_E2E_TARGET=browser` |
 | Part of the suite | `node tests/e2e/run.mjs chat R14` | files whose name contains `chat`, plus every test tagged R14 |

@@ -4,6 +4,8 @@ import type { Link } from './contracts'
 import { clearPairing, pair, savedPairing, savePairing, type Pairing } from './pair'
 
 const RETRY_MS = 400
+/** A phone coming back to the front gives its connection this long to answer before opening a new one. */
+const REVIVE_MS = 3000
 /** A phone gives each of the desktop's addresses this long to answer before trying the next. */
 const REMOTE_TRY_MS = 3500
 /** The desktop closes a phone's connection with this code when it was unpaired (a new pairing code). */
@@ -33,6 +35,7 @@ export async function connect(): Promise<Link> {
   // A phone finds which of the desktop's addresses answers (home Wi-Fi, Tailscale…), and pairs again if none does.
   if (target.remote) target = await reachable(target)
 
+  let reopen = () => {}
   await new Promise<void>((ready) => {
     let isFirst = true
     const open = () => {
@@ -65,8 +68,33 @@ export async function connect(): Promise<Link> {
         setTimeout(open, RETRY_MS)
       }
     }
+    reopen = open
     open()
   })
+
+  // Back from the background, a phone's socket may look open while the network under it is gone (Android kept the
+  // object, not the connection). One round trip tells; without an answer it is closed, and reconnects at once.
+  if (target.remote) {
+    addEventListener('visibilitychange', () => {
+      const s = ws
+      if (document.visibilityState !== 'visible' || !s) return
+      let answered = false
+      const off = (m: ServerMsg) => void (m.t === 'hello' && (answered = true))
+      handlers.add(off)
+      s.send(JSON.stringify({ t: 'hello' } satisfies ClientMsg))
+      setTimeout(() => {
+        handlers.delete(off)
+        if (answered || ws !== s) return
+        // Let go of it at once: a socket whose network is gone can take long to finish closing, and meanwhile
+        // messages would go into it instead of the outbox.
+        ws = undefined
+        s.onclose = s.onmessage = null
+        s.close()
+        setStatus('down')
+        reopen()
+      }, REVIVE_MS)
+    })
+  }
 
   const link: Link = {
     base: `http://${target.hosts[0]}:${target.port}`,

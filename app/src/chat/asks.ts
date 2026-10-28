@@ -6,6 +6,7 @@ import { elicitContent } from '../../../link/src/elicit.ts'
 import type { Diff, ElicitField, ElicitValue, Question, SessionEvent } from '../../../link/src/protocol.ts'
 import type { Ctx, Gesture } from '../contracts'
 import { esc } from '../ui'
+import { relPath } from './panels'
 
 type AskMsg = Extract<SessionEvent, { t: 'ask_permission' } | { t: 'ask_question' } | { t: 'ask_plan' } | { t: 'ask_elicit' }>
 type Entry = { m: AskMsg; step: number; answers: Record<string, string>; picked: Set<string>; greeted: boolean }
@@ -74,7 +75,7 @@ export function lineDiff(a: string[], b: string[]): Line[] {
 
 const lines = (s: string) => (s === '' ? [] : s.replace(/\r\n/g, '\n').split('\n'))
 
-function renderDiff(d: Diff) {
+function renderDiff(d: Diff, cwd = '') {
   const ops = lineDiff(lines(d.before), lines(d.after))
   const added = ops.filter((l) => l.op === '+').length
   const removed = ops.filter((l) => l.op === '-').length
@@ -98,7 +99,7 @@ function renderDiff(d: Diff) {
     html += `<div class="dl ${l.op === '+' ? 'add' : l.op === '-' ? 'del' : ''}"><i>${l.op}</i><span>${esc(l.s) || ' '}</span></div>`
   }
   if (folded) html += `<div class="dl fold">⋯ ${folded} unchanged line${folded > 1 ? 's' : ''}</div>`
-  return `<div class="diff" data-test="ask-diff"><div class="diff-file"><span>${esc(d.path)}</span>`
+  return `<div class="diff" data-test="ask-diff"><div class="diff-file"><span title="${esc(d.path)}">${esc(relPath(d.path, cwd))}</span>`
     + `<small><b class="add">+${added}</b> <b class="del">−${removed}</b></small></div><div class="diff-body">${html}</div></div>`
 }
 
@@ -118,6 +119,8 @@ export function createAsks(
     onChange(open: boolean): void
     /** True while you are typing in the composer: the menu then waits for you instead of taking the focus. */
     typing?(): boolean
+    /** The project folder: a diff names its file inside it. */
+    cwd?(): string
   },
 ): Asks {
   root.className = 'overlay chat-ask'
@@ -200,7 +203,7 @@ export function createAsks(
   function permission(m: Extract<AskMsg, { t: 'ask_permission' }>) {
     const name = deps.name()
     const body = m.diffs.length
-      ? m.diffs.map(renderDiff).join('')
+      ? m.diffs.map((d) => renderDiff(d, deps.cwd?.() ?? '')).join('')
       : m.input ? `<pre class="cmd">${esc(clip(m.input))}</pre>`
       : m.detail ? `<pre class="cmd${m.danger ? ' danger' : ''}">${esc(clip(m.detail))}</pre>` : ''
     const lead = m.danger ? `${name} is worried · this cannot be undone` : `${name} asks for permission`

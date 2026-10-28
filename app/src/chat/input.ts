@@ -7,6 +7,7 @@ import type { Ctx } from '../contracts'
 import { esc } from '../ui'
 import './input.css'
 import { APP_COMMANDS } from './commands'
+import { hasFence, highlight, planEnter } from './format'
 
 export type InputHost = {
   ctx: Ctx
@@ -25,6 +26,10 @@ export type InputHost = {
   local(name: string, args: string): boolean
   /** Enter on an empty input: advance the dialogue. */
   advance(): void
+  /** The Say button while she works (it reads STOP then): interrupt the turn. */
+  stop?(): void
+  /** The mode chip in the box: the next permission mode, as Shift+Tab. */
+  cycleMode?(): void
 }
 
 /**
@@ -58,6 +63,10 @@ export type InputApi = {
   suggest(text: string): void
   /** Sends `text` as if typed: the command palette's way to run a command or a message. */
   run(text: string): void
+  /** She is working: the Say slot turns into STOP (or QUEUE while you type), as on every screen. */
+  setRunning(on: boolean): void
+  /** The permission mode chip in the box: its label and the mode it stands for (its colour). */
+  setMode(label: string, mode: string): void
 }
 
 /** True for events that come from the composer (see InputApi). */
@@ -94,6 +103,12 @@ const ESC_CLEAR_MS = 900
 const HINT_MS = 2400
 const QUEUE_CHIP_CHARS = 60
 const DROP_LINGER_MS = 160
+const MAX_FILES = 10
+/** The link keeps files up to 25 MB (link/src/attachments.ts). */
+const MAX_FILE_BYTES = 25 * 1024 * 1024
+const FILE_PUT_TIMEOUT_MS = 120_000
+
+type Attached = { name: string; path?: string }
 /** Keys this recent count as still typing: toasts and gestures wait (docs/research/ux-research.md P0-8). */
 const TYPING_IDLE_MS = 2000
 
@@ -138,15 +153,6 @@ function toBase64(blob: Blob) {
     r.onerror = () => reject(r.error)
     r.readAsDataURL(blob)
   })
-}
-
-function dataUrlToBlob(url: string) {
-  const [head, body] = url.split(',', 2)
-  const type = /^data:([^;,]+)/.exec(head)?.[1] ?? ''
-  const bin = atob(body ?? '')
-  const bytes = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-  return new Blob([bytes], { type })
 }
 
 function encode(bitmap: ImageBitmap, scale: number, type: 'image/png' | 'image/jpeg', quality?: number) {
@@ -207,16 +213,19 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
       </div>
       <div class="wci-queue"></div>
       <div class="wci-bar">
-        <button type="button" class="wci-attach" data-test="chat-attach" title="Attach images (or paste / drop them)">📎</button>
+        <button type="button" class="wci-attach" data-test="chat-attach" title="Attach files or images (or paste / drop them)" aria-label="Attach files">${ICON_CLIP}</button>
+        <input type="file" class="wci-pick" data-test="chat-pick" multiple hidden>
         <div class="wci-box" data-test="input-mode" data-mode="normal">
+          <div class="wci-files"></div>
           <div class="wci-images"></div>
           <div class="wci-line">
+            <button type="button" class="wci-perm" data-test="input-mode-chip" title="Permission mode (Shift+Tab)" hidden></button>
             <span class="wci-mode">! bash</span>
-            <textarea data-test="chat-input" rows="1" spellcheck="false" autocomplete="off"></textarea>
+            <div class="wci-ta"><div class="wci-hl" aria-hidden="true"></div><textarea data-test="chat-input" rows="1" spellcheck="false" autocomplete="off"></textarea></div>
           </div>
           <span class="wci-hint"></span>
         </div>
-        <button type="button" class="wci-send" data-test="chat-send">SAY ❀</button>
+        <button type="button" class="wci-send" data-test="chat-send"></button>
         <div class="wci-drop"></div>
       </div>
     </div>`
@@ -226,6 +235,7 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
   const box = q('.wci-box')
   const sendBtn = q<HTMLButtonElement>('.wci-send')
   const attachBtn = q<HTMLButtonElement>('.wci-attach')
+  const permBtn = q<HTMLButtonElement>('.wci-perm')
   const slashPop = q('.wci-slash')
   const atPop = q('.wci-at')
   const histPop = q('.wci-hist')
@@ -233,6 +243,9 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
   const searchEl = q<HTMLInputElement>('.wci-search input')
   const queueEl = q('.wci-queue')
   const imagesEl = q('.wci-images')
+  const filesEl = q('.wci-files')
+  const hlEl = q('.wci-hl')
+  const pickEl = q<HTMLInputElement>('.wci-pick')
   const hintEl = q('.wci-hint')
   const dropEl = q('.wci-drop')
 
@@ -245,6 +258,9 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
   const idleWaiters: (() => void)[] = []
   let idleTimer: number | undefined
   let images: Image[] = []
+  /** Any-file attachments: kept by the link under its data folder, mentioned in the message as `@"path"`. */
+  let files: Attached[] = []
+  let running = false
   let queueRemove: (id: string) => void = () => {}
 
   // ---------------------------------------------------------------- textarea basics
@@ -257,12 +273,36 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
     const max = parseFloat(cs.lineHeight) * MAX_LINES + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)
     ta.style.height = `${Math.min(ta.scrollHeight, max)}px`
     ta.style.overflowY = ta.scrollHeight > max ? 'auto' : 'hidden'
+    // A scrollbar narrows the textarea's text; the layer keeps the same width so its lines wrap at the same place.
+    hlEl.style.right = `${ta.offsetWidth - ta.clientWidth}px`
+    hlEl.scrollTop = ta.scrollTop
   }
 
   function refreshMode() {
     const bash = ta.value.startsWith('!')
     box.dataset.mode = bash ? 'bash' : 'normal'
-    sendBtn.textContent = bash ? 'RUN ❯' : 'SAY ❀'
+    paint()
+    refreshSend()
+  }
+
+  /** The highlight layer behind the textarea: fences, `code` and **bold** as you type (format.ts). */
+  function paint() {
+    const v = ta.value
+    box.dataset.fmt = !v.startsWith('!') && hasFence(v) ? 'code' : 'text'
+    hlEl.innerHTML = v.startsWith('!') ? '' : highlight(v)
+    hlEl.scrollTop = ta.scrollTop
+  }
+
+  /** One slot, three jobs: SAY (or RUN for `!`), QUEUE while she works and you type, STOP while she works. */
+  function refreshSend() {
+    const draft = !!ta.value.trim() || images.length > 0 || files.length > 0
+    const job = running ? (draft ? 'queue' : 'stop') : ta.value.startsWith('!') ? 'run' : 'say'
+    if (sendBtn.dataset.job === job) return
+    sendBtn.dataset.job = job
+    sendBtn.innerHTML = SEND_LABELS[job]
+    sendBtn.title = SEND_TITLES[job]
+    // STOP works even while the box is disabled for typing (she is busy, the link is down).
+    sendBtn.disabled = job === 'stop' ? false : !enabled
   }
 
   function updatePlaceholder() {
@@ -648,8 +688,11 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
     if (suggestion) (suggestion = ''), updatePlaceholder()
     // Bash mode only when `!` is the very first character, matching the visual mode (refreshMode).
     const bash = ta.value.startsWith('!')
-    const text = ta.value.trim()
-    if (!text && !images.length) return host.advance()
+    if (!bash && files.some((f) => !f.path)) return hint('Wait a moment: the files are still on their way')
+    const typed = ta.value.trim()
+    if (!typed && !images.length && !files.length) return host.advance()
+    // Commands and `!` keep the files for the next real message.
+    const text = bash || /^\/\S/.test(typed) ? typed : withFiles(typed)
     setValue('')
     if (bash) {
       // Images stay attached for the next real message.
@@ -668,12 +711,14 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
   /** Runs after the whole dispatch: only when no overlay or interrupt claimed the Esc. */
   function escToClear(e: KeyboardEvent) {
     setTimeout(() => {
-      if (e.defaultPrevented || host.busy() || (!ta.value && !images.length)) return
+      if (e.defaultPrevented || host.busy() || (!ta.value && !images.length && !files.length)) return
       const now = performance.now()
       if (now - lastEsc > ESC_CLEAR_MS) return void ((lastEsc = now), hint('Esc again to clear'))
       lastEsc = 0
       setValue('')
       takeImages()
+      files = []
+      renderFiles()
     })
   }
 
@@ -731,6 +776,15 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
         ta.setSelectionRange(caret - 1, caret)
         return insertText('\n')
       }
+      // Code blocks: ``` + Enter closes the block for you, and Enter inside one is a new line.
+      if (caret === ta.selectionEnd && !ta.value.startsWith('!')) {
+        const plan = planEnter(ta.value, caret)
+        if (plan.kind === 'newline') return insertText('\n')
+        if (plan.kind === 'close') {
+          insertText(plan.text)
+          return ta.setSelectionRange(caret + plan.caret, caret + plan.caret)
+        }
+      }
       return send()
     }
     if (plain && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
@@ -757,13 +811,21 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
   ta.addEventListener('keyup', (e) => {
     if (popup && /^(Arrow(Left|Right)|Home|End)$/.test(e.key)) updatePopups()
   })
+  ta.addEventListener('scroll', () => (hlEl.scrollTop = ta.scrollTop))
   ta.addEventListener('blur', () => closePickers())
   ta.addEventListener('focus', grow)
-  sendBtn.addEventListener('click', () => (send(), ta.focus()))
+  sendBtn.addEventListener('click', () => {
+    if (sendBtn.dataset.job === 'stop') return host.stop?.()
+    send()
+    ta.focus()
+  })
+  permBtn.addEventListener('click', () => (host.cycleMode?.(), ta.focus()))
+  refreshSend()
 
   // ---------------------------------------------------------------- images (R17)
 
   function renderImages() {
+    queueMicrotask(refreshSend)
     imagesEl.innerHTML = images
       .map(
         (im, i) => `<div class="wci-img" data-test="image-chip" data-i="${i}">
@@ -815,25 +877,96 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
 
   ta.addEventListener('paste', (e) => {
     const data = e.clipboardData
-    const files = [...(data?.files ?? [])].filter((f) => f.type.startsWith('image/'))
-    if (!files.length) return
+    const pasted = [...(data?.files ?? [])]
+    if (!pasted.length) return
     // Word, Excel or OneNote put a bitmap of the copied text next to it: text on the clipboard means a text paste.
     // A browser's "Copy image" carries no text/plain.
     if (data!.types.includes('text/plain') && data!.getData('text/plain').trim()) return
     e.preventDefault()
-    void addImages(files)
+    void addAny(pasted)
   })
 
-  attachBtn.addEventListener('click', async () => {
-    try {
-      const picked = await ctx.pickImages(true)
-      await addImages(picked.map((p) => dataUrlToBlob(p.dataUrl)))
-    } catch {
-      ctx.toast(`${waifu()} couldn't open the image picker`)
-    } finally {
-      ta.focus()
-    }
+  // Any kind of file: the system picker with no type filter (images still go as images).
+  attachBtn.addEventListener('click', () => {
+    pickEl.value = ''
+    pickEl.click()
   })
+  pickEl.addEventListener('change', () => {
+    void addAny([...(pickEl.files ?? [])]).finally(() => ta.focus())
+  })
+
+  /** Images she can look at go as images; everything else is kept by the link and mentioned by path. */
+  function addAny(list: File[]) {
+    const pics = list.filter((f) => isSupported(f.type))
+    const rest = list.filter((f) => !isSupported(f.type))
+    return Promise.all([pics.length ? addImages(pics) : undefined, rest.length ? addFiles(rest) : undefined])
+  }
+
+  // ---------------------------------------------------------------- any-file attachments
+
+  let fileSeq = 0
+  function renderFiles() {
+    queueMicrotask(refreshSend)
+    filesEl.innerHTML = files
+      .map(
+        (f, i) => `<div class="wci-file${f.path ? '' : ' loading'}" data-test="file-chip" data-i="${i}" title="${esc(f.path ?? `${f.name} (sending…)`)}">
+          ${ICON_FILE}<span>${esc(f.name)}</span>
+          <button type="button" title="Remove" aria-label="Remove file">×</button></div>`,
+      )
+      .join('')
+    filesEl.classList.toggle('show', files.length > 0)
+  }
+  filesEl.addEventListener('click', (e) => {
+    const chip = (e.target as HTMLElement).closest<HTMLElement>('.wci-file')
+    if (!chip || !(e.target as HTMLElement).closest('button')) return
+    files.splice(Number(chip.dataset.i), 1)
+    renderFiles()
+    ta.focus()
+  })
+
+  /** The typed text with a mention of every attached file; the files are taken (cleared) with it. */
+  function withFiles(typed: string) {
+    if (!files.length) return typed
+    const mentions = files.map((f) => `@"${f.path}"`).join(' ')
+    files = []
+    renderFiles()
+    return typed ? `${typed}\n\n${mentions}` : mentions
+  }
+
+  function put(name: string, data: string) {
+    const id = `f${Date.now().toString(36)}${++fileSeq}`
+    return new Promise<string>((resolve, reject) => {
+      const timer = window.setTimeout(() => (off(), reject(new Error('no answer from the link'))), FILE_PUT_TIMEOUT_MS)
+      const off = ctx.link.on((m) => {
+        if (m.t !== 'file_put' || m.id !== id) return
+        off()
+        clearTimeout(timer)
+        if (m.path) resolve(m.path)
+        else reject(new Error(m.error ?? 'not kept'))
+      })
+      ctx.link.send({ t: 'file_put', id, name, data })
+    })
+  }
+
+  async function addFiles(list: File[]) {
+    if (!enabled) return
+    await Promise.all(
+      list.map(async (f) => {
+        if (files.length >= MAX_FILES) return hint(`Up to ${MAX_FILES} files per message`)
+        if (f.size > MAX_FILE_BYTES) return ctx.toast(`${f.name} is over ${MAX_FILE_BYTES / 1024 / 1024} MB`)
+        const entry: Attached = { name: f.name || 'file' }
+        files.push(entry)
+        renderFiles()
+        try {
+          entry.path = await put(entry.name, await toBase64(f))
+        } catch (e) {
+          files = files.filter((x) => x !== entry)
+          ctx.toast(`${waifu()} couldn't take ${entry.name}: ${(e as Error).message}`)
+        }
+        renderFiles()
+      }),
+    )
+  }
 
   // Drops anywhere on the chat screen land here, including on her canvas (which lies outside the screen root).
   // HTML drop events only reach the page when Tauri's own drag-drop handler is off (dragDropEnabled: false). Then an
@@ -857,7 +990,7 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
     if (!carriesFiles(e) || e.defaultPrevented) return
     e.preventDefault()
     wrap.classList.remove('drop')
-    if (enabled) void addImages([...e.dataTransfer!.files]).then(() => ta.focus())
+    if (enabled) void addAny([...e.dataTransfer!.files]).then(() => ta.focus())
   })
 
   // ---------------------------------------------------------------- queue chips (R11)
@@ -872,7 +1005,7 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
 
   function applyNames() {
     updatePlaceholder()
-    dropEl.textContent = `Drop images for ${waifu()} ❀`
+    dropEl.textContent = `Drop files for ${waifu()} ❀`
   }
   applyNames()
   ctx.store.subscribe(applyNames)
@@ -917,8 +1050,9 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
       enabled = on
       placeholderOverride = placeholder
       ta.disabled = !on
-      sendBtn.disabled = !on
       attachBtn.disabled = !on
+      sendBtn.dataset.job = ''
+      refreshSend()
       wrap.classList.toggle('off', !on)
       if (!on) closePopups()
       updatePlaceholder()
@@ -943,5 +1077,31 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
       setValue(text)
       send()
     },
+    setRunning(on) {
+      running = on
+      refreshSend()
+    },
+    setMode(label, mode) {
+      permBtn.hidden = false
+      permBtn.textContent = label
+      permBtn.dataset.mode = mode
+    },
   }
+}
+
+const ICON_FILE = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8l4 4V20.5H6z"/><path d="M14 3.5v4h4"/></svg>'
+const ICON_CLIP = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-7.8 7.8a5 5 0 01-7.1-7.1l8.3-8.3a3.4 3.4 0 014.8 4.8l-8.3 8.3a1.7 1.7 0 01-2.4-2.4l7.6-7.6"/></svg>'
+const ICON_SEND = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l16-7-6.5 15-2.5-6z"/></svg>'
+const ICON_STOP = '<svg class="ic fill" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>'
+const SEND_LABELS: Record<string, string> = {
+  say: `<span>SAY</span>${ICON_SEND}`,
+  run: '<span>RUN</span><b>❯</b>',
+  queue: `<span>QUEUE</span>${ICON_SEND}`,
+  stop: `<span>STOP</span>${ICON_STOP}`,
+}
+const SEND_TITLES: Record<string, string> = {
+  say: 'Send (Enter)',
+  run: 'Run in the session folder (Enter)',
+  queue: 'Queue for her next step (Enter) · Ctrl+Enter sends now',
+  stop: 'Interrupt her (Esc)',
 }

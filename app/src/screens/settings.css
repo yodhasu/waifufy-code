@@ -14,7 +14,7 @@
   transition: background .15s, color .15s, transform .15s; }
 .set-nav button i { width: 18px; font-style: normal; text-align: center; color: var(--gold); }
 .set-nav button:hover, .set-nav button:focus-visible { background: var(--hover); color: var(--heading); outline: none; transform: translateX(3px); }
-.set-nav button.on { background: linear-gradient(90deg, var(--accent), var(--accent-deep)); color: var(--text-on-accent); box-shadow: 0 6px 16px var(--accent-glow); transform: none; }
+.set-nav button.on { background: linear-gradient(90deg, var(--fill-strong), var(--fill-deep)); color: var(--text-on-accent); box-shadow: 0 6px 16px var(--accent-glow); transform: none; }
 .set-nav button.on i { color: var(--text-on-accent); }
 
 .set-body { position: absolute; left: 236px; top: 96px; width: 836px; bottom: 84px; display: flex; flex-direction: column; padding: 18px 8px 14px 24px; }
@@ -35,7 +35,7 @@
   box-shadow: inset 0 0 0 4px color-mix(in oklab, var(--panel-solid) 60%, transparent), inset 0 0 0 5px var(--gold-faint); }
 .set-preview::after { content: '▼'; position: absolute; right: 22px; bottom: 12px; font-size: 14px; color: var(--accent); animation: set-bob 1s infinite; }
 .set-preview-plate { position: absolute; top: -20px; left: 24px; min-width: 120px; padding: 6px 30px 6px 22px; border: 2px solid var(--panel-solid);
-  border-radius: 12px 26px 26px 12px; background: linear-gradient(90deg, var(--accent-deep), var(--accent)); box-shadow: 0 6px 16px var(--accent-glow);
+  border-radius: 12px 26px 26px 12px; background: linear-gradient(90deg, var(--fill-deep), var(--fill-strong)); box-shadow: 0 6px 16px var(--accent-glow);
   font-family: var(--font-title); font-weight: 800; font-size: 20px; letter-spacing: .1em; color: var(--text-on-accent); }
 .set-preview-text { margin: 0; min-height: 3.2em; font-size: var(--dialogue-font, 21px); line-height: 1.6; color: var(--text); }
 @keyframes set-bob { 50% { transform: translateY(4px); } }
@@ -78,7 +78,7 @@
 
 .set-seg.row { display: flex; flex-wrap: wrap; gap: 6px; }
 .set-seg.row button { padding: 5px 13px; border-radius: 999px; border: 1.5px solid var(--gold-soft); background: var(--chip); font-size: 13px; font-weight: 700; }
-.set-seg.row button.on { background: var(--accent); border-color: transparent; color: var(--text-on-accent); box-shadow: 0 4px 12px var(--accent-glow); }
+.set-seg.row button.on { background: var(--fill-strong); border-color: transparent; color: var(--text-on-accent); box-shadow: 0 4px 12px var(--accent-glow); }
 
 .set-seg.list { display: flex; flex-direction: column; gap: 6px; }
 .set-seg.list button { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 9px 14px 9px 36px; border-radius: 12px; text-align: left;
@@ -144,7 +144,7 @@
 
 .set-avatar-row { display: flex; align-items: center; gap: 18px; }
 .set-avatar { display: grid; place-items: center; flex: none; width: 96px; height: 96px; overflow: hidden; border-radius: 50%; border: 3px solid var(--panel-solid);
-  background: linear-gradient(160deg, var(--accent), var(--accent-deep)); box-shadow: 0 0 0 2px var(--gold), 0 6px 16px var(--accent-glow);
+  background: linear-gradient(160deg, var(--fill-strong), var(--fill-deep)); box-shadow: 0 0 0 2px var(--gold), 0 6px 16px var(--accent-glow);
   font-family: var(--font-title); font-weight: 800; font-size: 40px; color: var(--text-on-accent); }
 .set-avatar img, .set-plate-av img { width: 100%; height: 100%; object-fit: cover; }
 .set-avatar-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
@@ -235,17 +235,25 @@
 
 /* ---------- Portrait (a phone, base.css): the tabs become a strip under the heading, the form takes the
    whole width in one column, and the live preview (her and the sample box) is left out. ---------- */
-#stage[data-orient='portrait'] .set-head { left: 24px; top: 24px; }
-#stage[data-orient='portrait'] .set-nav { top: 92px; left: 16px; right: 16px; bottom: auto; width: auto; height: 72px; padding: 8px;
-  flex-direction: row; gap: 6px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
-#stage[data-orient='portrait'] .set-nav button { flex: none; min-height: 52px; }
+/* Laid out in phone points: each part is zoomed like the chat's chrome (--pz), so labels read at 15pt. */
+#stage[data-orient='portrait'] #screen-settings { --pz: 2.1; }
+#stage[data-orient='portrait'] :is(.set-head, .set-nav, .set-body, .set-foot) { zoom: var(--pz); }
+#stage[data-orient='portrait'] .set-head { left: calc(20px / var(--pz)); top: calc(24px / var(--pz)); }
+#stage[data-orient='portrait'] .set-head h2 { font-size: 28px; }
+#stage[data-orient='portrait'] .set-head span { font-size: 11px; }
+#stage[data-orient='portrait'] .set-nav { top: calc(110px / var(--pz)); left: calc(16px / var(--pz)); right: calc(16px / var(--pz)); bottom: auto; width: auto;
+  height: auto; padding: 4px; flex-direction: row; gap: 4px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+#stage[data-orient='portrait'] .set-nav button { flex: none; min-height: 40px; padding: 8px 12px; font-size: 13px; }
 #stage[data-orient='portrait'] .set-nav button:hover { transform: none; }
-#stage[data-orient='portrait'] .set-body { left: 16px; right: 16px; top: 180px; bottom: 96px; width: auto; padding: 16px 8px 12px 20px; }
+#stage[data-orient='portrait'] .set-body { left: calc(16px / var(--pz)); right: calc(16px / var(--pz)); top: calc(230px / var(--pz)); bottom: calc(130px / var(--pz));
+  width: auto; padding: 12px 6px 10px 14px; }
+#stage[data-orient='portrait'] .set-body-head h3 { font-size: 20px; }
 #stage[data-orient='portrait'] .set-cols { grid-template-columns: 1fr; }
 #stage[data-orient='portrait'] .set-seg.cards { grid-template-columns: repeat(2, 1fr); }
-#stage[data-orient='portrait'] .set-foot { left: 16px; right: 16px; width: auto; flex-wrap: wrap; }
+#stage[data-orient='portrait'] .set-foot { left: calc(16px / var(--pz)); right: calc(16px / var(--pz)); bottom: calc(24px / var(--pz)); width: auto; flex-wrap: wrap; gap: 8px; }
 #stage[data-orient='portrait'] .set-preview { display: none; }
-#stage[data-orient='portrait'] #screen-settings .field { min-height: 44px; }
+#stage[data-orient='portrait'] #screen-settings .field { min-height: 40px; }
+#stage[data-orient='portrait'] .set-phone-pair { grid-template-columns: 1fr; }
 /* Settings → Phone: the pairing QR code beside its steps. The code stays dark on light in every theme so cameras read it. */
 .set-phone-pair { display: grid; grid-template-columns: 220px 1fr; gap: 22px; align-items: start; margin: 8px 0 4px; }
 .set-qr { width: 220px; aspect-ratio: 1; padding: 6px; border-radius: 14px; background: #fff; }

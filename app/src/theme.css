@@ -8,13 +8,25 @@
   --accent-deep: color-mix(in oklab, var(--accent) 62%, #0b1a4a);
   --accent-pale: color-mix(in oklab, var(--accent) 22%, #ffffff);
   --accent-glow: color-mix(in oklab, var(--accent) 45%, transparent);
+  /* Fills that carry white text, mixed from the user's accent so any accent keeps 4.5:1 (4.6:1 at the default). */
+  --fill-strong: color-mix(in oklab, var(--accent) 78%, #10204f);
+  --fill-deep: color-mix(in oklab, var(--accent) 55%, #0b1a4a);
+  --bad-fill: #c43e5c;
   --gold: #d4ad5c;
   --gold-soft: rgba(212, 173, 92, 0.55);
   --gold-faint: rgba(212, 173, 92, 0.3);
 
   --text: #1d2340;
-  --text-soft: #5a6285;
-  --text-faint: #8d94b2;
+  --text-soft: #535b7e;
+  /* Placeholders and empty hearts; was #8d94b2 (3:1 on the panel). */
+  --text-faint: #646b8c;
+  /* Gold, green, amber and red as words (the plain ones are for borders, bars and dots). */
+  --gold-ink: #8a6a24;
+  --ok-ink: #237a5a;
+  --warn-ink: #9a6208;
+  --bad-ink: #b8304f;
+  --accent-text: #3a63b5;
+  --focus: #3a63b5;
   --text-on-accent: #ffffff;
   --heading: var(--accent-deep);
 
@@ -80,7 +92,13 @@
 
   --text: #e6e9f8;
   --text-soft: #a7aecb;
-  --text-faint: #6f7697;
+  --text-faint: #8990b0;
+  --gold-ink: #d9b76e;
+  --ok-ink: #5cc79c;
+  --warn-ink: #f0b45a;
+  --bad-ink: #f07a92;
+  --accent-text: #8fb0ec;
+  --focus: #8fb0ec;
   --heading: color-mix(in oklab, var(--accent) 45%, #ffffff);
 
   --panel: rgba(20, 25, 48, 0.86);

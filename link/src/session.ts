@@ -40,6 +40,7 @@ import {
   type Todo,
 } from './protocol.ts'
 import type { SessionApi, SessionFactory, SessionOptions } from './session-api.ts'
+import { ATTACH_DIR } from './attachments.ts'
 import { addressOf } from './settings.ts'
 import { status as slackStatus } from './slack.ts'
 import { SLACK_SERVER, SLACK_TOOL_NAMES, slackServer, type SendVerdict } from './slack-tools.ts'
@@ -532,6 +533,8 @@ class Session implements SessionApi {
       systemPrompt: { type: 'preset', preset: 'claude_code', append: buildPersona(s) },
       // The same CLAUDE.md, skills, MCP servers, hooks and permission rules as the terminal.
       settingSources: c.settingSources,
+      // Files attached to messages live outside the project; she may read them without asking.
+      additionalDirectories: [ATTACH_DIR],
       ...(c.model ? { model: c.model } : {}),
       // 'default' is left out, so a defaultMode from the user's settings.json still applies, as in the CLI.
       ...(c.permissionMode !== 'default' ? { permissionMode: c.permissionMode } : {}),

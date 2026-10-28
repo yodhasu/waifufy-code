@@ -3,7 +3,7 @@ import type { Settings } from '../../link/src/protocol.ts'
 import './theme.css'
 import './base.css'
 import { createCharacter } from './character'
-import { chatScreen } from './chat'
+import { chatScreen, JOINED_KEY } from './chat'
 import type { Ctx, Router, Screen, ScreenName } from './contracts'
 import { connect } from './link'
 import { savesScreen } from './screens/saves'
@@ -16,6 +16,8 @@ import { pickRemoteFolder } from './remote-folder'
 import { createSlack } from './slack'
 import { createVoice } from './voice'
 
+/** A phone re-joins the computer's chat on launch if it was in it this recently. */
+const REJOIN_WITHIN_MS = 12 * 60 * 60_000
 const STAGE_W = 1600
 const STAGE_H = 900
 const PETALS = 16
@@ -132,6 +134,8 @@ applyAppearance(store.get())
 store.subscribe(applyAppearance)
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyAppearance(store.get()))
 
+// A phone loses its computer (Wi-Fi, the app in the background), not Claude Code.
+if (link.remote) document.getElementById('offline')!.textContent = 'Reconnecting to your computer…'
 link.onStatus((s) => document.getElementById('offline')!.classList.toggle('show', s === 'down'))
 
 const character = createCharacter(document.getElementById('chara')!, link, store)
@@ -222,3 +226,14 @@ if (link.remote && '__TAURI_INTERNALS__' in window) {
 
 await character.ready
 router.go(store.get().onboarded ? 'title' : 'wizard')
+// A phone that was in the computer's chat when Android killed it (in the background, or to free memory) goes back in.
+if (link.remote && store.get().onboarded && joinedRecently()) router.go('chat', { attach: true })
+
+function joinedRecently() {
+  try {
+    const at = Number(localStorage.getItem(JOINED_KEY))
+    return at > 0 && Date.now() - at < REJOIN_WITHIN_MS
+  } catch {
+    return false
+  }
+}

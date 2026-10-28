@@ -345,6 +345,8 @@ export type ClientMsg =
   | { t: 'trust_check'; cwd: string }
   /** The user accepted the trust dialog for `cwd`; answered with `trust`. */
   | { t: 'trust_accept'; cwd: string }
+  /** A file to attach to the next message, any kind, as base64; answered with `file_put` and the path to mention. */
+  | { t: 'file_put'; id: string; name: string; data: string }
   /** `epoch` is chosen by the app; every session event carries it back, so stale events can be dropped. Refused for an untrusted `cwd`. */
   /**
    * `resumeAt` (with `resume`): rewind the conversation, keeping the transcript up to and including that entry.
@@ -462,6 +464,8 @@ export type SessionEvent =
    */
   | { t: 'ask_elicit'; id: string; server: string; mode: 'form' | 'url'; message: string; title?: string; url?: string; fields: ElicitField[] }
   | { t: 'ask_cancel'; id: string }
+  /** What another window sent her (a phone and the desktop both see each other's lines); never echoed to the sender. */
+  | { t: 'said'; text: string; images?: number; shell?: boolean }
   | { t: 'state'; state: 'idle' | 'running' | 'requires_action' }
   | { t: 'stats'; stats: Stats }
   /** Output of a local slash command or a system notice (compaction, retries). */
@@ -514,6 +518,13 @@ export type ServerMsg =
   | { t: 'remote_status'; status: RemoteStatus }
   /** The answer to `attach`: the running session's epoch, or none when nothing runs. */
   | { t: 'attached'; epoch?: number }
+  /** Where an attachment was kept (`path`, for the message to mention), or why it wasn't (`error`). */
+  | { t: 'file_put'; id: string; path?: string; error?: string }
+  /**
+   * After `attached`: everything the session did since it started, oldest first (text deltas joined), so a window
+   * that joins or comes back from the background shows what the others show. Played without the typewriter.
+   */
+  | { t: 'replay'; epoch: number; events: SessionEvent[] }
 
 /** One input of an MCP elicitation form, from a property of its requested JSON schema. */
 export type ElicitField = {
