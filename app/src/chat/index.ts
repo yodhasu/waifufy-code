@@ -291,7 +291,7 @@ export function chatScreen(): Screen {
       : chatMode === 'casual' ? `Chat with ${charName()}…  ♡` : `Speak to ${charName()}…  ( / commands · @ files · ! shell )`)
   const nextEpoch = () => (epoch = Math.max(epoch + 1, Date.now()))
 
-  const pager = createPager({
+  const pagerOut: Parameters<typeof createPager>[0] = {
     page(p) {
       // Asked for as soon as the paragraph is complete, so the clip is usually there when its page shows.
       if (p.voice && ctx.voice.active() && !replaying) p.voice.line.clip ??= voiceClip(p.voice.line)
@@ -304,7 +304,10 @@ export function chatScreen(): Screen {
       lastLine = clipLine(full)
     },
     emote: (e) => !replaying && ctx.character.emote(e),
-  })
+  }
+  const pager = createPager(pagerOut)
+  /** Her prebuilt lines (`aside`), paged on their own so they never cut into a reply that is streaming. */
+  const asidePager = createPager(pagerOut)
 
   /** Her clip for a line; a failure is told once per session and the text goes on unvoiced. */
   function voiceClip(line: VoiceLine) {
@@ -1345,6 +1348,10 @@ export function chatScreen(): Screen {
         return input.suggest(m.text)
       case 'chat_mode':
         return onChatMode(m.mode)
+      case 'aside':
+        if (m.voice) asidePager.voice(m.voice)
+        asidePager.text(m.text)
+        return asidePager.end()
       case 'offer_mode':
         if (m.mode === chatMode || replaying) return
         return input.offer(

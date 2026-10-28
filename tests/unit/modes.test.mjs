@@ -76,7 +76,7 @@ async function waitUp() {
 }
 
 /** Her text between two points, joined. */
-const textOf = (msgs) => msgs.filter((m) => m.t === 'text').map((m) => m.delta).join('')
+const textOf = (msgs) => msgs.filter((m) => m.t === 'text' || m.t === 'aside').map((m) => m.delta ?? m.text).join('')
 
 try {
   await waitUp()
@@ -93,7 +93,7 @@ try {
     desk.send({ t: 'chat_mode', mode: 'casual' })
     const m = await desk.next((x) => x.t === 'chat_mode')
     ok(m.mode === 'casual', `mode ${m.mode}`)
-    await desk.next((x) => x.t === 'text_end')
+    await desk.next((x) => x.t === 'aside')
     ok(/talk for a while/.test(textOf(desk.since(at))), textOf(desk.since(at)))
   })
 
@@ -125,7 +125,7 @@ try {
     desk.send({ t: 'chat_mode', mode: 'work' })
     const m = await desk.next((x) => x.t === 'chat_mode')
     ok(m.mode === 'work', `mode ${m.mode}`)
-    await desk.next((x) => x.t === 'text_end')
+    await desk.next((x) => x.t === 'aside')
     const at = desk.mark()
     desk.send({ t: 'say', text: 'hello' })
     await desk.next((x) => x.t === 'turn_end', 20_000)

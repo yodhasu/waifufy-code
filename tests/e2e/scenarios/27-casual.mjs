@@ -64,7 +64,7 @@ export default {
         const n = await app.mark()
         await app.click(T('chat-mode'))
         await app.waitEvent('chat_mode', { mode: 'work' }, n)
-        const lines = (await app.events(n, 'text')).map((e) => e.delta).join('')
+        const lines = (await app.events(n, 'aside')).map((e) => e.text).join('')
         assert(/still in the middle of the work/.test(lines), `her refusal: ${lines}`)
         eq(await chatMode(app), 'work', 'still work mode')
         await app.key('Escape')

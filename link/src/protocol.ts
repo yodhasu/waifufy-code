@@ -513,6 +513,8 @@ export type SessionEvent =
   | { t: 'bg_tasks'; tasks: BgTask[] }
   /** The session's chat mode, after a `chat_mode` or on attach. */
   | { t: 'chat_mode'; mode: ChatMode }
+  /** A prebuilt line of hers outside any reply (switching modes, or refusing to), shown as a line of its own. `voice`: its Japanese line. */
+  | { t: 'aside'; text: string; voice?: string }
   /** She thinks the other mode fits what was just said; `text`: the message to send there if accepted. */
   | { t: 'offer_mode'; mode: ChatMode; text?: string }
   /** The CLI's greyed next-prompt suggestion, after a turn. */

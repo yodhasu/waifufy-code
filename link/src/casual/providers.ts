@@ -304,6 +304,13 @@ export function claudeProvider(c: CasualSettings, o: { claudePath?: string; you:
 
 // ---------------------------------------------------------------- the E2E suite's stand-in
 
+/** Lines the promotional video (scripts/pv/record.mjs) says, so its casual scenes read like her. */
+const MOCK_LINES: [RegExp, string][] = [
+  [/long day|done for today/i, '[happy] You made it! [smile] Come sit for a bit, I\'ll make tea. …Tell me the worst part first.'],
+  [/mia\b.*\b(visit|coming)/i, '[surprised] Mia\'s visiting? [delighted] Then I\'ll help you tidy up. [pout] The laundry is still yours, though.'],
+  [/who.*visiting|sister.*name/i, '[smile] Mia, of course. [shy] I remember everything you tell me, you know.'],
+]
+
 /** WC_MOCK: replies at once from a script, so tests never call a model. */
 export function mockProvider(): Provider {
   return {
@@ -312,7 +319,8 @@ export function mockProvider(): Provider {
       const last = req.messages.at(-1)?.content ?? ''
       const said = last.replace(/<waifufy-context>[\s\S]*?<\/waifufy-context>\s*/, '').trim()
       const work = /\b(fix|bug|code|deploy|test|refactor)\b/i.test(said) ? 1 : 0
-      const reply = `<feel joy=0.3 sadness=0 anger=0 surprise=0.1 fear=0 sure=0.9 work=${work}/>\n[smile] Casual mock reply to: ${said.slice(0, 80)}`
+      const line = MOCK_LINES.find(([re]) => re.test(said))?.[1] ?? `[smile] Casual mock reply to: ${said.slice(0, 80)}`
+      const reply = `<feel joy=0.4 sadness=0 anger=0 surprise=0.1 fear=0 sure=0.9 work=${work}/>\n${line}`
       for (const part of reply.match(/.{1,12}/gs) ?? []) {
         if (req.signal.aborted) break
         req.onText(part)

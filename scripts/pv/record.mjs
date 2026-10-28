@@ -1,5 +1,6 @@
 // Records the promotional videos (PVs) from the real app on the mock session: no Claude, no real data. A scripted
-// ~30 s run (title → a coding turn with tools → a permission prompt → the Slack inbox → a headpat → an end card) is
+// ~35 s run (a work turn with tools → the casual switch refused mid-task → casual mode → her memory → a headpat →
+// an end card) is
 // captured with Chrome's screencast and encoded with ffmpeg. Captions and the end card are drawn in the page, in the
 // app's own fonts. There is no music: add a sound where the video is posted.
 //
@@ -131,7 +132,7 @@ async function endCard() {
   await app.eval(() => {
     const el = document.createElement('div')
     el.id = 'pv-end'
-    el.innerHTML = `<div><h1>Waifufy <span>Code</span></h1><p>Claude Code, as a visual novel.</p><p>Free · open source · Windows &amp; Android</p>
+    el.innerHTML = `<div><h1>Waifufy <span>Code</span></h1><p>Claude Code, as a visual novel.</p><p>v0.7 · now with casual mode</p><p>Free · open source · Windows &amp; Android</p>
       <code>github.com/yodhasu/waifufy-code</code></div>`
     document.body.append(el)
     requestAnimationFrame(() => el.classList.add('on'))
@@ -139,6 +140,18 @@ async function endCard() {
 }
 
 // ---------------------------------------------------------------- acting
+
+/** The chat is up: the composer, or (upright on a phone) the Reply button it waits behind. */
+const chatReady = () =>
+  app.waitFor(() => window.__e2e.visible('[data-test="chat-input"]') || window.__e2e.visible('[data-test="qm-reply"]'), { label: 'the chat', timeout: 20_000 })
+
+/** Clicks the Work / Casual switch (on a phone, after opening the composer behind Reply). */
+async function pressSwitch() {
+  if (await app.visible(T('qm-reply'))) await app.click(T('qm-reply'))
+  await app.waitVisible(T('chat-mode'))
+  await sleep(250)
+  await app.click(T('chat-mode'))
+}
 
 /** Types a line into the composer key by key, as on camera, and sends it. */
 async function sayOnCamera(text) {
@@ -163,8 +176,8 @@ async function findHead() {
     return { left: r.left, top: r.top, width: r.width, height: r.height }
   })
   const r = Math.max(14, box.width * 0.05)
-  for (const fy of [0.14, 0.2, 0.27, 0.34]) {
-    for (const fx of [0.5, 0.42, 0.58]) {
+  for (const fy of [0.14, 0.2, 0.27, 0.34, 0.08, 0.42, 0.5]) {
+    for (const fx of [0.5, 0.42, 0.58, 0.34, 0.66]) {
       const p = { x: box.left + box.width * fx, y: box.top + box.height * fy, r }
       const m = await app.mark()
       await pat(p, 500)
@@ -195,7 +208,7 @@ try {
   const project = makeProject('booking-agent')
   await app.go('chat', { cwd: project })
   await waitScreen(app, 'chat')
-  await app.waitVisible(T('chat-input'), 20_000)
+  await chatReady()
   await sleep(1500)
   const head = await findHead()
   await app.go('title')
@@ -206,49 +219,46 @@ try {
   await sleep(1500)
 
   await startCapture()
-  await caption('Claude Code… as a visual novel', 'meet Rem, your coding maid')
-  await sleep(2400)
+  await caption('Waifufy Code 0.7', 'work mode · casual mode')
+  await sleep(2200)
 
-  // A real turn: tools, quests, her face changing as she works.
+  // Work mode: a real turn, tools, her face changing as she works.
   await app.go('chat', { cwd: project })
   await waitScreen(app, 'chat')
-  await app.waitVisible(T('chat-input'), 20_000)
-  await caption('Same Claude Code underneath', 'tools · quests · subagents · MCP')
+  await chatReady()
+  await caption('Work mode: the real Claude Code', 'tools · quests · subagents · MCP')
   let m = await sayOnCamera('fix the failing tests with your tools')
-  if (format === 'mobile') {
-    await sleep(1400)
-    await app.click(T('pb-more'))
-    await sleep(500)
-    await app.click(T('more-quests'))
-    await sleep(1800)
-    await app.click(T('ptab-close'))
+  await sleep(1800)
+
+  // Mid-task the switch is refused, in character. (Upright on a phone, Reply is STOP while she works: no switch to press.)
+  if (format === 'desktop') {
+    await caption('No slacking off mid-task')
+    await pressSwitch()
+    await app.waitEvent('aside', {}, m, 10_000)
   }
   await turnEnd(app, m, 60_000)
   await readAll(app, { settleMs: 700 })
 
-  // A prompt before anything risky.
-  await caption('She asks before anything risky')
-  m = await sayOnCamera('edit the config, ask permission first')
-  await app.waitVisible(T('ask', { kind: 'permission' }), 30_000)
-  await sleep(1700)
-  await app.click(T('ask-option', { v: 'allow' }))
-  await turnEnd(app, m, 60_000)
-  await readAll(app, { settleMs: 400 })
+  // Work done: casual mode, her own chat harness on the same history.
+  await caption('Work done? Casual mode', 'her own chat harness · GPT or Claude')
+  m = await app.mark()
+  await pressSwitch()
+  await app.waitEvent('chat_mode', { mode: 'casual' }, m, 10_000)
+  await readAll(app, { settleMs: 500 })
+  m = await sayOnCamera('finally done for today. long day')
+  await turnEnd(app, m, 30_000)
+  await readAll(app, { settleMs: 600 })
 
-  // Slack.
-  await caption('Reads your Slack', 'and only sends what you approve')
-  await app.click(T('qm-slack'))
-  await app.waitFor(() => document.querySelector('[data-test="slack"] [data-id="c:C0GENERAL"]'), { label: 'the Slack inbox', timeout: 20_000 })
-  await sleep(1100)
-  await app.click('[data-test="slack"] [data-id="c:C0GENERAL"]')
-  await app.waitFor(() => document.querySelector('[data-test="slack"] header h2')?.textContent === '#general', { label: '#general' })
-  await sleep(1600)
-  await app.key('Escape')
-  await app.key('Escape')
-  await sleep(400)
+  await caption('She remembers', 'long-term memory, looked up for free')
+  m = await sayOnCamera('my sister mia is visiting this weekend')
+  await turnEnd(app, m, 30_000)
+  await readAll(app, { settleMs: 500 })
+  m = await sayOnCamera('wait, who did i say was visiting?')
+  await turnEnd(app, m, 30_000)
+  await readAll(app, { settleMs: 600 })
 
-  // A headpat.
-  await caption('Headpats: mandatory')
+  // A headpat, and feelings that move with it.
+  await caption('Feelings that change with you', 'joy · sadness · anger · surprise · fear')
   await sleep(500)
   await pat(head, HEADPAT_MS)
   await sleep(1300)

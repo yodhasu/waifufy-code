@@ -177,10 +177,9 @@ class ModalSession implements SessionApi {
   /** A prebuilt line, played like one of hers: face, voice, text. No model is asked. */
   private line(l: Line) {
     const s = this.opts.settings
-    const text = l.text.replaceAll('{you}', addressOf(s))
-    if (s.voice.language === 'ja' && voiceActive(s.voice)) this.opts.emit({ t: 'voice', text: l.ja })
-    this.opts.emit({ t: 'text', delta: text })
-    this.opts.emit({ t: 'text_end' })
+    // Its own event, so a line said while a work reply streams never lands in the middle of it.
+    const ja = s.voice.language === 'ja' && voiceActive(s.voice)
+    this.opts.emit({ t: 'aside', text: l.text.replaceAll('{you}', addressOf(s)), ...(ja ? { voice: l.ja } : {}) })
   }
 
   async setChatMode(mode: ChatMode) {

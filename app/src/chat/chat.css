@@ -721,9 +721,11 @@ html[data-focus='1'] .chat .chat-status .ribbon { display: none; }
   & .chat-input { display: none; left: calc(24px / var(--pz)); right: calc(24px / var(--pz)); bottom: calc(36px / var(--pz)); }
   &[data-compose='on'] .chat-input { display: block; }
   &[data-compose='on'] .quickmenu { display: none; }
-  /* Narrow: the Work / Casual switch keeps its icon only. */
-  & .wci-chat { width: 44px; }
+  /* Narrow: the Work / Casual switch keeps its icon only, and the buttons around the box give it room. */
+  & .wci-bar { gap: 6px; }
+  & .wci-chat, & .wci-attach { width: 38px; }
   & .wci-chat small { display: none; }
+  & .wci-send { width: 80px; }
   & .wci-offer { margin-left: 0; }
 
   /* The panel sheet sits under the plate. */
