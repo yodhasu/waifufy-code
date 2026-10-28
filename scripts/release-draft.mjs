@@ -58,6 +58,8 @@ She's still the real Claude Code when you work, and now just herself when you do
 
 **Also**
 - Running background tasks show as a chip next to the party; click it for /tasks
+- Her "please wait" and mode-switch lines are their own lines now, never mixed into a work reply that's still streaming
+- A roomier composer on the phone, so the Work / Casual switch doesn't squeeze what you type
 
 Install: \`Waifufy-Code-${version}-setup.exe\` on Windows, the \`.apk\` on Android (arm64).
 `,
