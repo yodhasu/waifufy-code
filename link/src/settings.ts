@@ -107,6 +107,8 @@ export function defaultSettings(): Settings {
       judgeThreshold: 7,
       learnWith: 'claude',
       toWork: 'ask',
+      initiative: true,
+      boundaries: '',
     },
     lastDir: '',
   }
@@ -150,6 +152,8 @@ export async function loadSettings(): Promise<Settings> {
   if (c.provider !== 'claude') c.provider = 'openai'
   if (c.learnWith !== 'casual') c.learnWith = 'claude'
   if (c.toWork !== 'compact' && c.toWork !== 'keep') c.toWork = 'ask'
+  c.initiative = c.initiative !== false
+  c.boundaries = typeof c.boundaries === 'string' ? c.boundaries.slice(0, 2000) : ''
   c.idleMin = Math.max(1, Math.min(24 * 60, Math.round(Number(c.idleMin)) || 60))
   c.judgeThreshold = Math.max(0, Math.min(10, Number(c.judgeThreshold) || 7))
   return s

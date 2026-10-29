@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.View
+import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AlertDialog
 import androidx.core.view.ViewCompat
@@ -23,6 +24,23 @@ class MainActivity : TauriActivity() {
     super.onCreate(savedInstanceState)
     keepInsideSystemBars()
     catchCrashes()
+  }
+
+  /** Her notifications and the background connection (PhoneLink), driven by the page as `window.WaifufyAndroid`. */
+  override fun onWebViewCreate(webView: WebView) {
+    PhoneLink.activity = this
+    PhoneLink.webView = webView
+    webView.addJavascriptInterface(PhoneBridge(this), "WaifufyAndroid")
+  }
+
+  override fun onDestroy() {
+    // Swiped away: the page and its connection are gone, so nothing is left to keep alive.
+    if (PhoneLink.activity === this) {
+      PhoneLink.activity = null
+      PhoneLink.webView = null
+      if (isFinishing) PhoneLink.disconnected(applicationContext)
+    }
+    super.onDestroy()
   }
 
   /**

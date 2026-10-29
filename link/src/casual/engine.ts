@@ -10,6 +10,7 @@ import { addressOf, defaultSettings } from '../settings.ts'
 import { TagParser } from '../session.ts'
 import { childEnv } from '../shell.ts'
 import { clip, describeTool, toolLabel, toolOutput } from '../tools.ts'
+import type { Moment, Spoke } from './initiative.ts'
 import type { HeartBox } from './modes.ts'
 import type { Memory } from './memory.ts'
 import { casualSystem, contextNote, historyMessages, REPLY_MAX_TOKENS, type PoolEntry } from './prompt.ts'
@@ -17,6 +18,11 @@ import { claudeProvider, mockCasual, pickProvider, type Provider, type ToolSpec,
 
 /** Her appraisal of the user's message: joy, sadness, anger, surprise, fear (-1 – 1), confidence, a work request. */
 export type Appraisal = { feel: number[]; confidence: number; work: boolean }
+
+/** Her own turn's way of saying nothing: right after the appraisal line. */
+const QUIET = /^<quiet\s*\/?>/i
+/** Her own turn sends at most this many short messages in a row. */
+const MAX_PARTS = 3
 
 /** Past this much text, an unclosed `<feel` is not one. */
 const FEEL_HOLD = 160
@@ -135,6 +141,9 @@ export class CasualEngine {
   private abort?: AbortController
   private queue: { text: string; images: Image[]; mood?: Closeness }[] = []
   private lastUserAt?: number
+  private lastLevel = 0
+  /** Her own turn is in flight (initiate): a message from them drops it instead of queueing behind it. */
+  private initiating = false
   private toolSeq = 0
   readonly usage: Usage = { input: 0, cached: 0, output: 0, calls: 0 }
 
@@ -146,15 +155,109 @@ export class CasualEngine {
     return !!this.abort
   }
 
+  /** Their last message, for her own turns (initiative.ts). */
+  lastHeardAt() {
+    return this.lastUserAt
+  }
+
+  /** Affection when they last wrote: her own turns feel as close as the last exchange did. */
+  level() {
+    return this.lastLevel
+  }
+
   say(text: string, images: Image[] = [], mood?: Closeness) {
     if (!text.trim() && !images.length) return
-    if (this.abort) return void this.queue.push({ text, images, mood })
+    if (mood) this.lastLevel = mood.level
+    // They wrote while she was making up her mind (or between her messages): what she had is dropped.
+    if (this.initiating) this.abort?.abort()
+    else if (this.abort) return void this.queue.push({ text, images, mood })
     void this.run(text, images, mood)
   }
 
   interrupt() {
     this.queue = []
     this.abort?.abort()
+  }
+
+  /**
+   * Her own turn: no message from them. The reply is collected, not streamed, so a <quiet/> shows nothing and a
+   * thought that went stale (they wrote or started typing) is dropped unseen. What she says is delivered like a
+   * reply, up to three short messages a moment apart, each written to the history, the transcript and her journal.
+   */
+  async initiate(m: Moment, typing: () => boolean): Promise<Spoke> {
+    if (this.abort) return 'dropped'
+    const s = this.o.settings()
+    const abort = (this.abort = new AbortController())
+    this.initiating = true
+    const { heart, memory, pool, emit } = this.o
+    try {
+      const lastHer = [...pool].reverse().find((e) => e.who === 'char')?.text ?? ''
+      const lastYou = [...pool].reverse().find((e) => e.who === 'user')?.text ?? ''
+      const tools = this.tools(s)
+      const note = contextNote({
+        now: new Date(),
+        sinceLastMs: m.sinceLastMs,
+        level: this.lastLevel,
+        feeling: heart.guide(),
+        memories: memory.recall(`${lastYou.slice(0, 200)} ${lastHer.slice(0, 200)}`),
+        own: { away: m.away, unanswered: m.unanswered },
+      })
+      const history = historyMessages(pool, s.casual.shareWork)
+      const messages = history.at(-1)?.role === 'user' ? [...history.slice(0, -1), { role: 'user' as const, content: `${history.at(-1)!.content}\n${note}` }] : [...history, { role: 'user' as const, content: note }]
+      let raw = ''
+      const feel = new FeelParser((d) => (raw += d))
+      const used = await this.provider(s).chat({
+        system: casualSystem(s, memory.tune(), memory.notes(), tools.length > 0),
+        messages,
+        tools,
+        maxTokens: REPLY_MAX_TOKENS,
+        signal: abort.signal,
+        onText: (d) => feel.feed(d),
+      })
+      feel.flush()
+      for (const k of ['input', 'cached', 'output', 'calls'] as const) this.usage[k] += used[k]
+      const reply = raw.trim()
+      console.log(`[casual] her own turn: ${!reply || QUIET.test(reply) ? 'quiet' : 'spoke'} (in ${used.input}, cached ${used.cached}, out ${used.output})`)
+      if (abort.signal.aborted) return 'dropped'
+      if (!reply || QUIET.test(reply)) return 'quiet'
+      if (typing()) return 'dropped'
+      const parts = reply.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean).slice(0, MAX_PARTS)
+      for (const [i, part] of parts.entries()) {
+        if (i) await new Promise((r) => setTimeout(r, 1200 + Math.random() * 1300))
+        if (abort.signal.aborted || typing()) break
+        this.deliver(part)
+      }
+      this.o.idle()
+      return 'said'
+    } catch (e) {
+      if (!abort.signal.aborted) console.warn(`[casual] her own turn failed: ${e instanceof Error ? e.message : e}`)
+      return 'dropped'
+    } finally {
+      this.initiating = false
+      if (this.abort === abort) this.abort = undefined
+    }
+  }
+
+  /** One message of hers, played like a reply (face, voice, text) and kept like one. */
+  private deliver(raw: string) {
+    const { pool, memory, emit } = this.o
+    emit({ t: 'state', state: 'running' })
+    const tags = new TagParser(
+      (delta) => emit({ t: 'text', delta }),
+      (emotion) => emit({ t: 'face', emotion }),
+      () => {},
+      (line) => emit({ t: 'voice', text: line }),
+    )
+    tags.feed(raw)
+    tags.flush()
+    emit({ t: 'text_end' })
+    emit({ t: 'turn_end', ok: true, interrupted: false, seconds: 0 })
+    emit({ t: 'state', state: 'idle' })
+    const now = Date.now()
+    const shown = stripForPool(raw)
+    if (shown) pool.push({ mode: 'casual', who: 'char', text: shown, at: now })
+    this.o.persist('', raw)
+    void memory.journal({ at: now, sid: this.o.sid(), you: '', her: shown, own: true }).catch((e) => console.warn(`[casual] journal: ${e}`))
   }
 
   private provider(s: Settings): Provider {

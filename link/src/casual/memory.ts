@@ -13,8 +13,8 @@ export type Episode = { text: string; at: number; sid?: string }
 export type Notes = { works: string[]; avoid: string[] }
 /** The only part of her casual prompt learning may change. Her character card is never in here. */
 export type Tune = { rev: number; style: string; examples: string[]; at: number }
-/** One casual exchange, kept until learning has read it. */
-export type JournalEntry = { at: number; sid?: string; you: string; her: string }
+/** One casual exchange, kept until learning has read it. `own`: a message she sent first (`you` is empty). */
+export type JournalEntry = { at: number; sid?: string; you: string; her: string; own?: boolean }
 export type LearnState = { learned: number; lastRunAt: number }
 
 const MAX_FACTS = 400

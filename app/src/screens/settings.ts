@@ -79,7 +79,7 @@ const DEFAULTS: {
   },
   casual: {
     provider: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-6-luna', reasoningEffort: 'none', claudeModel: 'sonnet',
-    toolModel: 'haiku', shareWork: true, learning: true, idleMin: 60, judgeThreshold: 7, learnWith: 'claude', toWork: 'ask',
+    toolModel: 'haiku', shareWork: true, learning: true, idleMin: 60, judgeThreshold: 7, learnWith: 'claude', toWork: 'ask', initiative: true, boundaries: '',
   },
 }
 
@@ -710,6 +710,13 @@ function casualPane() {
         toggle('casual.shareWork', 'Work lines in casual chat', "She remembers this session's work conversation in casual mode. Off keeps your work out of the casual model's requests.") +
         row('Back to work', seg('casual.toWork', TO_WORK), 'Compact: work starts from a summary') +
         note('Either way, every earlier line of the session stays searchable: she and Claude Code both have a <code>search_history</code> tool.'),
+      'wide',
+    )}
+    ${card(
+      'Messaging first',
+      toggle('casual.initiative', 'She can message first', 'In casual mode she decides on her own when to say something, and when to stay quiet. She waits while you type.') +
+        row('Boundaries', area('casual.boundaries', 3, 'maxlength="2000" placeholder="Rules she never breaks, in your words: nothing after 23:00, at most two messages while I\'m at work…"'), 'Your rules win over her personality') +
+        note('How often she reaches out, and what she does when you\'re away (waiting, a huffy line, checking in, pinging), is her personality\'s call. A draft left in the box for 20 minutes counts as you being away.'),
       'wide',
     )}
     ${card(

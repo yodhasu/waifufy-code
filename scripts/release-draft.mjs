@@ -39,20 +39,20 @@ run(`git push origin ${branch}`)
 const notes = join(tmpdir(), `waifufy-${tag}-notes.md`)
 writeFileSync(
   notes,
-  `Waifufy Code ${version}: one conversation, two ways to talk
+  `Waifufy Code ${version}: she talks first
 
-A fix-up for casual mode's memory, and a smarter way back to work.
+Casual mode isn't only answers any more: she decides on her own when to say something, like someone you're texting.
 
-**Memory that sticks**
-- **No more goldfish**: she kept two copies of her memory that saved over each other, so things she learned could vanish. Now there is one memory per character, shared by every session and the phone
-- **Casual mode reads the same conversation as work mode**: no more cutting old lines to a small window. When Claude Code compacts, casual follows from the same summary, and a resumed or rewound save gives both modes the same history
-- **Recall that works from the first memory**: she couldn't bring up her only fact, or one about someone every fact mentions. Now she can
-- **Details stick**: a fact with more detail replaces the short one instead of being thrown away as a repeat, and how often she uses a fact is saved, so the ones that matter are the ones she keeps
-- **Fair judging**: a reflection she couldn't read is tried again later, never scored 0/10 and used to rewrite her style
+**She messages first**
+- In casual mode she picks her own moments, from her personality and how she feels: sooner when she's clingy, close to you or missing you, later when she's annoyed or too proud to look eager. Then she decides, as herself, to say something, send a couple of short texts in a row, look something up first, or stay quiet
+- **She waits while you type**: a draft in the box holds her, and she goes on a few seconds after you clear it. A draft left for 20 minutes means you've gone away
+- **When you're away, her personality decides**: patient, a huffy line, checking in, or pinging you. Each message you leave unanswered stretches the next gap, a lot for a calm heart and barely for a clingy one
+- **Your rules win**: Settings → Casual → Messaging first has "She can message first" (on by default) and Boundaries, rules in your own words she never breaks
+- Her own messages are remembered like any other, and her learning judges whether reaching out landed
 
-**Back to work**
-- Switching from casual to work asks **Compact** or **Keep**, with **Save this option as default** (change it later in Settings → Casual → Back to work). Compact runs Claude Code's own \`/compact\`, told to keep the task and let the chit-chat be one line, while she tidies up her notes
-- **search_history**: she and Claude Code can both search every line said in the session, compacted ones too, so nothing you said is out of reach
+**On your phone**
+- Her casual lines arrive as **notifications** while the app is in the background, in one conversation thread like a chat app's, with an inline **Reply** that goes straight to her
+- The phone **stays connected** in the background while it's joined to a session, with one quiet "Connected to …" notification. Opening the app clears her thread
 
 Install: \`Waifufy-Code-${version}-setup.exe\` on Windows, the \`.apk\` on Android (arm64).
 `,

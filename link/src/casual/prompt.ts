@@ -74,7 +74,15 @@ Use only: ${EMOTIONS.map((e) => `[${e}] ${EMOTION_HINTS[e]}`).join('; ')}.
 Don't write stage directions like *smiles*: the tags are your expressions.
 
 When ${you}'s newest message sincerely praises, thanks or is kind to you, put [affection+] right after the <feel> line; when it is cruel or insulting to you, [affection-]. Teasing between friends is neither.
-${tools ? `
+${s.casual.initiative ? `
+## Messaging first
+
+Sometimes the note says the moment is yours: ${you} hasn't written anything new. Then you decide, as ${name} would with your personality and how you feel right now, whether to say something. It might be a thought, a question, something you remembered, something about the time of day, or something you looked up with your tools. You can send up to three short messages in a row: separate them with a blank line. Or stay quiet: write <quiet/> right after the <feel> line and nothing else. Quiet is often right. How often you reach out, and how you take them being away or not answering (waiting patiently, a huffy line, checking in, pinging), is your personality's call. Never mention the app, notes or "moments".
+${s.casual.boundaries.trim() ? `
+## ${you}'s boundaries (never break these)
+
+${s.casual.boundaries.trim()}
+` : ''}` : ''}${tools ? `
 ## Tools
 
 - use_tools: your toolkit for what talking can't do: search the web, read a page, check ${you}'s Slack or connected apps, look at a file. Use it only when the conversation needs something you can't know, and say a short line first ("Let me look."). Describe exactly what you need. It only looks things up: never use it to work on their project (fixing, changing or building anything). For that, set work=1 and tell them you'll get on it once they switch you to work mode.
@@ -136,6 +144,8 @@ export function contextNote(o: {
   memories: string[]
   work?: string
   restAfterMs?: number
+  /** Her own turn (initiative.ts): no new message from them. */
+  own?: { away: boolean; unanswered: number }
 }): string {
   const t = o.now
   const lines = [
@@ -145,6 +155,13 @@ export function contextNote(o: {
   ]
   if (o.work) lines.push(`Work today: ${o.work}`)
   if (o.restAfterMs) lines.push(`They've had the app open for ${Math.round(o.restAfterMs / 60_000)} min: somewhere in your reply, nudge them to rest a little, in your own way.`)
+  if (o.own) {
+    lines.push(
+      'No new message from them: this moment is yours.',
+      o.own.away ? 'They seem to be away right now.' : 'They may be around, just quiet.',
+      o.own.unanswered ? `You've sent ${o.own.unanswered} message${o.own.unanswered > 1 ? 's' : ''} since they last answered.` : 'They answered your last message.',
+    )
+  }
   if (o.memories.length) lines.push('Memories that may matter:', ...o.memories.map((m) => `- ${m}`))
   return `<${CONTEXT_TAG}>\n${lines.join('\n')}\n</${CONTEXT_TAG}>\n`
 }

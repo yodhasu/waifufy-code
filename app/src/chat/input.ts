@@ -32,6 +32,8 @@ export type InputHost = {
   cycleMode?(): void
   /** The Work / Casual switch left of the box. */
   toggleChat?(): void
+  /** Whether there is a draft in the focused box, on each change: her own messages wait while you type. */
+  typing?(on: boolean): void
 }
 
 /**
@@ -355,6 +357,18 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
     grow()
     refreshMode()
     closePopups()
+    reportDraft()
+  }
+
+  // Her own messages wait while you have a draft in the focused box (casual/initiative.ts). A draft left there for
+  // 20 minutes means you've gone away. Only changes are sent, and a slash command isn't a message to her.
+  let drafting = false
+  function reportDraft() {
+    const draft = ta.value.trim()
+    const now = document.activeElement === ta && !!draft && !draft.startsWith('/')
+    if (now === drafting) return
+    drafting = now
+    host.typing?.(now)
   }
 
   /** Types `text` over the selection like the user would, so Ctrl+Z still works; fires `input`. */
@@ -827,6 +841,7 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
     grow()
     refreshMode()
     updatePopups()
+    reportDraft()
   })
   ta.addEventListener('click', () => {
     if (popup) updatePopups()
@@ -836,8 +851,8 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
     if (popup && /^(Arrow(Left|Right)|Home|End)$/.test(e.key)) updatePopups()
   })
   ta.addEventListener('scroll', () => (hlEl.scrollTop = ta.scrollTop))
-  ta.addEventListener('blur', () => closePickers())
-  ta.addEventListener('focus', grow)
+  ta.addEventListener('blur', () => (closePickers(), reportDraft()))
+  ta.addEventListener('focus', () => (grow(), reportDraft()))
   sendBtn.addEventListener('click', () => {
     if (sendBtn.dataset.job === 'stop') return host.stop?.()
     send()

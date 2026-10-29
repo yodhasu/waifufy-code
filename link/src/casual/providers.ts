@@ -319,7 +319,9 @@ export function mockProvider(): Provider {
       const last = req.messages.at(-1)?.content ?? ''
       const said = last.replace(/<waifufy-context>[\s\S]*?<\/waifufy-context>\s*/, '').trim()
       const work = /\b(fix|bug|code|deploy|test|refactor)\b/i.test(said) ? 1 : 0
-      const line = MOCK_LINES.find(([re]) => re.test(said))?.[1] ?? `[smile] Casual mock reply to: ${said.slice(0, 80)}`
+      // Her own turn has only the note: a line of hers, two messages, so tests see her texting first.
+      const line = !said ? '[smile] Hey… are you still there?\n\n[shy] I was just thinking about you.'
+        : MOCK_LINES.find(([re]) => re.test(said))?.[1] ?? `[smile] Casual mock reply to: ${said.slice(0, 80)}`
       const reply = `<feel joy=0.4 sadness=0 anger=0 surprise=0.1 fear=0 sure=0.9 work=${work}/>\n${line}`
       for (const part of reply.match(/.{1,12}/gs) ?? []) {
         if (req.signal.aborted) break

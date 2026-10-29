@@ -567,6 +567,14 @@ const PLAN_DECISIONS: readonly Extract<ClientMsg, { t: 'plan' }>['decision'][] =
 
 /** Connections that already said hello. */
 const greeted = new WeakSet<WebSocket>()
+/** A name per connection, for who is typing (casual/modes.ts). */
+const clientIds = new WeakMap<WebSocket, string>()
+let clientSeq = 0
+const clientId = (ws: WebSocket) => {
+  let id = clientIds.get(ws)
+  if (!id) clientIds.set(ws, (id = `c${++clientSeq}`))
+  return id
+}
 
 function live(): SessionApi {
   const s = current?.session
@@ -709,6 +717,8 @@ async function handle(ws: WebSocket, m: ClientMsg) {
     case 'chat_mode':
       need(m.mode === 'work' || m.mode === 'casual', 'mode')
       return live().setChatMode?.(m.mode, m.compact === true)
+    case 'typing':
+      return current?.session?.typing?.(clientId(ws), m.on === true)
     case 'mode':
       need(MODES.includes(m.mode), 'mode')
       return live().setMode(m.mode)
@@ -851,6 +861,8 @@ function serve(ws: WebSocket) {
   })
   ws.on('error', (e) => console.warn('[ws] socket error:', e))
   ws.on('close', () => {
+    // A composer that went away isn't typing any more.
+    current?.session?.typing?.(clientId(ws), false)
     if (clients().length > 0 || !current) return
     orphanTimer = setTimeout(() => {
       if (clients().length > 0) return

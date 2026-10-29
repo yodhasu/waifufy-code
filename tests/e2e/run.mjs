@@ -19,7 +19,7 @@ const SETUP_TIMEOUT_MS = 2 * TEST_TIMEOUT_MS
 const NOTE_WIDTH = 110
 /** Requirements the E2E suite does not cover: packaging and dev mode are checked by building. */
 const OUT_OF_SCOPE = { R47: 'installer build (npm run build:installer)', R49: 'dev mode (npm run dev)' }
-// R1–R49 are the V1 requirements (docs/V1.md), R50–R78 V0.5's (docs/V0.5.md), R79 on V0.7's (docs/V0.7.md).
+// R1–R49 are the V1 requirements (docs/V1.md), R50–R78 V0.5's (docs/V0.5.md), R79–R82 V0.7's (docs/V0.7.md), R83 on V0.7.2's (docs/V0.7.2.md).
 const REQUIREMENTS = Array.from({ length: 82 }, (_, k) => `R${k + 1}`)
 
 const args = process.argv.slice(2)

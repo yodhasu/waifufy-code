@@ -47,6 +47,8 @@ export interface SessionApi {
   permit: CanUseTool
   /** Work or casual (casual/modes.ts wraps every session with it). `compact`: back to work from a summary. */
   setChatMode?(mode: ChatMode, compact?: boolean): Promise<void>
+  /** A client's composer has a draft or not (casual/modes.ts): her own messages wait while anyone types. */
+  typing?(client: string, on: boolean): void
 }
 
 export type SessionFactory = (opts: SessionOptions) => SessionApi

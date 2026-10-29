@@ -20,6 +20,7 @@ import {
   cleanText, createDialogue, createPager, lastEmotion, markdown, pagesForMono, pagesForText, type Dialogue, type DisplayPage, type VoiceLine,
 } from './dialogue'
 import { createInput, fromInput, type InputApi, type InputHost } from './input'
+import { phoneNotify } from '../phone-notify'
 import {
   createPanels, doing, isShell, MODE_LABELS, oneLine, relPath, toolIcon, toolLabel, type Panels, type ToolRecord,
 } from './panels'
@@ -210,6 +211,8 @@ export function chatScreen(): Screen {
   let mode: PermissionModeName = 'default'
   /** Work (Claude Code) or casual (her own chat harness); the link has the last word (chat_mode). */
   let chatMode: ChatMode = 'work'
+  /** Her casual line so far, for the phone's notification when it ends. */
+  let herLine = ''
   /** A message her switch offer carries: sent once the switch to that mode is confirmed. */
   let offered: { mode: ChatMode; text?: string } | undefined
   let autoSeen = false
@@ -943,6 +946,9 @@ export function chatScreen(): Screen {
 
   /** On a phone, being in the computer's chat survives the app being killed in the background (main.ts re-joins). */
   function rememberJoined(on: boolean) {
+    // Joined: her messages can reach the phone while the app is in the background (phone-notify.ts).
+    if (on) phoneNotify.connected(charName())
+    else phoneNotify.disconnected()
     try {
       if (on) localStorage.setItem(JOINED_KEY, String(Date.now()))
       else localStorage.removeItem(JOINED_KEY)
@@ -1003,6 +1009,7 @@ export function chatScreen(): Screen {
     input.setEnabled(false, `${charName()} is getting ready…`)
     bgTasks = []
     chatMode = 'work'
+    herLine = ''
     panels?.background(0)
     offered = undefined
     input?.setChat('work')
@@ -1337,8 +1344,15 @@ export function chatScreen(): Screen {
       case 'voice': return pager.voice(m.text)
       case 'text':
         if (phase !== 'writing') (phase = 'writing'), (phaseStart = Date.now()), updateSpinner()
+        if (!replaying && chatMode === 'casual') herLine += m.delta
         return pager.text(m.delta)
-      case 'text_end': return pager.end()
+      case 'text_end': {
+        // A casual line of hers, while the phone app is in the background: a notification you can reply to.
+        const line = herLine.trim()
+        herLine = ''
+        if (line && ctx.link.remote) phoneNotify.her(charName(), line)
+        return pager.end()
+      }
       case 'progress':
         outTokens = m.outputTokens
         if (phase !== m.phase) phaseStart = Date.now()
@@ -1828,6 +1842,7 @@ export function chatScreen(): Screen {
         stop: () => void (interrupt() || ctx.toast(`${charName()} isn't working on anything right now`)),
         cycleMode,
         toggleChat,
+        typing: (on) => live && !ended && ctx.link.send({ t: 'typing', on }),
       }
       input = createInput(root.querySelector('.chat-input')!, host)
       input.setEnabled(false, `${charName()} is getting ready…`)
@@ -1877,6 +1892,12 @@ export function chatScreen(): Screen {
         panels.identity(s)
         updateRibbon()
         updateSpinner()
+      })
+
+      // Phone: back in front, her notification thread is read; a Reply typed in it is a message to her.
+      document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && phoneNotify.clear())
+      phoneNotify.onReply((text) => {
+        if (live && !ended && text.trim()) say(text.trim(), [])
       })
 
       // Bubble phase: the composer and the menus handle their keys first and preventDefault what they used.

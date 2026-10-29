@@ -184,6 +184,10 @@ export type CasualSettings = {
   learnWith: 'claude' | 'casual'
   /** Back from casual to work: ask each time, or always compact (work starts from a summary) or keep the full context. */
   toWork: 'ask' | 'compact' | 'keep'
+  /** She may message first in casual mode (initiative.ts): when, and whether, is up to her personality. */
+  initiative: boolean
+  /** Rules in the user's own words that her own messages never break ("nothing after 23:00"). */
+  boundaries: string
 }
 
 export type Settings = {
@@ -428,6 +432,8 @@ export type ClientMsg =
   | { t: 'slack_send'; id: string; channel: string; text: string; thread?: string }
   /** Switches the running session between work and casual; refused (in character) while work is still running. */
   | { t: 'chat_mode'; mode: ChatMode; compact?: boolean }
+  /** The composer has a draft (on) or not any more (off): her own messages wait while anyone types. */
+  | { t: 'typing'; on: boolean }
   /** Stores the casual API key in the link (never in settings); an empty key removes it. */
   | { t: 'casual_key'; key: string }
   /** Desktop only: turns phone access on or off; answered (to every desktop window) with `remote_status`. */

@@ -12,7 +12,9 @@ import { addressOf, defaultSettings } from '../settings.ts'
 import { voiceActive } from '../tts.ts'
 import { casualBlock } from './block.ts'
 import { CasualEngine } from './engine.ts'
+import { mockCasual } from './providers.ts'
 import { feel, loadHeart, moodGuide, restingFace, reunion, saveHeart, settle, traitsFor, voiceSpeed, type Heart, type Traits } from './heart.ts'
+import { Initiative } from './initiative.ts'
 import { scheduleLearning } from './learn.ts'
 import { openMemory, type Memory } from './memory.ts'
 import type { PoolEntry } from './prompt.ts'
@@ -98,6 +100,9 @@ class ModalSession implements SessionApi {
   private strikes: number[] = []
   private closed = false
   private idleTimer?: ReturnType<typeof setTimeout>
+  private initiative: Initiative
+  /** Clients whose composer has a draft, and since when. */
+  private typists = new Map<string, number>()
 
   constructor(factory: SessionFactory, opts: SessionOptions) {
     this.opts = opts
@@ -117,9 +122,22 @@ class ModalSession implements SessionApi {
       permit: (name, input, o) => this.inner.permit(name, input, o),
       persist: (you, her) => this.inner.appendContext(casualBlock(you, her)),
       sid: () => this.inner.sessionId(),
-      idle: () => this.armLearning(),
+      idle: () => {
+        this.armLearning()
+        if (this.mayInitiate()) this.initiative.arm()
+      },
     })
     // A resumed save brings its context (both modes) into the pool before anything new is said.
+    this.initiative = new Initiative({
+      traits: () => this.heart.traits,
+      feelings: () => this.heart.state.feelings,
+      level: () => this.engine.level(),
+      allowed: () => this.mayInitiate(),
+      typingSince: () => (this.typists.size ? Math.min(...this.typists.values()) : undefined),
+      lastHeardAt: () => this.engine.lastHeardAt(),
+      speak: (m) => this.engine.initiate(m, () => this.typists.size > 0),
+      scale: Number(process.env.WC_INITIATIVE_SCALE) || undefined,
+    })
     this.seeded = opts.resume ? this.reload(opts.resume, opts.resumeAt) : Promise.resolve()
     this.armLearning(30_000)
   }
@@ -223,11 +241,26 @@ class ModalSession implements SessionApi {
     await this.seeded
     this.mode = mode
     this.strikes = []
+    if (this.mayInitiate()) this.initiative.arm()
+    else this.initiative.stop()
     this.opts.emit({ t: 'chat_mode', mode })
     // Work after a casual break is usually a new task or an update on one: it can start from a summary.
     const tidy = mode === 'work' && compact && this.pool.length >= COMPACT_MIN
     this.line(mode === 'casual' ? TO_CASUAL : tidy ? TO_WORK_COMPACT : TO_WORK)
     if (tidy) this.inner.say(`/compact ${COMPACT_FOCUS}`)
+  }
+
+  /** Her own messages: casual mode, the setting on, no work running, the session open (and in mock mode only for tests). */
+  private mayInitiate() {
+    if (this.closed || this.mode !== 'casual' || !this.opts.settings.casual.initiative || this.busyAtWork()) return false
+    return !mockCasual() || !!process.env.WC_INITIATIVE_SCALE
+  }
+
+  /** A client's composer has a draft (on) or not (off); a closed connection is off. */
+  typing(client: string, on: boolean) {
+    if (on) {
+      if (!this.typists.has(client)) this.typists.set(client, Date.now())
+    } else if (this.typists.delete(client) && !this.typists.size) this.initiative.typingStopped()
   }
 
   private armLearning(ms?: number) {
@@ -257,7 +290,10 @@ class ModalSession implements SessionApi {
     if (command === '/casual' || command === '/work') return void this.setChatMode(command === '/casual' ? 'casual' : 'work')
     // Slash commands stay Claude Code's in either mode (/model, /compact…).
     // After the context is (re)loaded, so a reply right after a /compact reads the summary.
-    if (this.mode === 'casual' && !command.startsWith('/')) return void this.seeded.then(() => this.engine.say(text, images, mood))
+    if (this.mode === 'casual' && !command.startsWith('/')) {
+      this.initiative.heard()
+      return void this.seeded.then(() => this.engine.say(text, images, mood))
+    }
     if (text.trim() && !text.startsWith('/')) this.pool.push({ mode: 'work', who: 'user', text, at: Date.now() })
     const feelNote = this.heart.guide(true)
     this.inner.say(text, images, now, mood ? { ...mood, ...(feelNote ? { feel: feelNote } : {}) } : mood)
@@ -275,6 +311,7 @@ class ModalSession implements SessionApi {
   close() {
     this.closed = true
     clearTimeout(this.idleTimer)
+    this.initiative.stop()
     this.engine.interrupt()
     if (active === this.heart) active = undefined
     this.inner.close()

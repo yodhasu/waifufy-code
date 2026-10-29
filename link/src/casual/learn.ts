@@ -38,7 +38,9 @@ export async function learn(o: LearnOptions): Promise<LearnResult> {
   const state = memory.learnState()
   const fresh = memory.readJournal(state.learned)
   if (!o.force && fresh.length < MIN_NEW) return { skipped: `${fresh.length} new exchanges` }
-  if (!o.force && Date.now() - (fresh.at(-1)?.at ?? 0) < o.idleMs * 0.9) return { skipped: 'not idle yet' }
+  // Quiet means they've been quiet: her own messages don't keep the reflection waiting.
+  const lastHeard = [...fresh].reverse().find((e) => e.you)?.at ?? fresh.at(-1)?.at ?? 0
+  if (!o.force && Date.now() - lastHeard < o.idleMs * 0.9) return { skipped: 'not idle yet' }
   running = true
   const abort = new AbortController()
   const name = s.waifu.name.trim() || defaultSettings().waifu.name
@@ -103,7 +105,7 @@ export async function learn(o: LearnOptions): Promise<LearnResult> {
 
 function lines(entries: JournalEntry[], you: string, name: string) {
   const c = (t: string) => (t.length > LINE_MAX ? `${t.slice(0, LINE_MAX)}…` : t)
-  return entries.map((e) => `${you}: ${c(e.you)}\n${name}: ${c(e.her)}`).join('\n')
+  return entries.map((e) => (e.you ? `${you}: ${c(e.you)}\n` : '') + `${name}${e.own ? ' (on her own)' : ''}: ${c(e.her)}`).join('\n')
 }
 
 const REFLECT_SYSTEM = (name: string, you: string) => `You review a casual chat between ${you} and ${name}, an AI companion character in a visual-novel app. Do two jobs and reply with only one JSON object.
@@ -111,7 +113,7 @@ const REFLECT_SYSTEM = (name: string, you: string) => `You review a casual chat 
 1. Remember, as ${name} would:
 - "facts": new facts about ${you} worth knowing later (people, plans, likes, events, feelings), one short third-person sentence each; skip ones she already knows; [] if none.
 - "episode": 2–4 sentences in ${name}'s first-person voice about what happened and how it felt, like a diary line.
-- "works" / "avoid": up to 3 each: what in her replies landed well or badly with ${you}, judged from how ${you} reacted next (laughing along, opening up, long replies = good; short, cold, changing the subject, correcting her = bad). Concrete, about style (length, teasing, questions, topics), never about her personality.
+- "works" / "avoid": up to 3 each: what in her replies landed well or badly with ${you}, judged from how ${you} reacted next (laughing along, opening up, long replies = good; short, cold, changing the subject, correcting her = bad). Concrete, about style (length, teasing, questions, topics), never about her personality. Lines marked (on her own) are messages she sent first: whether reaching out landed (answered warmly, or ignored and brushed off) counts too, as works or avoid notes about when and how she messages first.
 - "drop": earlier learned notes this chat proved wrong; [] if none.
 
 2. Judge her replies, 0–10 each, strict (7 = good, 9 = excellent):
