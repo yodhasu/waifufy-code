@@ -9,3 +9,9 @@ app/public/live2dcubismcore.min.js
 build/
 tests/e2e/out/*
 !tests/e2e/out/.gitignore
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+
+# Third-party 3D models, poses and motions for the MMD lab: local only, never committed.
+ui-draft/mmd-lab/assets/

@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MMD Motion Lab</title>
+<style>
+  :root { --bg: #0b0d16; --panel: #151a2b; --ink: #e8e9f2; --muted: #9aa0b8; --accent: #ff6fa5; --line: #2a3150; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.4 system-ui, sans-serif; display: flex; height: 100vh; overflow: hidden; }
+  #view { flex: 1; position: relative; min-width: 0; }
+  canvas { display: block; }
+  #status { position: absolute; left: 12px; top: 10px; color: var(--muted); max-width: calc(100% - 24px); }
+  #status a { color: var(--accent); }
+  #bar { position: absolute; left: 12px; bottom: 12px; display: flex; flex-wrap: wrap; gap: 6px; max-width: calc(100% - 24px); }
+  button { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; font: inherit; cursor: pointer; }
+  aside { width: 300px; background: var(--panel); overflow: auto; padding: 12px; border-left: 1px solid #22283f; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 16px 0 6px; }
+  h2:first-child { margin-top: 0; }
+  .item { display: block; width: 100%; text-align: left; margin-bottom: 6px; padding: 8px 10px; }
+  .item b { display: block; font-weight: 600; }
+  .item small { color: var(--muted); }
+  .item.on { border-color: var(--accent); background: #24203a; }
+  @media (max-width: 700px) { body { flex-direction: column; } aside { width: 100%; height: 42vh; border-left: 0; } }
+</style>
+</head>
+<body>
+<div id="view"><div id="status">Loading model…</div><div id="bar"></div></div>
+<aside id="list"></aside>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/ammo.wasm.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { MMDLoader } from 'three/addons/loaders/MMDLoader.js'
+import { MMDAnimationHelper } from 'three/addons/animation/MMDAnimationHelper.js'
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js'
+import { BVHLoader } from 'three/addons/loaders/BVHLoader.js'
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js'
+
+// MMD lab: Reine (MMD) driven waist up by poses (VPD, and still Mixamo clips) through springs, and by motions (VMD,
+// Mixamo FBX retargeted live) blended over them; physics moves hair, skirt and chest. Assets live in assets/
+// (not in git). Open through serve.mjs, not from disk.
+
+const status = document.getElementById('status')
+if (location.protocol === 'file:') {
+  status.innerHTML = 'Open this through the server: <code>node ui-draft/mmd-lab/serve.mjs</code>, then <a href="http://127.0.0.1:47130/">http://127.0.0.1:47130/</a>'
+  throw new Error('opened from file://')
+}
+const url = (path) => path.split('/').map(encodeURIComponent).join('/')
+
+const MODEL = 'assets/reine/PavoliaReine.pmx'
+const VPD_POSES = [
+  { file: 'LivlierPoseRD.vpd', label: 'Livelier', hint: 'Reggie · full pose' },
+  { file: 'StandDejectedTiedRD.vpd', label: 'Dejected', hint: 'Reggie · full pose' },
+  { file: 'Standing 1 -Stellas Shoujo Walk.vpd', label: 'Shoujo stand', hint: 'Reggie · full pose' },
+  { file: 'LeftArmRelaxedRD.vpd', label: 'Left arm relaxed', hint: 'Reggie · left arm only, layers on' },
+  { file: 'RightArmRelaxedRD.vpd', label: 'Right arm relaxed', hint: 'Reggie · right arm only, layers on' },
+]
+// Mixamo files: `still` ones are single poses (sampled into a spring pose); the rest play as motions.
+const FBX = [
+  { file: 'Idle.fbx', label: 'Idle', hint: 'Mixamo · loops', loop: true, face: {} },
+  { file: 'Idle (1).fbx', label: 'Idle 2', hint: 'Mixamo · loops', loop: true, face: {} },
+  { file: 'Standing Greeting.fbx', label: 'Greeting', hint: 'Mixamo · once', face: { 笑い: 0.8, にこり口: 1 } },
+  { file: 'Rejected.fbx', label: 'Rejected', hint: 'Mixamo · once', face: { 困る: 0.8, ムッ: 0.6 } },
+  { file: 'Female Standing Pose(could be use as teasing).fbx', label: 'Teasing', hint: 'Mixamo · still pose', still: true, face: { にひひ: 0.8, じと目: 0.4 } },
+  { file: 'Female Dynamic Pose(exhausted-optional).fbx', label: 'Exhausted', hint: 'Mixamo · still pose', still: true, face: { 困る: 0.9, なごみ: 0.5 } },
+]
+const VMD = [{ file: '執事お辞儀.vmd', label: 'Butler bow', hint: 'MMD · once', face: { にこり口: 0.8, 笑い: 0.5 } }]
+// One clip per body action Rem has in Live2D (app/src/character/motions.ts), with an MMD face for it.
+const REM_SET = [
+  { key: 'greet', label: 'Greeting', from: 'VRoid VRMA_02', vrma: 'VRMA_02.vrma', face: { 笑い: 0.8, にこり口: 1 } },
+  { key: 'happy', label: 'Happy (hohoemu/egao)', from: 'Bandai bye · happy', bvh: 'dataset-1_bye_happy_001.bvh', face: { 笑い: 0.6, にこり口: 0.9 } },
+  { key: 'delighted', label: 'Delighted', from: 'VRoid VRMA_03 peace sign', vrma: 'VRMA_03.vrma', face: { 笑い: 1, にこり口: 1, 照れ: 0.4 } },
+  { key: 'nod', label: 'Nod (unazuku)', from: 'Bandai respond · normal', bvh: 'dataset-1_respond_normal_001.bvh', face: { にこり口: 0.6 } },
+  { key: 'think', label: 'Think (kangaeru)', from: "Reggie's Shoujo stand (VPD, no motion)", vpd: 'Standing 1 -Stellas Shoujo Walk.vpd', face: { 瞳_上: 0.5, 結ぶ: 0.5 } },
+  { key: 'worried', label: 'Worried (nayamu)', from: 'Bandai guide · not-confident', bvh: 'dataset-1_guide_not-confident_001.bvh', face: { 困る: 0.9, 口角下げ: 0.3 } },
+  { key: 'serious', label: 'Serious (shinken)', from: 'Bandai guide · normal', bvh: 'dataset-1_guide_normal_001.bvh', face: { 真面目: 0.8, 結ぶ: 0.4 } },
+  { key: 'surprised', label: 'Surprised (bikkuri)', from: 'Bandai raise both hands · active', bvh: 'dataset-2_raise-up-both-hands_active_001.bvh', face: { びっくり: 1, お: 0.7 } },
+  { key: 'angry', label: 'Pout / angry (punpun)', from: 'Bandai bye · angry', bvh: 'dataset-1_bye_angry_001.bvh', face: { 怒り: 0.8, ムッ: 0.8, 照れ: 0.3 } },
+  { key: 'sad', label: 'Sad (kurushimu)', from: 'Bandai bow · sad', bvh: 'dataset-1_bow_sad_001.bvh', face: { 困る: 1, 口角下げ: 0.6 } },
+  { key: 'sigh', label: 'Sigh / tired (tameiki)', from: 'Bandai bow · tired', bvh: 'dataset-1_bow_tired_001.bvh', face: { なごみ: 0.6, 困る: 0.4 } },
+  { key: 'shy', label: 'Shy (tere)', from: 'Bandai byebye · feminine', bvh: 'dataset-1_byebye_feminine_001.bvh', face: { 照れ: 1, 困る: 0.4, にこり口: 0.5 } },
+]
+
+const WAIST_UP = /^(上半身|上半身2|首|頭|両目|[左右]目|[左右](肩|腕|腕捩|ひじ|手捩|手首)|[左右](親指|人指|中指|薬指|小指)[０-３])$/
+// The base pose: arms down at her sides (three's axes, the bone's parent space).
+const mirror = ([x, y, z]) => [x, -y, -z]
+const RELAXED_L = { 左腕: [0, -0.12, -0.8], 左ひじ: [0, -0.28, 0], 左手首: [0, 0, 0.05] }
+
+// ---------------------------------------------------------------- scene
+const state = (window.__state = { loaded: false })
+const view = document.getElementById('view')
+const renderer = new THREE.WebGLRenderer({ antialias: true })
+renderer.setPixelRatio(devicePixelRatio)
+view.prepend(renderer.domElement)
+const outlines = new OutlineEffect(renderer)
+const scene = new THREE.Scene()
+scene.background = new THREE.Color(0x0b0d16)
+scene.add(new THREE.AmbientLight(0xaaaaaa, 2.2))
+const sun = new THREE.DirectionalLight(0xffffff, 2.2)
+sun.position.set(-1, 1, 1).multiplyScalar(50)
+scene.add(sun)
+const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 500)
+const controls = new OrbitControls(camera, renderer.domElement)
+const VIEWS = { waist: [[0, 15.8, 26], [0, 15.2, 0]], full: [[0, 11, 46], [0, 10, 0]], side: [[24, 15.8, 8], [0, 15.2, 0]], face: [[0, 19, 10], [0, 18.6, 0]] }
+const look = (k) => (camera.position.set(...VIEWS[k][0]), controls.target.set(...VIEWS[k][1]), controls.update())
+look('waist')
+function resize() {
+  renderer.setSize(view.clientWidth, view.clientHeight)
+  camera.aspect = view.clientWidth / view.clientHeight
+  camera.updateProjectionMatrix()
+}
+addEventListener('resize', resize)
+resize()
+
+window.Ammo = await window.Ammo()
+const helper = new MMDAnimationHelper()
+const clock = new THREE.Clock()
+let mesh, bone = {}, rigs = []
+
+// ---------------------------------------------------------------- springs (poses)
+// Each waist-up bone chases its target with a critically damped spring; the chest leads, fingers come last.
+function feel(name) {
+  if (/^上半身/.test(name)) return [5.0, 0]
+  if (/首|肩$/.test(name)) return [4.6, 40]
+  if (/頭|腕$/.test(name)) return [4.2, 80]
+  if (/ひじ|腕捩/.test(name)) return [3.8, 140]
+  if (/手首|手捩/.test(name)) return [3.4, 200]
+  return [3.2, 260]
+}
+const err = new THREE.Quaternion(), dq = new THREE.Quaternion(), axis = new THREE.Vector3()
+function stepSpring(r, dt) {
+  err.copy(r.target).multiply(dq.copy(r.q).invert())
+  if (err.w < 0) err.set(-err.x, -err.y, -err.z, -err.w)
+  const angle = 2 * Math.acos(Math.min(1, err.w))
+  const s = Math.sqrt(1 - err.w * err.w)
+  axis.set(err.x, err.y, err.z).multiplyScalar(s > 1e-6 ? angle / s : 0)
+  r.vel.addScaledVector(axis, r.w * r.w * dt).multiplyScalar(1 - 2 * r.w * dt)
+  const turn = r.vel.length() * dt
+  if (turn > 1e-7) r.q.premultiply(dq.setFromAxisAngle(axis.copy(r.vel).normalize(), turn)).normalize()
+}
+
+let current = 'relaxed', faceTarget = {}, faceNow = {}
+const POSES = {}
+/** Moves her to a pose. `targets`: bone name → quaternion. Partial poses (one arm) leave every other bone as it is. */
+function applyPose(id, instant = false) {
+  const p = POSES[id]
+  const now = performance.now()
+  for (const r of rigs) {
+    const q = p.targets.get(r.name)
+    if (!q && p.partial) continue
+    const t = q ?? new THREE.Quaternion()
+    if (instant) (r.q.copy(t), r.target.copy(t), r.vel.set(0, 0, 0), (r.next = null))
+    else r.next = { at: now + r.delay, q: t.clone() }
+  }
+  if (!p.partial) faceTarget = p.face ?? {}
+  mark(id)
+  state.current = id
+}
+window.__pose = applyPose
+
+// ---------------------------------------------------------------- motions (blended over the springs)
+// A motion gives a local rotation per waist-up bone each frame; it fades in over the spring pose and back out.
+let motion = null // { id, sample(t) → Map, duration, loop, t, w, fading }
+function playMotion(id) {
+  const m = MOTIONS[id]
+  motion = { id, ...m, t: 0, w: motion ? motion.w : 0, out: false }
+  if (m.face) faceTarget = m.face
+  mark(id)
+  state.current = id
+}
+window.__motion = playMotion
+function stopMotion() {
+  if (motion) motion.out = true
+}
+
+// VMD (MMD motion): values are local rotations from the rest pose, sampled straight off the clip's tracks.
+function vmdSampler(clip) {
+  const tracks = clip.tracks
+    .map((t) => ({ name: /^\.bones\[(.+)\]\.quaternion$/.exec(t.name)?.[1], t }))
+    .filter((x) => x.name && WAIST_UP.test(x.name) && bone[x.name])
+    .map((x) => ({ name: x.name, interp: x.t.createInterpolant(new Float32Array(4)) }))
+  const out = new Map(tracks.map((x) => [x.name, new THREE.Quaternion()]))
+  return (t) => {
+    for (const x of tracks) out.get(x.name).fromArray(x.interp.evaluate(t))
+    return out
+  }
+}
+
+// Mixamo → MMD: each target bone takes its source bone's change in direction since the bind pose, measured from
+// the hips (so her legs stay put), and an alignment for the different rest poses (Mixamo's arms are straight out,
+// hers rest ~29° down): target world = (source now · source bind⁻¹) · A, A turning her rest direction onto theirs.
+const SIDE = { L: ['左', 'Left'], R: ['右', 'Right'] }
+const RETARGET = [
+  ['上半身', 'Spine1', '上半身2', 'Spine2'],
+  ['上半身2', 'Spine2', '首', 'Neck'],
+  ['首', 'Neck', '頭', 'Head'],
+  ['頭', 'Head', null, 'HeadTop_End'],
+]
+for (const [j, e] of Object.values(SIDE)) {
+  RETARGET.push([`${j}肩`, `${e}Shoulder`, `${j}腕`, `${e}Arm`], [`${j}腕`, `${e}Arm`, `${j}ひじ`, `${e}ForeArm`], [`${j}ひじ`, `${e}ForeArm`, `${j}手首`, `${e}Hand`], [`${j}手首`, `${e}Hand`, `${j}中指１`, `${e}HandMiddle1`])
+  const fingers = [['親指', 'Thumb', ['０', '１', '２'], [1, 2, 3]], ['人指', 'Index', ['１', '２', '３'], [1, 2, 3]], ['中指', 'Middle', ['１', '２', '３'], [1, 2, 3]], ['薬指', 'Ring', ['１', '２', '３'], [1, 2, 3]], ['小指', 'Pinky', ['１', '２', '３'], [1, 2, 3]]]
+  for (const [jf, ef, jn, en] of fingers) for (let k = 0; k < 3; k++) RETARGET.push([`${j}${jf}${jn[k]}`, `${e}Hand${ef}${en[k]}`, k < 2 ? `${j}${jf}${jn[k + 1]}` : null, `${e}Hand${ef}${en[k] + 1}`])
+}
+
+// Each source's bone for a Mixamo name (the names RETARGET uses). A name a source lacks is skipped, and her bone keeps
+// its spring pose: Bandai has no fingers, so her hands keep their relaxed curl.
+const BANDAI = { Hips: 'Hips', Spine1: 'Spine', Spine2: 'Chest', Neck: 'Neck', Head: 'Head' }
+const bandaiName = (n) => BANDAI[n] ?? n.replace(/^(Left|Right)(Shoulder|Arm|ForeArm|Hand)$/, (_, s, p) => `${{ Shoulder: 'Shoulder', Arm: 'UpperArm', ForeArm: 'LowerArm', Hand: 'Hand' }[p]}_${s[0]}`)
+const VRM_FINGER = { Thumb: ['ThumbMetacarpal', 'ThumbProximal', 'ThumbDistal'], Index: ['IndexProximal', 'IndexIntermediate', 'IndexDistal'], Middle: ['MiddleProximal', 'MiddleIntermediate', 'MiddleDistal'], Ring: ['RingProximal', 'RingIntermediate', 'RingDistal'], Pinky: ['LittleProximal', 'LittleIntermediate', 'LittleDistal'] }
+function vrmName(n) {
+  const base = { Hips: 'hips', Spine1: 'spine', Spine2: 'chest', Neck: 'neck', Head: 'head' }[n]
+  if (base) return base
+  const m = /^(Left|Right)(?:(Shoulder|Arm|ForeArm|Hand)|Hand(Thumb|Index|Middle|Ring|Pinky)(\d))$/.exec(n)
+  if (!m) return undefined
+  const side = m[1].toLowerCase()
+  if (m[2]) return side + { Shoulder: 'Shoulder', Arm: 'UpperArm', ForeArm: 'LowerArm', Hand: 'Hand' }[m[2]]
+  const f = VRM_FINGER[m[3]][Number(m[4]) - 1]
+  return f && side + f
+}
+
+/**
+ * `src`: Mixamo name → the source's node. `root`: what the clip animates. Returns t → bone name → local quaternion.
+ * The reference ("bind") is the skeleton's rest pose, which is a standing T-pose for Mixamo and VRM. `fromFirstFrame`
+ * uses the clip's first frame instead: a Bandai BVH rests lying down (spine along +X) and stands only through a
+ * constant ~90° on its hips in every frame, which taking out the hips' movement would also take out.
+ */
+function retargetSampler(root, clip, src, { fromFirstFrame = false } = {}) {
+  const hips = src.Hips
+  const mixer = new THREE.AnimationMixer(root)
+  const action = mixer.clipAction(clip)
+  if (fromFirstFrame) (action.play(), mixer.setTime(0))
+  // Only the hips' own movement is taken out (her legs don't follow): world · (hips at bind · hips now⁻¹). Measuring
+  // in the hips' axes instead would bake the hips bone's rest tilt into her spine as a big lean.
+  root.updateMatrixWorld(true)
+  const hipsBind = hips.getWorldQuaternion(new THREE.Quaternion())
+  // Sources face different ways (a BVH may face -Z): a turn about "up" that puts their left side where hers is.
+  const side = (l, r) => l.clone().sub(r).setY(0).normalize()
+  const at = (o) => o.getWorldPosition(new THREE.Vector3())
+  const face = src.LeftArm && src.RightArm
+    ? new THREE.Quaternion().setFromUnitVectors(side(at(src.LeftArm), at(src.RightArm)), side(restPos['左腕'], restPos['右腕']))
+    : new THREE.Quaternion()
+  const relQ = (b, out) => out.copy(face).multiply(hipsBind).multiply(hips.getWorldQuaternion(new THREE.Quaternion()).invert()).multiply(b.getWorldQuaternion(new THREE.Quaternion()))
+  const relDir = (from, to) => at(to).sub(at(from)).normalize().applyQuaternion(face)
+  // Her rest directions come from restPos (taken before any pose), not from where her bones are now.
+  const maps = RETARGET.filter(([t, s]) => bone[t] && src[s]).map(([t, s, tChild, sChild]) => {
+    const bind = relQ(src[s], new THREE.Quaternion())
+    let A = new THREE.Quaternion()
+    const sTo = src[sChild]
+    if (sTo && tChild && restPos[tChild]) A = new THREE.Quaternion().setFromUnitVectors(restPos[tChild].clone().sub(restPos[t]).normalize(), relDir(src[s], sTo))
+    return { t, b: bone[t], s: src[s], bindInv: bind.clone().invert(), A }
+  })
+  action.play()
+  const out = new Map(maps.map((m) => [m.t, new THREE.Quaternion()]))
+  const now = new THREE.Quaternion()
+  return (t) => {
+    mixer.setTime(t)
+    root.updateMatrixWorld(true)
+    // Wanted world rotations (her frame = the hips frame: nothing below 上半身 moves), parents first.
+    const worlds = new Map()
+    for (const m of maps) worlds.set(m.t, relQ(m.s, now).clone().multiply(m.bindInv).multiply(m.A))
+    // A bone's world rotation: wanted if mapped, else its parent's world times its own local (twist bones: rest).
+    const worldOf = (b) => worlds.get(b.name) ?? (b.parent?.isBone ? worldOf(b.parent).clone().multiply(b.quaternion) : b.quaternion.clone())
+    for (const m of maps) out.get(m.t).copy(worldOf(m.b.parent).invert().multiply(worlds.get(m.t)))
+    return out
+  }
+}
+const restPos = {}
+
+// ---------------------------------------------------------------- idle layer
+const euler = new THREE.Euler(), idleQ = new THREE.Quaternion()
+function idle(name, t) {
+  const tau = Math.PI * 2
+  const v = name === '上半身2' ? [0.018 * Math.sin((tau * t) / 4.2), 0, 0]
+    : name === '上半身' ? [0, 0.012 * Math.sin((tau * t) / 9.1), 0.01 * Math.sin((tau * t) / 7.3)]
+      : name === '頭' ? [0.012 * Math.sin((tau * t) / 6.1), 0.025 * Math.sin((tau * t) / 9.7), 0.01 * Math.sin((tau * t) / 11.3)]
+        : null
+  return v ? idleQ.setFromEuler(euler.set(v[0], v[1], v[2])) : null
+}
+let nextBlink = 2, blinkT = -1
+function blink(t, dt) {
+  if (blinkT < 0 && t > nextBlink) blinkT = 0
+  if (blinkT < 0) return 0
+  blinkT += dt
+  const v = blinkT < 0.07 ? blinkT / 0.07 : blinkT < 0.16 ? 1 - (blinkT - 0.07) / 0.09 : 0
+  if (blinkT >= 0.16) (blinkT = -1), (nextBlink = t + 2 + Math.random() * 4)
+  return v
+}
+
+// ---------------------------------------------------------------- frame
+const mq = new THREE.Quaternion()
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.5)
+  const t = clock.elapsedTime
+  if (mesh) {
+    const now = performance.now()
+    for (const r of rigs) {
+      if (r.next && now >= r.next.at) (r.target.copy(r.next.q), (r.next = null))
+      for (let k = 0, n = Math.max(4, Math.ceil(dt / 0.008)); k < n; k++) stepSpring(r, dt / n)
+      r.b.quaternion.copy(r.q)
+    }
+    if (motion) {
+      motion.t += dt
+      const end = motion.duration - 0.35
+      if (!motion.loop && motion.t >= end) motion.out = true
+      motion.w += ((motion.out ? 0 : 1) - motion.w) * Math.min(1, dt * 5)
+      const pose = motion.sample(motion.loop ? motion.t % motion.duration : Math.min(motion.t, motion.duration))
+      for (const [name, q] of pose) bone[name] && bone[name].quaternion.slerp(mq.copy(q), motion.w)
+      if (motion.out && motion.w < 0.01) {
+        motion = null
+        faceTarget = POSES[current]?.face ?? {}
+        mark(POSES[current] ? current : 'relaxed')
+      }
+    }
+    for (const name of ['上半身', '上半身2', '頭']) {
+      const q = idle(name, t)
+      if (q && bone[name]) bone[name].quaternion.multiply(q)
+    }
+    const dict = mesh.morphTargetDictionary
+    for (const n of new Set([...Object.keys(faceTarget), ...Object.keys(faceNow)])) {
+      faceNow[n] = (faceNow[n] ?? 0) + ((faceTarget[n] ?? 0) - (faceNow[n] ?? 0)) * Math.min(1, dt * 6)
+      if (dict[n] !== undefined) mesh.morphTargetInfluences[dict[n]] = faceNow[n]
+    }
+    if (dict['まばたき'] !== undefined) mesh.morphTargetInfluences[dict['まばたき']] = blink(t, dt)
+    mesh.updateMatrixWorld(true)
+    helper.update(dt)
+  }
+  // MMD's ink lines (each material's edge colour and size from the model), as three's MMD examples draw them.
+  outlines.render(scene, camera)
+})
+
+// ---------------------------------------------------------------- UI
+const MOTIONS = {}
+const ITEMS = [] // [section, id, label, hint, run]
+function mark(id) {
+  document.querySelectorAll('.item').forEach((b) => b.classList.toggle('on', b.dataset.id === id))
+}
+function buildList() {
+  const sections = [...new Set(ITEMS.map((x) => x[0]))]
+  const el = document.getElementById('list')
+  el.innerHTML = sections.map((s) => `<h2>${s}</h2>` + ITEMS.filter((x) => x[0] === s).map(([, id, label, hint]) => `<button class="item" data-id="${id}"><b>${label}</b><small>${hint}</small></button>`).join('')).join('')
+  el.onclick = (e) => {
+    const b = e.target.closest('.item')
+    if (b) ITEMS.find((x) => x[1] === b.dataset.id)[4]()
+  }
+  mark(state.current)
+}
+function buildBar() {
+  const bar = document.getElementById('bar')
+  const add = (label, fn) => {
+    const b = document.createElement('button')
+    b.textContent = label
+    b.onclick = fn
+    bar.append(b)
+  }
+  for (const k of Object.keys(VIEWS)) add(`view: ${k}`, () => look(k))
+  add('stop motion', stopMotion)
+}
+
+// ---------------------------------------------------------------- load
+function setup(m) {
+  mesh = window.__mesh = m
+  scene.add(mesh)
+  for (const b of mesh.skeleton.bones) bone[b.name] = b
+  mesh.updateMatrixWorld(true)
+  for (const b of mesh.skeleton.bones) restPos[b.name] = b.getWorldPosition(new THREE.Vector3())
+  rigs = Object.keys(bone).filter((n) => WAIST_UP.test(n)).map((n) => {
+    const [w, delay] = feel(n)
+    return { name: n, b: bone[n], q: new THREE.Quaternion(), vel: new THREE.Vector3(), target: new THREE.Quaternion(), next: null, w, delay }
+  })
+  helper.add(mesh, { physics: true })
+  const relaxed = new Map()
+  for (const [n, v] of Object.entries(RELAXED_L)) {
+    relaxed.set(n, new THREE.Quaternion().setFromEuler(euler.set(v[0], v[1], v[2], /腕$/.test(n) ? 'XYZ' : 'YXZ')))
+    const r = n.replace('左', '右'), mv = mirror(v)
+    relaxed.set(r, new THREE.Quaternion().setFromEuler(euler.set(mv[0], mv[1], mv[2], /腕$/.test(n) ? 'XYZ' : 'YXZ')))
+  }
+  POSES.relaxed = { targets: relaxed, face: {} }
+  ITEMS.push(['Base', 'relaxed', 'Relaxed', 'arms down, at ease', () => (stopMotion(), applyPose('relaxed'))])
+  applyPose('relaxed', true)
+  buildBar()
+  buildList()
+  state.loaded = true
+  status.textContent = 'Model ready · loading poses and motions…'
+  loadAssets().then(() => {
+    state.assets = true
+    status.textContent = `${ITEMS.length} poses and motions · drag to orbit`
+  })
+}
+
+async function loadAssets() {
+  const mmd = new MMDLoader()
+  const fbx = new FBXLoader()
+  const jobs = []
+  for (const p of VPD_POSES) {
+    jobs.push(new Promise((ok) => mmd.loadVPD(url(`assets/poses/${p.file}`), false, (vpd) => {
+      const targets = new Map()
+      for (const b of vpd.bones) if (WAIST_UP.test(b.name) && bone[b.name]) targets.set(b.name, new THREE.Quaternion(...b.quaternion))
+      const id = `vpd:${p.file}`
+      POSES[id] = { targets, partial: !targets.has('上半身'), face: {} }
+      ITEMS.push(['Poses (VPD)', id, p.label, `${p.hint} · ${targets.size} bones`, () => (stopMotion(), applyPose(id))])
+      ok()
+    }, undefined, (e) => (console.warn(p.file, e), ok()))))
+  }
+  for (const v of VMD) {
+    jobs.push(new Promise((ok) => mmd.loadAnimation(url(`assets/motions/${v.file}`), mesh, (clip) => {
+      const id = `vmd:${v.file}`
+      MOTIONS[id] = { sample: vmdSampler(clip), duration: clip.duration, loop: false, face: v.face }
+      ITEMS.push(['Motions', id, v.label, `${v.hint} · ${clip.duration.toFixed(1)} s`, () => playMotion(id)])
+      ok()
+    }, undefined, (e) => (console.warn(v.file, e), ok()))))
+  }
+  for (const f of FBX) {
+    jobs.push(new Promise((ok) => fbx.load(url(`assets/motions/${f.file}`), (group) => {
+      const clip = group.animations[0]
+      // three's FBXLoader drops the colon: "mixamorig:LeftArm" arrives as "mixamorigLeftArm".
+      const src = {}
+      group.traverse((o) => o.isBone && (src[o.name.replace(/^mixamorig\d*:?/, '')] = o))
+      const sample = retargetSampler(group, clip, src)
+      const id = `fbx:${f.file}`
+      if (f.still) {
+        POSES[id] = { targets: new Map([...sample(Math.min(0.5, clip.duration / 2))].map(([n, q]) => [n, q.clone()])), face: f.face }
+        ITEMS.push(['Poses (Mixamo)', id, f.label, f.hint, () => (stopMotion(), applyPose(id))])
+      } else {
+        MOTIONS[id] = { sample, duration: clip.duration, loop: !!f.loop, face: f.face }
+        ITEMS.push(['Motions', id, f.label, `${f.hint} · ${clip.duration.toFixed(1)} s`, () => playMotion(id)])
+      }
+      ok()
+    }, undefined, (e) => (console.warn(f.file, e), ok()))))
+  }
+  // Rem's set: one clip per action she has in Live2D, from Bandai (BVH), VRoid (VRMA) and a VPD pose.
+  const bvh = new BVHLoader()
+  const gltf = new GLTFLoader()
+  for (const r of REM_SET) {
+    const id = `rem:${r.key}`
+    const add = (sample, duration) => {
+      MOTIONS[id] = { sample, duration, loop: false, face: r.face }
+      ITEMS.push(["Rem's set", id, r.label, `${r.from} · ${duration.toFixed(1)} s`, () => playMotion(id)])
+    }
+    if (r.vpd) {
+      // The VPD poses load alongside: wait for this one, then give it her face.
+      jobs.push(Promise.resolve().then(async () => {
+        while (!POSES[`vpd:${r.vpd}`]) await new Promise((z) => setTimeout(z, 100))
+        POSES[id] = { ...POSES[`vpd:${r.vpd}`], face: r.face }
+        ITEMS.push(["Rem's set", id, r.label, r.from, () => (stopMotion(), applyPose(id))])
+      }))
+    } else if (r.bvh) {
+      jobs.push(new Promise((ok) => bvh.load(url(`assets/motions/bandai/${r.bvh}`), (res) => {
+        const root = new THREE.Group()
+        root.add(res.skeleton.bones[0])
+        const byName = Object.fromEntries(res.skeleton.bones.map((b) => [b.name, b]))
+        const src = {}
+        for (const n of RETARGET.map((x) => x[1]).concat('Hips')) if (byName[bandaiName(n)]) src[n] = byName[bandaiName(n)]
+        add(retargetSampler(root, res.clip, src, { fromFirstFrame: true }), res.clip.duration)
+        ok()
+      }, undefined, (e) => (console.warn(r.bvh, e), ok()))))
+    } else if (r.vrma) {
+      jobs.push(new Promise((ok) => gltf.load(url(`assets/motions/vrma/VRMA_MotionPack/vrma/${r.vrma}`), async (g) => {
+        const human = g.parser.json.extensions?.VRMC_vrm_animation?.humanoid?.humanBones ?? {}
+        const src = {}
+        for (const n of RETARGET.map((x) => x[1]).concat('Hips')) {
+          const v = vrmName(n)
+          if (v && human[v]) src[n] = await g.parser.getDependency('node', human[v].node)
+        }
+        add(retargetSampler(g.scene, g.animations[0], src), g.animations[0].duration)
+        ok()
+      }, undefined, (e) => (console.warn(r.vrma, e), ok()))))
+    }
+  }
+  await Promise.all(jobs)
+  buildList()
+}
+
+new MMDLoader().load(url(MODEL), setup, (p) => p.total && (status.textContent = `Loading model… ${Math.round((p.loaded / p.total) * 100)}%`), (e) => {
+  state.error = String(e?.message ?? e)
+  status.textContent = `Failed: ${state.error}`
+})
+</script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MMD Motion Lab</title>
+<style>
+  :root { --bg: #0b0d16; --panel: #151a2b; --ink: #e8e9f2; --muted: #9aa0b8; --accent: #ff6fa5; --line: #2a3150; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.4 system-ui, sans-serif; display: flex; height: 100vh; overflow: hidden; }
+  #view { flex: 1; position: relative; min-width: 0; }
+  #canvas { display: block; width: 100%; height: 100%; outline: none; touch-action: none; }
+  #status { position: absolute; left: 12px; top: 10px; color: var(--muted); pointer-events: none; }
+  #face { position: absolute; left: 12px; top: 30px; color: var(--accent); pointer-events: none; font-size: 12px; }
+  #bar { position: absolute; left: 12px; bottom: 12px; display: flex; flex-wrap: wrap; gap: 6px; max-width: calc(100% - 24px); }
+  button { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; font: inherit; cursor: pointer; }
+  aside { width: 300px; background: var(--panel); overflow: auto; padding: 12px; border-left: 1px solid #22283f; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 16px 0 6px; }
+  h2:first-child { margin-top: 0; }
+  .item { display: block; width: 100%; text-align: left; margin-bottom: 6px; padding: 8px 10px; }
+  .item b { display: block; font-weight: 600; }
+  .item small { color: var(--muted); }
+  .item.on { border-color: var(--accent); background: #24203a; }
+  @media (max-width: 700px) { body { flex-direction: column; } aside { width: 100%; height: 42vh; border-left: 0; } }
+</style>
+</head>
+<body>
+<div id="view"><canvas id="canvas"></canvas><div id="status">Loading…</div><div id="face"></div><div id="bar"></div></div>
+<aside id="list"></aside>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
