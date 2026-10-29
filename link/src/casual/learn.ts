@@ -59,9 +59,17 @@ export async function learn(o: LearnOptions): Promise<LearnResult> {
         2000,
       ),
     )
+    // Nothing readable: try the same chat again next time, rather than judging it 0/10 and moving past it.
+    if (!Object.keys(reflection).length) return { skipped: 'the reflection was not JSON' }
     const facts = await memory.addFacts(strings(reflection.facts))
     if (typeof reflection.episode === 'string') await memory.addEpisode(reflection.episode, recent.at(-1)?.sid)
     await memory.updateNotes(strings(reflection.works), strings(reflection.avoid), strings(reflection.drop))
+    // Memories but no scores: keep what was remembered, judge nothing (missing scores would read as zeros).
+    if (!reflection.scores || typeof reflection.scores !== 'object') {
+      console.warn('[learn] the reflection had no scores; remembered, not judged')
+      await memory.setLearnState({ learned: state.learned + fresh.length, lastRunAt: Date.now() })
+      return { facts }
+    }
     const scores = Object.fromEntries(RUBRIC.map((k) => [k, num((reflection.scores as Record<string, unknown> | undefined)?.[k])]))
     const overall = num(reflection.overall) || RUBRIC.reduce((n, k) => n + scores[k], 0) / RUBRIC.length
     // A low score with no reasons given still gets a revision: the weakest rubric items stand in for them.

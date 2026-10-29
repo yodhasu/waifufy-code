@@ -46,6 +46,9 @@ A fix-up for casual mode's memory, and a smarter way back to work.
 **Memory that sticks**
 - **No more goldfish**: she kept two copies of her memory that saved over each other, so things she learned could vanish. Now there is one memory per character, shared by every session and the phone
 - **Casual mode reads the same conversation as work mode**: no more cutting old lines to a small window. When Claude Code compacts, casual follows from the same summary, and a resumed or rewound save gives both modes the same history
+- **Recall that works from the first memory**: she couldn't bring up her only fact, or one about someone every fact mentions. Now she can
+- **Details stick**: a fact with more detail replaces the short one instead of being thrown away as a repeat, and how often she uses a fact is saved, so the ones that matter are the ones she keeps
+- **Fair judging**: a reflection she couldn't read is tried again later, never scored 0/10 and used to rewrite her style
 
 **Back to work**
 - Switching from casual to work asks **Compact** or **Keep**, with **Save this option as default** (change it later in Settings → Casual → Back to work). Compact runs Claude Code's own \`/compact\`, told to keep the task and let the chit-chat be one line, while she tidies up her notes

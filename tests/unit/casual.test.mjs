@@ -1,7 +1,7 @@
 // Unit check of casual mode's pure parts (link/src/casual): the hidden <feel> line, her heart, memory lookup,
 // the shared context after a compaction, the casual block in the work transcript, and the OpenAI stream parser.
 // Run: node tests/unit/casual.test.mjs   (no app, no model).
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 process.env.WC_DATA_DIR = mkdtempSync(join(tmpdir(), 'wc-casual-'))
@@ -16,6 +16,7 @@ const { sse, claudeBlocks } = await import('../../link/src/casual/providers.ts')
 const { defaultSettings } = await import('../../link/src/settings.ts')
 const { loadContext, loadHistory } = await import('../../link/src/saves.ts')
 const { searchEntries, searchHistory } = await import('../../link/src/history-search.ts')
+const { learn } = await import('../../link/src/casual/learn.ts')
 
 let failures = 0
 async function test(name, fn) {
@@ -124,6 +125,54 @@ await test('memory: one character has one memory, so two openers never save over
   await session.addFacts(['They love ramen.'])
   const disk = JSON.parse(readFileSync(join(session.dir, 'facts.json'), 'utf8')).list.map((f) => f.text)
   eq(disk.length, 2, `both kept: ${disk}`)
+})
+
+await test('memory: her only fact, and a word every fact shares, are still recalled', async () => {
+  const one = openMemory('test-one')
+  await one.addFacts(['They play the cello.'])
+  eq(one.recall('how is the cello going'), ['They play the cello.'], 'the only fact')
+  const mia = openMemory('test-mia')
+  await mia.addFacts(['Their sister Mia lives in Osaka.', 'Their sister Mia is a nurse.', 'Their sister Mia loves cats.'])
+  eq(mia.recall('what about mia').length, 3, 'a word in every fact')
+  eq(mia.recall('quantum chromodynamics'), [], 'still nothing unrelated')
+})
+
+await test('memory: a fact with more detail replaces the short one; a drop removes only the note it restates', async () => {
+  const m = openMemory('test-detail')
+  await m.addFacts(['They have a sister.'])
+  eq(await m.addFacts(['Their sister Mia is getting married in Bali next June.']), 1, 'detail is new')
+  eq(m.facts().map((f) => f.text), ['Their sister Mia is getting married in Bali next June.'], 'replaced, not doubled')
+  eq(await m.addFacts(['Their sister is getting married.']), 0, 'already known')
+  await m.updateNotes(['Light teasing works well with them', 'Short replies land better late at night'], [], [])
+  await m.updateNotes([], [], ['teasing'])
+  eq(m.notes().works.length, 2, 'a one-word drop removes nothing')
+  await m.updateNotes([], [], ['light teasing works well'])
+  eq(m.notes().works, ['Short replies land better late at night'], 'a drop that restates the note removes it')
+})
+
+await test('memory: how often a fact is used is saved, not only counted', async () => {
+  const m = openMemory('test-uses')
+  await m.addFacts(['They play the cello.', 'Their cat is called Mochi.'])
+  m.recall('cello practice')
+  m.recall('the cello again')
+  await m.addEpisode('flush the write queue')
+  const disk = JSON.parse(readFileSync(join(m.dir, 'facts.json'), 'utf8')).list
+  eq(disk.find((f) => f.text.includes('cello')).uses, 2, 'uses on disk')
+})
+
+await test('learning: an unreadable judge reply is skipped, not scored 0/10, and the chat is read again next time', async () => {
+  const m = openMemory('test-learn')
+  for (let i = 0; i < 8; i++) await m.journal({ at: 1000 + i, you: `message ${i}`, her: `reply ${i}` })
+  process.env.WC_MOCK = '1'
+  try {
+    const r = await learn({ settings: defaultSettings(), memory: m, idleMs: 60_000, force: true })
+    eq(r.skipped, 'the reflection was not JSON', 'skipped')
+  } finally {
+    delete process.env.WC_MOCK
+  }
+  eq(m.learnState().learned, 0, 'nothing marked as learned')
+  eq(m.tune().rev, 0, 'style untouched')
+  ok(!existsSync(join(m.dir, 'judge-log.jsonl')), 'no 0/10 in the judge log')
 })
 
 await test('memory: words and overlap', () => {

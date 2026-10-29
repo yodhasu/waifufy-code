@@ -20,8 +20,9 @@ export type LearnState = { learned: number; lastRunAt: number }
 const MAX_FACTS = 400
 const MAX_EPISODES = 2000
 const MAX_NOTES = 12
-/** A fact this close (word overlap) to a stored one is the same fact. */
-const SAME_FACT = 0.7
+/** Known when this share of its words is already said by a stored one: nearly all, so one new word ("nurse" in
+ *  "Their sister Mia is a nurse" next to "Their sister Mia lives in Osaka") still makes it new. */
+const KNOWN = 0.9
 
 export const DEFAULT_TUNE: Tune = {
   rev: 0,
@@ -101,8 +102,11 @@ function loadMemory(dir: string, slug: string) {
       let added = 0
       for (const raw of list) {
         const text = clean(raw, 240)
-        if (!text || facts.some((f) => overlap(f.text, text) >= SAME_FACT)) continue
-        facts.push({ text, at: now, uses: 0 })
+        // Known when an old fact already says all of it; one that only adds detail takes the old one's place.
+        if (!text || facts.some((f) => covers(f.text, text) >= KNOWN)) continue
+        const older = facts.findIndex((f) => covers(text, f.text) >= KNOWN)
+        if (older >= 0) facts[older] = { text, at: now, uses: facts[older].uses }
+        else facts.push({ text, at: now, uses: 0 })
         added++
       }
       if (facts.length > MAX_FACTS) facts = [...facts].sort((a, b) => b.uses - a.uses || b.at - a.at).slice(0, MAX_FACTS)
@@ -120,10 +124,11 @@ function loadMemory(dir: string, slug: string) {
 
     /** Merges learned notes: new ones first, dropped ones removed, each list capped. */
     async updateNotes(works: string[], avoid: string[], drop: string[]) {
-      const gone = (s: string) => drop.some((d) => overlap(d, s) >= SAME_FACT)
+      // A drop removes a note only when it says what the note says, so "teasing" never takes every note with the word.
+      const gone = (s: string) => drop.some((d) => covers(d, s) >= KNOWN)
       const merge = (old: string[], add: string[]) => {
         const out = [...add.map((s) => clean(s, 200)).filter(Boolean), ...old].filter((s) => !gone(s))
-        return out.filter((s, i) => out.findIndex((x) => overlap(x, s) >= SAME_FACT) === i).slice(0, MAX_NOTES)
+        return out.filter((s, i) => out.findIndex((x) => covers(x, s) >= KNOWN) === i).slice(0, MAX_NOTES)
       }
       notes = { works: merge(notes.works, works), avoid: merge(notes.avoid, avoid) }
       await write('notes.json', notes)
@@ -179,13 +184,16 @@ function loadMemory(dir: string, slug: string) {
       const hits = [...pick(facts, maxFacts), ...pick(episodes, maxEpisodes)]
       const out: string[] = []
       let used = 0
+      let counted = false
       for (const h of hits) {
         const line = 'uses' in h ? h.text : `(${ago(h.at)}) ${h.text}`
         if (used + line.length > budget) continue
         out.push(line)
         used += line.length
-        if ('uses' in h) (h as Fact).uses++
+        if ('uses' in h) ((h as Fact).uses++, (counted = true))
       }
+      // Uses decide which facts stay when the list is full, so they're saved, not only counted.
+      if (counted) void write('facts.json', { list: facts }).catch((e) => console.warn(`[memory] ${slug}/facts.json: ${e}`))
       return out
     },
   }
@@ -208,7 +216,7 @@ export function words(text: string): string[] {
   return out
 }
 
-/** Indexes of `docs` that match `query` words, best first (BM25), and only those that match at all. */
+/** Indexes of `docs` that match `query` words, best first (BM25), and only those that match well enough. */
 export function rank(docs: string[], query: string[]): number[] {
   const k1 = 1.4
   const b = 0.75
@@ -227,7 +235,20 @@ export function rank(docs: string[], query: string[]): number[] {
     }
     return [i, s] as const
   })
-  return scores.filter(([, s]) => s > 0.3).sort((x, y) => y[1] - x[1]).map(([i]) => i)
+  // Relative, not a fixed floor: a fixed 0.3 hid the only fact she had (one document scores ~0.29 on a perfect
+  // match) and any word every memory shares. Within a quarter of the best keeps weak side matches out.
+  const best = Math.max(0, ...scores.map(([, s]) => s))
+  return scores.filter(([, s]) => s > 0 && s >= best * 0.25).sort((x, y) => y[1] - x[1]).map(([i]) => i)
+}
+
+/** Share of `b`'s words found in `a`: 1 when `a` already says everything `b` says. */
+export function covers(a: string, b: string) {
+  const x = new Set(words(a))
+  const y = new Set(words(b))
+  if (!y.size) return a.trim().toLowerCase() === b.trim().toLowerCase() ? 1 : 0
+  let n = 0
+  for (const w of y) if (x.has(w)) n++
+  return n / y.size
 }
 
 /** Share of the smaller set's words found in the other: 1 when one says what the other says. */
