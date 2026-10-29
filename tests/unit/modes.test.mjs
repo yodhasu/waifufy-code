@@ -151,6 +151,27 @@ try {
     await desk.next((x) => x.t === 'turn_end', 30_000)
   })
 
+  await test('back to work with compact: she tidies up, and the work session compacts', async () => {
+    desk.send({ t: 'chat_mode', mode: 'casual' })
+    ok((await desk.next((x) => x.t === 'chat_mode')).mode === 'casual', 'casual')
+    const at = desk.mark()
+    desk.send({ t: 'chat_mode', mode: 'work', compact: true })
+    ok((await desk.next((x) => x.t === 'chat_mode')).mode === 'work', 'work')
+    await desk.next((x) => x.t === 'notice' && x.kind === 'compact', 20_000)
+    ok(/tidy up my notes/.test(textOf(desk.since(at))), textOf(desk.since(at)))
+    await desk.next((x) => x.t === 'turn_end', 20_000)
+  })
+
+  await test('back to work without compact keeps the context', async () => {
+    desk.send({ t: 'chat_mode', mode: 'casual' })
+    await desk.next((x) => x.t === 'chat_mode')
+    const at = desk.mark()
+    desk.send({ t: 'chat_mode', mode: 'work' })
+    await desk.next((x) => x.t === 'aside')
+    await sleep(300)
+    ok(!desk.since(at).some((x) => x.t === 'notice' && x.kind === 'compact'), 'no compaction')
+  })
+
   await test('a phone that joins learns the current mode', async () => {
     const replay = desk.next((m) => m.t === 'chat_mode', 8000)
     desk.send({ t: 'attach' })

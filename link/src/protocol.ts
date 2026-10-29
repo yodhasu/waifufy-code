@@ -182,6 +182,8 @@ export type CasualSettings = {
   judgeThreshold: number
   /** Who reflects and judges: Claude, or the casual model itself. */
   learnWith: 'claude' | 'casual'
+  /** Back from casual to work: ask each time, or always compact (work starts from a summary) or keep the full context. */
+  toWork: 'ask' | 'compact' | 'keep'
 }
 
 export type Settings = {
@@ -425,7 +427,7 @@ export type ClientMsg =
   /** Posts as the signed-in person, in the thread `thread` when given; answered with `slack_sent`. */
   | { t: 'slack_send'; id: string; channel: string; text: string; thread?: string }
   /** Switches the running session between work and casual; refused (in character) while work is still running. */
-  | { t: 'chat_mode'; mode: ChatMode }
+  | { t: 'chat_mode'; mode: ChatMode; compact?: boolean }
   /** Stores the casual API key in the link (never in settings); an empty key removes it. */
   | { t: 'casual_key'; key: string }
   /** Desktop only: turns phone access on or off; answered (to every desktop window) with `remote_status`. */

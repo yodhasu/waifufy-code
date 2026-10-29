@@ -47,10 +47,40 @@ export default {
         assert((await app.text(T('mode-offer'))).includes('work mode'), 'the offer names work mode')
         const n = await app.mark()
         await app.click(T('mode-offer-yes'))
+        // Back to work asks first: compact or keep.
+        await app.waitVisible(T('mode-choice'))
+        await app.click(T('mode-choice-keep'))
         await app.waitSent('chat_mode', { mode: 'work' }, n)
         await app.waitSent('say', { text: 'please fix the login bug' }, n, 10_000)
         eq(await chatMode(app), 'work', 'back in work mode')
         await turnEnd(app, n)
+      },
+    },
+    {
+      r: 'R80',
+      name: 'back to work asks compact or keep; Compact with "save as default" compacts and stops asking',
+      async run({ app, project }) {
+        await newGame(app, project)
+        await fastText(app)
+        const w = await say(app, 'hello')
+        await turnEnd(app, w)
+        await toCasual(app)
+        for (const text of ['how was your day?', 'mine was long']) await turnEnd(app, await say(app, text))
+        let n = await app.mark()
+        await app.click(T('chat-mode'))
+        await app.waitVisible(T('mode-choice'))
+        await app.click(T('mode-choice-remember'))
+        await app.click(T('mode-choice-compact'))
+        await app.waitSent('chat_mode', { mode: 'work', compact: true }, n)
+        await app.waitEvent('notice', { kind: 'compact' }, n, 20_000)
+        await app.waitSent('settings_set', undefined, n, 5_000)
+        await turnEnd(app, n)
+        // Saved: the next return to work compacts without asking.
+        await toCasual(app)
+        n = await app.mark()
+        await app.click(T('chat-mode'))
+        await app.waitSent('chat_mode', { mode: 'work', compact: true }, n)
+        assert(!(await app.visible(T('mode-choice'))), 'no question once saved')
       },
     },
     {

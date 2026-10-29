@@ -30,6 +30,12 @@
   background: var(--panel); border: 1px solid var(--gold-soft); box-shadow: var(--panel-shadow); font-size: 13.5px; }
 .wci-offer[hidden] { display: none; }
 .wci-offer span { flex: 1; min-width: 0; }
+/* Back to work: compact or keep, with "save as default"; wraps on a phone. */
+.wci-choice { flex-wrap: wrap; }
+.wci-choice .wci-choices { flex: none; display: flex; gap: 8px; }
+.wci-remember { display: flex; align-items: center; gap: 6px; flex: none; cursor: pointer; }
+.wci-remember[hidden] { display: none; }
+.wci-remember small { font-size: 12px; opacity: 0.8; }
 /* The permission mode, where you look while typing; a click cycles it like Shift+Tab. */
 .wci-perm { flex: none; margin: 12px 0 0 12px; height: 23px; padding: 0 10px; border-radius: 999px; border: 1px solid currentColor;
   background: none; color: var(--gold-ink); font-size: 11.5px; font-weight: 700; white-space: nowrap; }

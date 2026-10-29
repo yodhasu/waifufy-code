@@ -1,6 +1,6 @@
 // Her casual-mode prompt. Built to be cheap: the system prompt only changes when settings or learning change, so
-// providers cache it; the history window moves in chunks, so its start (and the cached prefix) stays put for many
-// turns; and what changes every turn (time, mood, memories) rides in one short note on the newest message.
+// providers cache it; the history is the session's whole context (compaction is the work session's job), so its
+// start (and the cached prefix) stays put; and what changes every turn (time, mood, memories) rides in one short note on the newest message.
 
 import { AFFECTION_LEVELS, CONTEXT_TAG } from '../affection.ts'
 import { EMOTION_HINTS, presetRules, relationshipLine, styleLines, TAG_RATE, voiceSection } from '../persona.ts'
@@ -13,11 +13,6 @@ import type { Notes, Tune } from './memory.ts'
 /** One line of the shared history: either mode, either side, or a work action as one line. */
 export type PoolEntry = { mode: 'work' | 'casual'; who: 'user' | 'char' | 'tool'; text: string; at: number }
 
-/** History past this many characters is cut back to WINDOW_KEEP (oldest first), so the cut happens rarely. */
-export const WINDOW_MAX = 14_000
-export const WINDOW_KEEP = 8_000
-/** One history line is clipped to this; a long work report is not worth resending every turn. */
-const LINE_MAX = 600
 /** Her reply's token cap: plenty for chat, a hard stop for a runaway. */
 export const REPLY_MAX_TOKENS = 700
 
@@ -85,6 +80,7 @@ ${tools ? `
 - use_tools: your toolkit for what talking can't do: search the web, read a page, check ${you}'s Slack or connected apps, look at a file. Use it only when the conversation needs something you can't know, and say a short line first ("Let me look."). Describe exactly what you need. It only looks things up: never use it to work on their project (fixing, changing or building anything). For that, set work=1 and tell them you'll get on it once they switch you to work mode.
 - remember: keep something ${you} tells you about themselves that you'll want later (a birthday, a plan, someone's name).
 - recall: look up an older memory when they bring up something you should know.
+- search_history: find something said earlier in this session (in either mode) that isn't in the chat above anymore.
 ` : ''}${s.voice.language === 'ja' && voiceActive(s.voice) ? voiceSection(s, name, you).replace('Everything you write stays in English as above', 'Everything you write stays in English') : ''}
 ## Your style
 
@@ -95,18 +91,18 @@ ${tune.examples.map((e) => fill(e)).join('\n\n')}
 ${notes.works.length || notes.avoid.length ? `\n## What you've learned about chatting with ${you}\n\n${bullets(notes.works)}${notes.avoid.length ? `\n\nAvoid:\n${bullets(notes.avoid)}` : ''}\n` : ''}`
 }
 
-const clip = (s: string, n = LINE_MAX) => (s.length > n ? `${s.slice(0, n)}…` : s)
+const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s)
 
 /**
- * The history as chat messages from `start` on: casual lines as they were, work lines tagged [work], work actions
+ * The session's context as chat messages: casual lines as they were, work lines tagged [work], work actions
  * folded into her side as one line each. Consecutive lines of one side are joined (APIs want turns to alternate).
  */
-export function historyMessages(pool: PoolEntry[], start: number, shareWork: boolean): ChatMsg[] {
+export function historyMessages(pool: PoolEntry[], shareWork: boolean): ChatMsg[] {
   const out: ChatMsg[] = []
-  for (const e of pool.slice(start)) {
+  for (const e of pool) {
     if (e.mode === 'work' && !shareWork) continue
     const role = e.who === 'user' ? 'user' : 'assistant'
-    const text = e.who === 'tool' ? `[work] (did: ${clip(e.text, 160)})` : `${e.mode === 'work' ? '[work] ' : ''}${clip(e.text)}`
+    const text = e.who === 'tool' ? `[work] (did: ${clip(e.text, 160)})` : `${e.mode === 'work' ? '[work] ' : ''}${e.text}`
     const last = out.at(-1)
     if (last?.role === role) last.content += `\n${text}`
     else out.push({ role, content: text })
@@ -114,15 +110,6 @@ export function historyMessages(pool: PoolEntry[], start: number, shareWork: boo
   // A chat starts with the user's side; a leading reply of hers is context for the first message.
   if (out[0]?.role === 'assistant') out[0] = { role: 'user', content: `(Earlier, you said:)\n${out[0].content}` }
   return out
-}
-
-/** Where the window starts: unchanged until it holds more than WINDOW_MAX characters, then moved to keep WINDOW_KEEP. */
-export function windowStart(pool: PoolEntry[], start: number): number {
-  const size = (from: number) => pool.slice(from).reduce((n, e) => n + Math.min(e.text.length, LINE_MAX), 0)
-  if (size(start) <= WINDOW_MAX) return start
-  let at = start
-  while (at < pool.length - 1 && size(at) > WINDOW_KEEP) at++
-  return at
 }
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']

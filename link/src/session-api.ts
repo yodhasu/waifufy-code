@@ -45,8 +45,8 @@ export interface SessionApi {
   appendContext(text: string): void
   /** The permission check a side run (her casual toolkit) asks through: the same prompts as the session's own tools. */
   permit: CanUseTool
-  /** Work or casual (casual/modes.ts wraps every session with it). */
-  setChatMode?(mode: ChatMode): Promise<void>
+  /** Work or casual (casual/modes.ts wraps every session with it). `compact`: back to work from a summary. */
+  setChatMode?(mode: ChatMode, compact?: boolean): Promise<void>
 }
 
 export type SessionFactory = (opts: SessionOptions) => SessionApi

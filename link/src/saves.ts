@@ -452,14 +452,31 @@ async function beforeCompaction(id: string, cwd: string, chain: SessionMessage[]
  * command and `!` output, compactions and interruptions. Emotion tags are stripped; harness text is skipped.
  */
 /** The save's conversation for the backlog. `upTo`: stop after that entry (a rewind keeps no more). */
-export async function loadHistory(id: string, cwd: string, upTo?: string): Promise<HistoryEntry[]> {
+export function loadHistory(id: string, cwd: string, upTo?: string): Promise<HistoryEntry[]> {
+  return readConversation(id, cwd, upTo, false)
+}
+
+/** Every line of the session, compacted ones too, with no limit: what search_history searches. */
+export function loadAllHistory(id: string, cwd: string): Promise<HistoryEntry[]> {
+  return readConversation(id, cwd, undefined, false, Infinity)
+}
+
+/**
+ * What the model has in context now, which casual mode reads as its history: the last compaction's summary (as a
+ * casual-marked user line, so it is never hidden or tagged [work]) and everything after it, with no line limit.
+ */
+export function loadContext(id: string, cwd: string, upTo?: string): Promise<HistoryEntry[]> {
+  return readConversation(id, cwd, upTo, true)
+}
+
+async function readConversation(id: string, cwd: string, upTo: string | undefined, context: boolean, limit = HISTORY_LIMIT): Promise<HistoryEntry[]> {
   const full: SessionMessage[] = await getSessionMessages(id, { dir: cwd }).catch((e) => {
     console.warn(`[saves] getSessionMessages ${id}: ${errorText(e)}`)
     return []
   })
   const cut = upTo ? full.findIndex((m) => m.uuid === upTo) : -1
   const chain = cut >= 0 ? full.slice(0, cut + 1) : full
-  const messages = [...(await beforeCompaction(id, cwd, chain)), ...chain]
+  const messages = context ? chain : [...(await beforeCompaction(id, cwd, chain)), ...chain]
   const out: HistoryEntry[] = []
   const tools = new Map<string, ToolEntry>()
   const push = (e: HistoryEntry) => {
@@ -474,7 +491,8 @@ export async function loadHistory(id: string, cwd: string, upTo?: string): Promi
     if (m.parent_tool_use_id) continue
     // The summary is also flagged meta; the lines it replaced come from earlierChain().
     if (f.isCompactSummary) {
-      push({ who: 'system', text: COMPACTED })
+      const summary = context ? blocks((m.message as { content?: unknown } | undefined)?.content).map((b) => (b.type === 'text' ? b.text ?? '' : '')).join('\n').trim() : ''
+      push(summary ? { who: 'user', text: summary, mode: 'casual' } : { who: 'system', text: COMPACTED })
       continue
     }
     if (f.is_meta || f.isMeta) continue
@@ -518,7 +536,7 @@ export async function loadHistory(id: string, cwd: string, upTo?: string): Promi
       for (const l of lines) push(l)
     }
   }
-  return out.slice(-HISTORY_LIMIT)
+  return context ? out : out.slice(-limit)
 }
 
 // ---------------------------------------------------------------- display helpers

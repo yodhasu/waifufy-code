@@ -1,10 +1,11 @@
 // Unit check of casual mode's pure parts (link/src/casual): the hidden <feel> line, her heart, memory lookup,
-// the history window, the casual block in the work transcript, and the OpenAI stream parser.
+// the shared context after a compaction, the casual block in the work transcript, and the OpenAI stream parser.
 // Run: node tests/unit/casual.test.mjs   (no app, no model).
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 process.env.WC_DATA_DIR = mkdtempSync(join(tmpdir(), 'wc-casual-'))
+process.env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'wc-casual-cc-'))
 
 const { FeelParser, parseFeel, stripForPool } = await import('../../link/src/casual/engine.ts')
 const H = await import('../../link/src/casual/heart.ts')
@@ -13,6 +14,8 @@ const P = await import('../../link/src/casual/prompt.ts')
 const { casualBlock, parseCasual } = await import('../../link/src/casual/block.ts')
 const { sse, claudeBlocks } = await import('../../link/src/casual/providers.ts')
 const { defaultSettings } = await import('../../link/src/settings.ts')
+const { loadContext, loadHistory } = await import('../../link/src/saves.ts')
+const { searchEntries, searchHistory } = await import('../../link/src/history-search.ts')
 
 let failures = 0
 async function test(name, fn) {
@@ -113,6 +116,16 @@ await test('memory: lookup finds the matching fact, skips duplicates', async () 
   eq(m.recall('quantum chromodynamics'), [], 'nothing unrelated')
 })
 
+await test('memory: one character has one memory, so two openers never save over each other', async () => {
+  const session = openMemory('test-shared')
+  const startup = openMemory('test-shared')
+  ok(session === startup, 'same memory')
+  await startup.addFacts(['Their sister Mia visits in December.'])
+  await session.addFacts(['They love ramen.'])
+  const disk = JSON.parse(readFileSync(join(session.dir, 'facts.json'), 'utf8')).list.map((f) => f.text)
+  eq(disk.length, 2, `both kept: ${disk}`)
+})
+
 await test('memory: words and overlap', () => {
   eq(words('The ramen shops!'), ['ramen', 'shop'], 'words')
   ok(words('ラーメン').length === 3, 'CJK bigrams')
@@ -135,18 +148,51 @@ await test('history: work lines tagged, sides alternate, work hidden when not sh
     { mode: 'casual', who: 'user', text: 'thanks!', at: 0 },
     { mode: 'casual', who: 'char', text: 'Anytime.', at: 0 },
   ]
-  const m = P.historyMessages(pool, 0, true)
+  const m = P.historyMessages(pool, true)
   eq(m.map((x) => x.role), ['user', 'assistant', 'user', 'assistant'], 'roles')
   eq(m[1].content, '[work] (did: Bash npm test)\n[work] Fixed!', 'work folded')
-  eq(P.historyMessages(pool, 0, false).map((x) => x.content), ['thanks!', 'Anytime.'], 'not shared')
+  eq(P.historyMessages(pool, false).map((x) => x.content), ['thanks!', 'Anytime.'], 'not shared')
 })
 
-await test('history window moves in chunks, not every turn', () => {
-  const pool = Array.from({ length: 60 }, (_, i) => ({ mode: 'casual', who: i % 2 ? 'char' : 'user', text: 'x'.repeat(300), at: 0 }))
-  const s1 = P.windowStart(pool, 0)
-  ok(s1 > 0, 'cut once over the max')
-  pool.push({ mode: 'casual', who: 'user', text: 'y'.repeat(300), at: 0 })
-  eq(P.windowStart(pool, s1), s1, 'stays put on the next turn')
+await test('casual reads the context as work has it: the summary and what came after, not the compacted lines', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'wc-casual-cwd-'))
+  const id = '11111111-2222-3333-4444-555555555555'
+  const dir = join(process.env.CLAUDE_CONFIG_DIR, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'))
+  mkdirSync(dir, { recursive: true })
+  const base = { sessionId: id, cwd, version: '2.1.0', userType: 'external', isSidechain: false }
+  // The shape the CLI writes: the boundary links back with logicalParentUuid, the summary is a user line.
+  const lines = [
+    { ...base, type: 'user', uuid: 'a1', parentUuid: null, message: { role: 'user', content: 'old work request' } },
+    { ...base, type: 'assistant', uuid: 'a2', parentUuid: 'a1', message: { role: 'assistant', model: 'x', content: [{ type: 'text', text: 'old reply' }] } },
+    { ...base, type: 'system', subtype: 'compact_boundary', uuid: 'b1', parentUuid: null, logicalParentUuid: 'a2', content: 'Conversation compacted', compactMetadata: { trigger: 'auto', preTokens: 100 } },
+    { ...base, type: 'user', uuid: 's1', parentUuid: 'b1', isCompactSummary: true, isVisibleInTranscriptOnly: true, message: { role: 'user', content: 'Summary: they fixed the login bug together.' } },
+    { ...base, type: 'user', uuid: 'c1', parentUuid: 's1', message: { role: 'user', content: casualBlock('hey', 'hi!') } },
+  ]
+  writeFileSync(join(dir, `${id}.jsonl`), lines.map((l) => JSON.stringify(l)).join('\n') + '\n')
+  const context = await loadContext(id, cwd)
+  eq(context.map((e) => e.text), ['Summary: they fixed the login bug together.', 'hey', 'hi!'], 'context')
+  ok(context.every((e) => e.mode === 'casual'), 'summary never hidden or tagged [work]')
+  ok((await loadHistory(id, cwd)).some((e) => e.text === 'old reply'), 'the backlog still shows the compacted lines')
+  // search_history reaches what the compaction took out of context.
+  const found = await searchHistory(id, cwd, 'what was the old work request?', { you: 'Master', name: 'Rem' })
+  ok(found.includes('Master: old work request') && found.includes('Rem: old reply'), found)
+  eq(await searchHistory(undefined, cwd, 'anything', { you: 'Master', name: 'Rem' }), 'Nothing said yet in this session.', 'no session yet')
+})
+
+await test('search_history: best stretches, oldest first, never overlapping, nothing for no match', () => {
+  const n = { you: 'Master', name: 'Rem' }
+  const entries = [
+    ...Array.from({ length: 30 }, (_, i) => ({ who: i % 2 ? 'char' : 'user', text: `filler line number ${i}` })),
+    { who: 'user', text: 'the deploy to staging failed again', mode: 'casual' },
+    { who: 'tool', name: 'Bash', detail: 'npm run deploy:staging' },
+    { who: 'char', text: 'staging deploy is green now' },
+    ...Array.from({ length: 10 }, (_, i) => ({ who: 'user', text: `more filler ${i}` })),
+  ]
+  const out = searchEntries(entries, 'staging deploy', n)
+  ok(out.includes('Master (casual): the deploy to staging failed again') && out.includes('[tool] Bash npm run deploy:staging'), out)
+  const starts = [...out.matchAll(/--- lines (\d+)/g)].map((m) => Number(m[1]))
+  ok(starts.every((s, i) => i === 0 || s - starts[i - 1] >= 4), `overlap: ${starts}`)
+  eq(searchEntries(entries, 'quantum chromodynamics', n), 'Nothing found.', 'no match')
 })
 
 await test('the casual system prompt is stable and has her rules', () => {

@@ -39,27 +39,17 @@ run(`git push origin ${branch}`)
 const notes = join(tmpdir(), `waifufy-${tag}-notes.md`)
 writeFileSync(
   notes,
-  `Waifufy Code ${version}: work and casual
+  `Waifufy Code ${version}: one conversation, two ways to talk
 
-She's still the real Claude Code when you work, and now just herself when you don't.
+A fix-up for casual mode's memory, and a smarter way back to work.
 
-**Casual mode**
-- A **Work / Casual** switch next to the composer (or \`/casual\` and \`/work\`). Casual runs on its own small chat harness built for talking, not coding: short natural lines, no assistant voice, her own opinions and moods
-- **One history for both modes**: switch mid-session and she remembers everything, the work you did together and what you talked about after
-- **Any model**: GPT or anything OpenAI-compatible with your own key (Settings → Casual), or Claude through your subscription when there's no key. If the API fails, Claude steps in
-- **Cheap by design**: a compact prompt that stays cached between turns and a history window that moves in chunks, so a long evening of chatting costs cents
-- **Her toolkit**: when chat needs something talking can't give (the web, your Slack, a file), she hands it to Claude Code with your own tools and MCP servers. It only looks things up; real work offers to switch to work mode
-- She **won't switch while work is still running** (a turn, a background task or a helper agent): she asks you to wait, in character, and pressing on costs a little affection
+**Memory that sticks**
+- **No more goldfish**: she kept two copies of her memory that saved over each other, so things she learned could vanish. Now there is one memory per character, shared by every session and the phone
+- **Casual mode reads the same conversation as work mode**: no more cutting old lines to a small window. When Claude Code compacts, casual follows from the same summary, and a resumed or rewound save gives both modes the same history
 
-**Feelings and memory**
-- **Emotions she feels, not picks**: joy, sadness, anger, surprise and fear rise with what you say and settle back over time, at her personality's pace. Affection decides how hard things land. You never see the numbers, only her face, voice and words
-- **Long-term memory**: facts about you, moments in her own words, and what works with you, looked up locally for free and brought up naturally
-- **She learns after a quiet spell**: she reflects, a judge scores how she did, and below the bar a critic tunes only her chat style. The new style is kept only if it beats the old one on your real messages. Her character is never edited
-
-**Also**
-- Running background tasks show as a chip next to the party; click it for /tasks
-- Her "please wait" and mode-switch lines are their own lines now, never mixed into a work reply that's still streaming
-- A roomier composer on the phone, so the Work / Casual switch doesn't squeeze what you type
+**Back to work**
+- Switching from casual to work asks **Compact** or **Keep**, with **Save this option as default** (change it later in Settings → Casual → Back to work). Compact runs Claude Code's own \`/compact\`, told to keep the task and let the chit-chat be one line, while she tidies up her notes
+- **search_history**: she and Claude Code can both search every line said in the session, compacted ones too, so nothing you said is out of reach
 
 Install: \`Waifufy-Code-${version}-setup.exe\` on Windows, the \`.apk\` on Android (arm64).
 `,

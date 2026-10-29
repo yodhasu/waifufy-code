@@ -39,10 +39,20 @@ export const DEFAULT_TUNE: Tune = {
   ],
 }
 
-export type Memory = ReturnType<typeof openMemory>
+export type Memory = ReturnType<typeof loadMemory>
 
-export function openMemory(slug: string) {
+/** One memory per character for the whole link: every session and the startup reflection share it, so no copy
+ *  saves a stale list over what another one learned. */
+const open = new Map<string, Memory>()
+
+export function openMemory(slug: string): Memory {
   const dir = join(DATA_DIR, 'memory', slug || 'character')
+  let m = open.get(dir)
+  if (!m) open.set(dir, (m = loadMemory(dir, slug)))
+  return m
+}
+
+function loadMemory(dir: string, slug: string) {
   const file = (name: string) => join(dir, name)
   const read = <T>(name: string, fallback: T): T => {
     try {

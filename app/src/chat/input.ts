@@ -73,6 +73,11 @@ export type InputApi = {
   setChat(mode: 'work' | 'casual'): void
   /** Her offer to switch modes, as a bar over the composer; gone on either answer or the next message. */
   offer(text: string, onAccept: () => void): void
+  /**
+   * A question as a bar over the composer, like the offer: one button per choice, Cancel, and a "save as default"
+   * box when `remember` names it. `onPick` gets the choice and whether the box was ticked; Cancel calls nothing.
+   */
+  choose(text: string, choices: { id: string; label: string; primary?: boolean }[], remember: string | undefined, onPick: (id: string, remember: boolean) => void): void
 }
 
 /** True for events that come from the composer (see InputApi). */
@@ -221,6 +226,10 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
       <div class="wci-offer" data-test="mode-offer" hidden><span></span>
         <button type="button" class="btn primary" data-test="mode-offer-yes">Switch</button>
         <button type="button" class="btn" data-test="mode-offer-no">Not now</button></div>
+      <div class="wci-offer wci-choice" data-test="mode-choice" hidden><span></span>
+        <label class="wci-remember"><input type="checkbox" data-test="mode-choice-remember"><small></small></label>
+        <span class="wci-choices"></span>
+        <button type="button" class="btn" data-test="mode-choice-cancel">Cancel</button></div>
       <div class="wci-bar">
         <button type="button" class="wci-chat" data-test="chat-mode" data-chat="work" title="Work or casual chat with her"><b>⚙</b><small>WORK</small></button>
         <button type="button" class="wci-attach" data-test="chat-attach" title="Attach files or images (or paste / drop them)" aria-label="Attach files">${ICON_CLIP}</button>
@@ -247,7 +256,8 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
   const attachBtn = q<HTMLButtonElement>('.wci-attach')
   const permBtn = q<HTMLButtonElement>('.wci-perm')
   const chatBtn = q<HTMLButtonElement>('.wci-chat')
-  const offerEl = q('.wci-offer')
+  const offerEl = q('.wci-offer:not(.wci-choice)')
+  const choiceEl = q('.wci-choice')
   let chatMode: 'work' | 'casual' = 'work'
   let permShown = false
   const slashPop = q('.wci-slash')
@@ -844,6 +854,17 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
     ta.focus()
   })
   offerEl.querySelector('[data-test="mode-offer-no"]')!.addEventListener('click', () => (hideOffer(), ta.focus()))
+  let onChoice: ((id: string, remember: boolean) => void) | undefined
+  const rememberBox = choiceEl.querySelector<HTMLInputElement>('[data-test="mode-choice-remember"]')!
+  const hideChoice = () => ((choiceEl.hidden = true), (onChoice = undefined))
+  choiceEl.addEventListener('click', (e) => {
+    const b = (e.target as Element).closest<HTMLButtonElement>('button')
+    if (!b) return
+    const pick = onChoice
+    hideChoice()
+    if (b.dataset.choice) pick?.(b.dataset.choice, rememberBox.checked)
+    ta.focus()
+  })
   refreshSend()
 
   // ---------------------------------------------------------------- images (R17)
@@ -1119,11 +1140,26 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
       permBtn.hidden = mode === 'casual' || !permShown
       wrap.dataset.chat = mode
       hideOffer()
+      hideChoice()
     },
     offer(text, onAccept) {
       offerEl.querySelector('span')!.textContent = text
       offerYes = onAccept
       offerEl.hidden = false
+    },
+    choose(text, choices, label, onPick) {
+      choiceEl.querySelector('span')!.textContent = text
+      choiceEl.querySelector('.wci-choices')!.innerHTML = choices
+        .map((c) => `<button type="button" class="btn${c.primary ? ' primary' : ''}" data-choice="${c.id}" data-test="mode-choice-${c.id}"></button>`)
+        .join('')
+      choices.forEach((c, i) => (choiceEl.querySelectorAll<HTMLButtonElement>('[data-choice]')[i].textContent = c.label))
+      const box = choiceEl.querySelector<HTMLElement>('.wci-remember')!
+      box.hidden = !label
+      box.querySelector('small')!.textContent = label ?? ''
+      rememberBox.checked = false
+      onChoice = onPick
+      hideOffer()
+      choiceEl.hidden = false
     },
   }
 }

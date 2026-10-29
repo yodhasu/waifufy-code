@@ -5,13 +5,14 @@
 import { query, type CanUseTool } from '@anthropic-ai/claude-agent-sdk'
 import { AFFECTION_TAGS, type Mood as Closeness } from '../affection.ts'
 import type { Image, SessionEvent, Settings } from '../protocol.ts'
+import { searchHistory, SEARCH_HISTORY_DESCRIPTION } from '../history-search.ts'
 import { addressOf, defaultSettings } from '../settings.ts'
 import { TagParser } from '../session.ts'
 import { childEnv } from '../shell.ts'
 import { clip, describeTool, toolLabel, toolOutput } from '../tools.ts'
 import type { HeartBox } from './modes.ts'
 import type { Memory } from './memory.ts'
-import { casualSystem, contextNote, historyMessages, REPLY_MAX_TOKENS, windowStart, type PoolEntry } from './prompt.ts'
+import { casualSystem, contextNote, historyMessages, REPLY_MAX_TOKENS, type PoolEntry } from './prompt.ts'
 import { claudeProvider, mockCasual, pickProvider, type Provider, type ToolSpec, type Usage } from './providers.ts'
 
 /** Her appraisal of the user's message: joy, sadness, anger, surprise, fear (-1 – 1), confidence, a work request. */
@@ -133,7 +134,6 @@ export class CasualEngine {
   private o: EngineOptions
   private abort?: AbortController
   private queue: { text: string; images: Image[]; mood?: Closeness }[] = []
-  private start = 0
   private lastUserAt?: number
   private toolSeq = 0
   readonly usage: Usage = { input: 0, cached: 0, output: 0, calls: 0 }
@@ -181,8 +181,7 @@ export class CasualEngine {
     const memories = memory.recall(`${text} ${lastHer.slice(0, 200)}`)
     const tools = this.tools(s)
     const system = casualSystem(s, memory.tune(), memory.notes(), tools.length > 0)
-    this.start = windowStart(pool, this.start)
-    const history = historyMessages(pool, this.start, s.casual.shareWork)
+    const history = historyMessages(pool, s.casual.shareWork)
     const note = contextNote({
       now: new Date(),
       sinceLastMs: this.lastUserAt ? Date.now() - this.lastUserAt : undefined,
@@ -289,6 +288,12 @@ export class CasualEngine {
         description: 'Look up your older memories about the user or past chats.',
         params: { query: 'Words to look for.' },
         run: async (args) => memory.recall(args.query ?? '', 1500, 8, 4).join('\n') || 'Nothing comes to mind.',
+      },
+      {
+        name: 'search_history',
+        description: SEARCH_HISTORY_DESCRIPTION,
+        params: { query: 'Words to look for: names, topics, phrases.' },
+        run: (args) => searchHistory(this.o.sid(), this.o.cwd, args.query ?? '', { you: addressOf(s), name: this.name(s) }),
       },
     ]
   }

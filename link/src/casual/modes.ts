@@ -6,7 +6,7 @@ import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk'
 import { AFFECTION_TAGS, type Mood as Closeness } from '../affection.ts'
 import type { ChatMode, CtlOp, Image, PermissionModeName, SessionEvent, Settings } from '../protocol.ts'
 import { slugify } from '../research.ts'
-import { loadHistory } from '../saves.ts'
+import { loadContext } from '../saves.ts'
 import type { SessionApi, SessionFactory, SessionOptions } from '../session-api.ts'
 import { addressOf, defaultSettings } from '../settings.ts'
 import { voiceActive } from '../tts.ts'
@@ -72,6 +72,12 @@ const BLOCKED: Line[] = [
 ]
 const TO_CASUAL: Line = { text: "[smile] Work's all done? [happy] Then let's just talk for a while, {you}.", ja: 'お仕事、終わりましたか？じゃあ、少しお話ししましょう。' }
 const TO_WORK: Line = { text: '[nod] Back to work, then. [serious] Tell me what you need, {you}.', ja: 'はい、お仕事に戻りましょう。何をすればいいですか？' }
+const TO_WORK_COMPACT: Line = { text: '[nod] Back to work, then. [think] Let me tidy up my notes first… [serious] Tell me what you need, {you}.', ja: 'はい、お仕事に戻りましょう。メモを少し整理しますね。何をすればいいですか？' }
+
+/** Fewer lines than this in context aren't worth a compaction. */
+const COMPACT_MIN = 6
+/** What /compact is told when work resumes after casual chat: the old lines stay searchable (search_history). */
+const COMPACT_FOCUS = 'Back to work after a casual chat. Keep what matters for the work: the current task, its state, decisions and open items. Casual chat can be one line. Every earlier line stays searchable with the search_history tool.'
 
 class ModalSession implements SessionApi {
   readonly epoch: number
@@ -84,6 +90,7 @@ class ModalSession implements SessionApi {
   private pool: PoolEntry[] = []
   private engine: CasualEngine
   private seeded: Promise<void>
+  private compacted = false
   private workText = ''
   private workBusy = false
   private bgBusy = false
@@ -112,22 +119,29 @@ class ModalSession implements SessionApi {
       sid: () => this.inner.sessionId(),
       idle: () => this.armLearning(),
     })
-    // A resumed save brings its history (both modes) into the pool before anything new is said.
-    this.seeded = opts.resume
-      ? loadHistory(opts.resume, opts.cwd).then(
-          (h) => {
-            const at = Date.now()
-            const old: PoolEntry[] = h.flatMap((x): PoolEntry[] =>
-              x.who === 'tool' ? [{ mode: 'work', who: 'tool', text: `${x.name} ${x.detail}`.trim(), at }]
-                : x.who === 'system' ? []
-                  : [{ mode: x.mode === 'casual' ? 'casual' : 'work', who: x.who, text: x.text, at }],
-            )
-            this.pool.unshift(...old)
-          },
-          () => {},
-        )
-      : Promise.resolve()
+    // A resumed save brings its context (both modes) into the pool before anything new is said.
+    this.seeded = opts.resume ? this.reload(opts.resume, opts.resumeAt) : Promise.resolve()
     this.armLearning(30_000)
+  }
+
+  /**
+   * The pool becomes the session's context as the work session has it: the last compaction's summary and what
+   * came after. Both modes run on one history; only the loop that answers differs.
+   */
+  private reload(id: string, upTo?: string) {
+    return loadContext(id, this.cwd, upTo).then(
+      (h) => {
+        const at = Date.now()
+        const now: PoolEntry[] = h.flatMap((x): PoolEntry[] =>
+          x.who === 'tool' ? [{ mode: 'work', who: 'tool', text: `${x.name} ${x.detail}`.trim(), at }]
+            : x.who === 'system' ? []
+              : [{ mode: x.mode === 'casual' ? 'casual' : 'work', who: x.who, text: x.text, at }],
+        )
+        // Nothing read (no transcript yet, or it couldn't be read) keeps what she has rather than forgetting it all.
+        if (now.length) this.pool.splice(0, this.pool.length, ...now)
+      },
+      () => {},
+    )
   }
 
   /** Events of the work session: watched for what's still running and for the shared history, then passed on. */
@@ -136,10 +150,16 @@ class ModalSession implements SessionApi {
       case 'state':
         this.workBusy = e.state !== 'idle'
         break
-      case 'turn_end':
+      case 'turn_end': {
         this.workBusy = false
         this.endWorkText()
+        const id = this.compacted ? this.inner.sessionId() : undefined
+        if (id) {
+          this.compacted = false
+          this.seeded = this.seeded.then(() => this.reload(id))
+        }
         break
+      }
       case 'text':
         this.workText += e.delta
         break
@@ -155,6 +175,10 @@ class ModalSession implements SessionApi {
       case 'agent':
         if (e.status === 'running') this.agents.set(e.id, true)
         else this.agents.delete(e.id)
+        break
+      case 'notice':
+        // The work session compacted: casual follows from the same summary once the turn is written out.
+        if (e.kind === 'compact') this.compacted = true
         break
       case 'affection':
         // Praise at work warms her heart too; unkindness stings.
@@ -182,7 +206,7 @@ class ModalSession implements SessionApi {
     this.opts.emit({ t: 'aside', text: l.text.replaceAll('{you}', addressOf(s)), ...(ja ? { voice: l.ja } : {}) })
   }
 
-  async setChatMode(mode: ChatMode) {
+  async setChatMode(mode: ChatMode, compact = false) {
     if (mode === this.mode) return this.opts.emit({ t: 'chat_mode', mode })
     if (mode === 'casual' && this.busyAtWork()) {
       const now = Date.now()
@@ -200,7 +224,10 @@ class ModalSession implements SessionApi {
     this.mode = mode
     this.strikes = []
     this.opts.emit({ t: 'chat_mode', mode })
-    this.line(mode === 'casual' ? TO_CASUAL : TO_WORK)
+    // Work after a casual break is usually a new task or an update on one: it can start from a summary.
+    const tidy = mode === 'work' && compact && this.pool.length >= COMPACT_MIN
+    this.line(mode === 'casual' ? TO_CASUAL : tidy ? TO_WORK_COMPACT : TO_WORK)
+    if (tidy) this.inner.say(`/compact ${COMPACT_FOCUS}`)
   }
 
   private armLearning(ms?: number) {
@@ -229,7 +256,8 @@ class ModalSession implements SessionApi {
     const command = text.trim().toLowerCase()
     if (command === '/casual' || command === '/work') return void this.setChatMode(command === '/casual' ? 'casual' : 'work')
     // Slash commands stay Claude Code's in either mode (/model, /compact…).
-    if (this.mode === 'casual' && !command.startsWith('/')) return this.engine.say(text, images, mood)
+    // After the context is (re)loaded, so a reply right after a /compact reads the summary.
+    if (this.mode === 'casual' && !command.startsWith('/')) return void this.seeded.then(() => this.engine.say(text, images, mood))
     if (text.trim() && !text.startsWith('/')) this.pool.push({ mode: 'work', who: 'user', text, at: Date.now() })
     const feelNote = this.heart.guide(true)
     this.inner.say(text, images, now, mood ? { ...mood, ...(feelNote ? { feel: feelNote } : {}) } : mood)

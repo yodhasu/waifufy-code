@@ -41,7 +41,8 @@ import {
 } from './protocol.ts'
 import type { SessionApi, SessionFactory, SessionOptions } from './session-api.ts'
 import { ATTACH_DIR } from './attachments.ts'
-import { addressOf } from './settings.ts'
+import { HISTORY_SERVER, HISTORY_TOOL_NAMES, historyServer } from './history-search.ts'
+import { addressOf, defaultSettings } from './settings.ts'
 import { status as slackStatus } from './slack.ts'
 import { SLACK_SERVER, SLACK_TOOL_NAMES, slackServer, type SendVerdict } from './slack-tools.ts'
 import { bashModeMessages, childEnv, runShell } from './shell.ts'
@@ -569,11 +570,17 @@ class Session implements SessionApi {
       stderr: (d) => this.onStderr(d),
       canUseTool: (name, input, o) => this.ask(name, input, o),
       onElicitation: (request, o) => this.elicit(request, o.signal),
-      // Her Slack tools, while the app is signed in to Slack (signing in mid-session adds them from the next one).
-      // They skip the CLI's prompt: reading needs no approval, and `send` asks the person itself, in every mode.
-      ...(slackStatus().signedIn
-        ? { mcpServers: { [SLACK_SERVER]: slackServer((o) => this.confirmSend(o)) }, allowedTools: SLACK_TOOL_NAMES }
-        : {}),
+      // search_history over this session's every line, and her Slack tools while the app is signed in to Slack
+      // (signing in mid-session adds them from the next one). None asks through the CLI's prompt: reading needs no
+      // approval, and Slack's `send` asks the person itself, in every mode.
+      mcpServers: {
+        [HISTORY_SERVER]: historyServer(() => {
+          const s = this.opts.settings
+          return { id: this.sessionId(), cwd: this.cwd, you: addressOf(s), name: s.waifu.name.trim() || defaultSettings().waifu.name }
+        }),
+        ...(slackStatus().signedIn ? { [SLACK_SERVER]: slackServer((o) => this.confirmSend(o)) } : {}),
+      },
+      allowedTools: [...HISTORY_TOOL_NAMES, ...(slackStatus().signedIn ? SLACK_TOOL_NAMES : [])],
     }
   }
 

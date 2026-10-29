@@ -839,7 +839,31 @@ export function chatScreen(): Screen {
 
   function toggleChat() {
     if (!live || ended) return
-    ctx.link.send({ t: 'chat_mode', mode: chatMode === 'work' ? 'casual' : 'work' })
+    switchChat(chatMode === 'work' ? 'casual' : 'work')
+  }
+
+  /**
+   * Asks the link to switch. Back to work from casual compacts or keeps the context: as saved in settings, or asked
+   * here with "save as default". `before` runs only once the switch is really asked for (not on Cancel).
+   */
+  function switchChat(next: ChatMode, before?: () => void) {
+    const send = (compact: boolean) => {
+      before?.()
+      ctx.link.send({ t: 'chat_mode', mode: next, ...(compact ? { compact } : {}) })
+    }
+    const saved = settings().casual.toWork
+    if (next !== 'work' || chatMode !== 'casual') return send(false)
+    if (saved !== 'ask') return send(saved === 'compact')
+    input.choose(
+      'Back to work. Compact the chat first? Work starts from a summary, and every line stays searchable.',
+      [{ id: 'compact', label: 'Compact', primary: true }, { id: 'keep', label: 'Keep' }],
+      'Save this option as default',
+      (id, remember) => {
+        const choice = id === 'compact' ? 'compact' : 'keep'
+        if (remember) ctx.store.update((s) => void (s.casual.toWork = choice))
+        send(choice === 'compact')
+      },
+    )
   }
 
   function cycleMode() {
@@ -1356,10 +1380,7 @@ export function chatScreen(): Screen {
         if (m.mode === chatMode || replaying) return
         return input.offer(
           m.mode === 'work' ? `${charName()} thinks this is work. Switch to work mode${m.text ? ' and send it there' : ''}?` : `Just chatting? Switch to casual mode with ${charName()}?`,
-          () => {
-            offered = { mode: m.mode, text: m.text }
-            ctx.link.send({ t: 'chat_mode', mode: m.mode })
-          },
+          () => switchChat(m.mode, () => (offered = { mode: m.mode, text: m.text })),
         )
       case 'hook':
         return onHook(m)

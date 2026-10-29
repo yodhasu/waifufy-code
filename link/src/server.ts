@@ -708,7 +708,7 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       return current?.session?.interrupt()
     case 'chat_mode':
       need(m.mode === 'work' || m.mode === 'casual', 'mode')
-      return live().setChatMode?.(m.mode)
+      return live().setChatMode?.(m.mode, m.compact === true)
     case 'mode':
       need(MODES.includes(m.mode), 'mode')
       return live().setMode(m.mode)

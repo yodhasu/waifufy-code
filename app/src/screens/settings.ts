@@ -79,7 +79,7 @@ const DEFAULTS: {
   },
   casual: {
     provider: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-6-luna', reasoningEffort: 'none', claudeModel: 'sonnet',
-    toolModel: 'haiku', shareWork: true, learning: true, idleMin: 60, judgeThreshold: 7, learnWith: 'claude',
+    toolModel: 'haiku', shareWork: true, learning: true, idleMin: 60, judgeThreshold: 7, learnWith: 'claude', toWork: 'ask',
   },
 }
 
@@ -673,6 +673,11 @@ const CASUAL_PROVIDERS: Opt[] = [
   { v: 'openai', label: 'OpenAI-compatible API', hint: 'GPT, OpenRouter, a local server… with your key. Without a key, Claude answers.' },
   { v: 'claude', label: 'Claude', hint: 'Through your Claude subscription, stripped of Claude Code: no extra key or bill.' },
 ]
+const TO_WORK: Opt[] = [
+  { v: 'ask', label: 'Ask', hint: 'Ask each time you switch back to work' },
+  { v: 'compact', label: 'Compact', hint: 'Work starts from a summary of the chat' },
+  { v: 'keep', label: 'Keep', hint: 'Work keeps the full context' },
+]
 const LEARN_WITH: Opt[] = [
   { v: 'claude', label: 'Claude', hint: 'Reflects and judges on your subscription' },
   { v: 'casual', label: 'The casual model', hint: 'Uses the same API as casual chat' },
@@ -695,14 +700,16 @@ function casualPane() {
         row('Model', text('casual.model', 'placeholder="gpt-6-luna"')) +
         row('Reasoning effort', text('casual.reasoningEffort', 'placeholder="none"'), 'Sent as reasoning_effort when set') +
         row('Claude model', text('casual.claudeModel', 'placeholder="sonnet"'), 'When Claude answers') +
-        note('Casual mode is a much smaller harness than Claude Code: her own prompt, short replies, and a history window that stays cached between turns, so a long evening of chatting costs cents, not dollars.'),
+        note('Casual mode is a much smaller harness than Claude Code: her own prompt and short replies, on the same history as work mode. The history stays cached between turns, so a long evening of chatting costs cents, not dollars.'),
       'wide',
     )}
     ${card(
       'Tools and work',
       row('Toolkit model', text('casual.toolModel', 'placeholder="haiku"'), 'Claude Code with your tools and MCP servers') +
         note('When casual chat needs something talking cannot give (the web, your Slack, a file), she hands it to Claude Code with your own tools and MCP servers, then answers from its report. It only looks things up and never edits files; asking for real work offers to switch to work mode.') +
-        toggle('casual.shareWork', 'Work lines in casual chat', "She remembers this session's work conversation in casual mode. Off keeps your work out of the casual model's requests."),
+        toggle('casual.shareWork', 'Work lines in casual chat', "She remembers this session's work conversation in casual mode. Off keeps your work out of the casual model's requests.") +
+        row('Back to work', seg('casual.toWork', TO_WORK), 'Compact: work starts from a summary') +
+        note('Either way, every earlier line of the session stays searchable: she and Claude Code both have a <code>search_history</code> tool.'),
       'wide',
     )}
     ${card(
