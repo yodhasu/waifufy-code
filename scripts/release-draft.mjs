@@ -55,6 +55,12 @@ writeFileSync(
 **Low-spec mode** (Settings → Phone, on the phone)
 - No character at all, and the chat becomes a chat room. Her voice still reads every line, and everything else works
 
+**Also new since 0.7.2** (0.8.0–0.8.2, released here for the first time)
+- **Waifu cards** (Settings → Cards): each character is a card with her persona, presets, model, voice and her own love meter; swap between sessions, export and import
+- **Her in 3D**: a card can draw her as an MMD model (\`.pmx\`) with physics, expressions, breathing, headpats, wheel zoom and a camera you can turn; phones get lighter textures
+- **Her voice** learns how to say her name (Settings → Voice → Pronunciation), and research writes that for you
+- **Messages while she works** as in the CLI: Enter reaches her at her next step, Ctrl+Enter sends now, Ctrl+X Enter waits for her turn, Ctrl+S stashes
+
 Install: \`Waifufy-Code-${version}-setup.exe\` on Windows, the \`.apk\` on Android (arm64).
 `,
 )
