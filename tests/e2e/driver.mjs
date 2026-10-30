@@ -816,7 +816,8 @@ export function seedSettings(patch) {
  * A phone (phone access): its own headless Chrome at phone size with touch, loading the app as a phone paired by
  * `pair` (a waifufy-code://pair link). Close it with `close()` like any app.
  */
-export async function openPhone(pair, { viewport = '412x915@2.625' } = {}) {
+/** `boot: false` hands the phone over before its first screen (one still waiting for its computer, say). */
+export async function openPhone(pair, { viewport = '412x915@2.625', boot = true } = {}) {
   const port = CDP_PORT + 1
   const dataDir = mkdtempSync(join(tmpdir(), 'wc-phone-'))
   const browser = BROWSERS.find((b) => existsSync(b))
@@ -836,7 +837,7 @@ export async function openPhone(pair, { viewport = '412x915@2.625' } = {}) {
     const url = `${VITE_URL}?pair=${encodeURIComponent(pair)}`
     const cdp = await prepare(page, url, viewport)
     const app = new App({ cdp, dataDir, procs: [proc], target: 'browser' })
-    await bootWait(app, cdp, url)
+    if (boot) await bootWait(app, cdp, url)
     return app
   } catch (e) {
     killTree(proc)

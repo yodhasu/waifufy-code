@@ -13,6 +13,7 @@ import { DEFAULT_VOICE_ID, REM_VOICE_STYLE } from '../../../link/src/voice-style
 import { SLACK_MANIFEST, SLACK_REDIRECT_URL } from '../../../link/src/slack-app.ts'
 import type { Ctx, Screen } from '../contracts'
 import { clearPairing, savedPairing } from '../pair'
+import { lowSpec, setLowSpec } from '../lowspec'
 import { esc } from '../ui'
 import { CUSTOM_PERSONALITY, PERSONALITIES, personalityById } from './personas'
 import './settings.css'
@@ -826,10 +827,17 @@ function phonePane() {
             </div>
           </div>
         </div>` +
-        note('The code holds a password for this computer: only show it to your own phone. A new pairing code disconnects every phone. The first time, Windows may ask whether Waifufy Code may use the network: allow private networks. Away from home, Tailscale on both devices keeps it working.') +
+        note('The code lets a phone in: only show it to your own. Each phone that scans it gets a key of its own and stays paired for good, so it reconnects by itself and never needs this screen again; a new pairing code only changes what new phones scan. The first time, Windows may ask whether Waifufy Code may use the network: allow private networks. Away from home, Tailscale on both devices keeps it working.') +
+        `<div class="set-devices" data-phone-devices hidden>
+          <h5>Paired phones</h5>
+          <div data-test="phone-devices"></div>
+          ${note('Remove a phone you no longer use (or lost): it is disconnected and can only come back by scanning the code.')}
+        </div>` +
         `</div>` +
         `<div data-phone-remote hidden>
           <p class="set-voice-status" data-phone-paired data-test="phone-paired"></p>
+          <label class="set-toggle"><input type="checkbox" data-lowspec data-test="set-phone.lowspec"><i></i>
+            <span><b>Low-spec mode</b><small>No character on this phone: a chat room instead of the visual novel. Her voice still reads each line, and everything else works. Much lighter on a slower phone. This phone only.</small></span></label>
           <div class="set-actions"><button class="btn" type="button" data-act="phone-unpair" data-test="set-phone.unpair">Unpair this phone</button></div>
           ${note('Settings here are your computer\'s: changes apply there too.')}
         </div>`,
@@ -1603,6 +1611,7 @@ export function settingsScreen(): Screen {
     if (remote) {
       const p = savedPairing()
       q('[data-phone-paired]').textContent = `☏ Paired with your computer${p ? ` at ${p.hosts[0]}` : ''}`
+      q<HTMLInputElement>('[data-lowspec]').checked = lowSpec()
       return
     }
     const st = phone
@@ -1614,6 +1623,20 @@ export function settingsScreen(): Screen {
       : st.error
         ? `☏ Couldn't start: ${st.error}`
         : `☏ On · ${st.clients ? `${st.clients} phone${st.clients === 1 ? '' : 's'} connected` : 'waiting for your phone'} · ${st.addresses.map((a) => `${a}:${st.port}`).join(' · ') || 'no network address'}`
+    const devices = st?.devices ?? []
+    q('[data-phone-devices]').hidden = !st?.enabled || !devices.length
+    const ago = (t: number) => {
+      const m = Math.round((Date.now() - t) / 60_000)
+      return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`
+    }
+    paint(
+      q('[data-test="phone-devices"]'),
+      devices
+        .map((d) => `<div class="set-device" data-test="phone-device" data-id="${esc(d.id)}">
+          <span><b>${esc(d.name)}</b><small>${d.online ? '● connected' : `last seen ${ago(d.lastSeen)}`} · paired ${new Date(d.pairedAt).toLocaleDateString()}</small></span>
+          <button class="btn" type="button" data-act="phone-forget" data-id="${esc(d.id)}" data-test="phone-forget">Remove</button></div>`)
+        .join(''),
+    )
     const pairing = !!(st?.listening && st.pairUrl)
     q('[data-phone-pair]').hidden = !pairing
     const qr = q('[data-phone-qr]')
@@ -1917,8 +1940,15 @@ export function settingsScreen(): Screen {
         )
       case 'phone-reset':
         return void ctx
-          .confirm('New pairing code?', 'Every paired phone is disconnected and has to scan the new code.', 'New code', 'Keep this one')
+          .confirm('New pairing code?', 'New phones scan the new code. Phones already paired stay paired: remove one below to cut it off.', 'New code', 'Keep this one')
           .then((yes) => yes && ctx.link.send({ t: 'remote_reset' }))
+      case 'phone-forget': {
+        const d = phone?.devices.find((x) => x.id === el.dataset.id)
+        if (!d) return
+        return void ctx
+          .confirm(`Remove ${d.name}?`, 'It is disconnected now, and can only connect again by scanning the pairing code.', 'Remove', 'Keep')
+          .then((yes) => yes && ctx.link.send({ t: 'remote_forget', id: d.id }))
+      }
       case 'phone-unpair':
         clearPairing()
         return location.reload()
@@ -2030,6 +2060,8 @@ export function settingsScreen(): Screen {
       // Phone access isn't a setting (its state and token live in the link): the switch asks the link directly.
       root.addEventListener('change', (e) => {
         const t = e.target as HTMLInputElement
+        // Low-spec mode is this phone's own: it reloads the app into the other mode.
+        if (t.dataset.lowspec !== undefined) return setLowSpec(t.checked)
         if (t.dataset.phoneEnabled === undefined) return
         ctx.link.send({ t: 'remote_set', enabled: t.checked })
         if (t.checked) react('happy')

@@ -47,6 +47,37 @@ export function clearPairing() {
 
 const inTauri = () => '__TAURI_INTERNALS__' in window
 
+/**
+ * While a paired phone can't reach its computer at launch: says so and keeps the pairing (link.ts keeps trying every
+ * address). "Pair again" is there for a computer that really changed; nothing forces it.
+ */
+export function waitForComputer(hosts: string[], repair: () => void) {
+  const stage = document.getElementById('stage') ?? document.body
+  const el = document.createElement('div')
+  el.className = 'pair'
+  el.dataset.test = 'pair-waiting'
+  el.innerHTML = `
+    <div class="pair-box panel">
+      <h2>Waiting for your computer…</h2>
+      <p class="pair-note">Trying <b data-hosts></b>. This phone stays paired and keeps trying on its own: it connects as soon as
+        Waifufy Code on your computer is reachable, over your Wi-Fi or Tailscale.</p>
+      <p class="pair-note">Is Waifufy Code running there (it stays in the tray when you close its window), with phone access on?</p>
+      <p class="pair-error" data-test="pair-waiting-tries"></p>
+      <button class="btn" type="button" data-act="repair" data-test="pair-again">Pair again</button>
+    </div>`
+  el.querySelector<HTMLElement>('[data-hosts]')!.textContent = hosts.join(', ')
+  el.addEventListener('click', (e) => {
+    if ((e.target as HTMLElement).closest('[data-act="repair"]')) repair()
+  })
+  stage.append(el)
+  return {
+    update(tries: number) {
+      el.querySelector<HTMLElement>('[data-test="pair-waiting-tries"]')!.textContent = `Still trying… (${tries})`
+    },
+    close: () => el.remove(),
+  }
+}
+
 /** Thrown when the person cancels a scan: not an error to show. */
 class Cancelled extends Error {}
 

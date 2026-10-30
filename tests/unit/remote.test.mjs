@@ -110,15 +110,20 @@ try {
 
   const t = () => pair.searchParams.get('t')
   let phone
+  let device
   await test('a paired phone connects, says hello without ending the desktop session, and may not manage phone access', async () => {
     desk.send({ t: 'trust_accept', cwd: project })
     await desk.next((m) => m.t === 'trust' && m.trusted)
     desk.send({ t: 'start', epoch: 1, cwd: project })
     await desk.next((m) => m.t === 'ready' && m.epoch === 1, 10_000)
     phone = await client(`ws://127.0.0.1:47934/?token=${encodeURIComponent(t())}`)
+    // Paired with the code: it gets a token of its own at once.
+    device = (await phone.next((m) => m.t === 'paired')).token
+    ok(device && device !== t(), 'a device token of its own')
     phone.send({ t: 'hello' })
     const hello = await phone.next((m) => m.t === 'hello')
     ok(hello.remote === true, 'the phone is told it is remote')
+    ok(Array.isArray(hello.addresses), 'the phone is told the computer\'s addresses')
     await sleep(300)
     ok(!desk.got.some((m) => m.t === 'ended'), 'the desktop session still runs')
     phone.send({ t: 'remote_set', enabled: false })
@@ -159,13 +164,32 @@ try {
     ok(att.epoch === undefined, 'no epoch')
   })
 
-  await test('a new pairing token drops connected phones', async () => {
-    const closed = new Promise((r) => phone.ws.on('close', (code) => r(code)))
+  await test('a new pairing code keeps paired phones: the old code is refused, the device token still works', async () => {
+    const oldCode = t()
+    desk.clear()
     desk.send({ t: 'remote_reset' })
+    const st = await desk.next((m) => m.t === 'remote_status')
+    pair = new URL(st.status.pairUrl)
+    ok(t() !== oldCode, 'a new code')
+    await sleep(300)
+    ok(phone.ws.readyState === 1, 'the paired phone stays connected')
+    let err
+    await client(`ws://127.0.0.1:47934/?token=${encodeURIComponent(oldCode)}`).catch((e) => (err = e))
+    ok(err?.message.includes('401'), 'the old code is refused')
+    const again = await client(`ws://127.0.0.1:47934/?token=${encodeURIComponent(device)}`)
+    again.ws.close()
+    const listed = st.status.devices
+    ok(listed.length === 1 && listed[0].online && !('token' in listed[0]), `listed without its token: ${JSON.stringify(listed)}`)
+  })
+
+  await test('removing a device disconnects it as unpaired and refuses its token', async () => {
+    const id = (await (desk.clear(), desk.send({ t: 'remote_status' }), desk.next((m) => m.t === 'remote_status'))).status.devices[0].id
+    const closed = new Promise((r) => phone.ws.on('close', (code) => r(code)))
+    desk.send({ t: 'remote_forget', id })
     ok((await closed) === 4001, 'closed as unpaired')
     let err
-    await client(`ws://127.0.0.1:47934/?token=${encodeURIComponent(t())}`).catch((e) => (err = e))
-    ok(err?.message.includes('401'), 'the old token is refused')
+    await client(`ws://127.0.0.1:47934/?token=${encodeURIComponent(device)}`).catch((e) => (err = e))
+    ok(err?.message.includes('401'), 'its token is refused')
   })
 
   await test('turning it off stops the listener', async () => {

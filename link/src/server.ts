@@ -24,7 +24,9 @@ import { characterSlug, moodVoiceSpeed, withModes } from './casual/modes.ts'
 import { hasCasualKey, setCasualKey } from './casual/providers.ts'
 import { DATA_DIR, loadSettings, saveSettings } from './settings.ts'
 import * as slack from './slack.ts'
-import { addresses, REMOTE_PORT, remoteEnabled, remoteStatus, remoteTokenOk, resetRemoteToken, setRemoteEnabled } from './remote.ts'
+import {
+  addDevice, addresses, deviceName, phoneAuth, REMOTE_PORT, remoteEnabled, remoteStatus, removeDevice, resetRemoteToken, sawDevice, setRemoteEnabled,
+} from './remote.ts'
 import { acceptTrust, isTrusted, trustConcerns } from './trust.ts'
 
 // The Tauri app starts this process with a free port and a token, and closes stdin when it quits.
@@ -220,7 +222,11 @@ setInterval(() => {
 let phones: { http: ReturnType<typeof createServer>; wss: WebSocketServer } | undefined
 let phoneError: string | undefined
 
-const phoneStatus = () => remoteStatus(!!phones, phones?.wss.clients.size ?? 0, phoneError)
+/** Which paired device each phone socket is. */
+const deviceOf = new WeakMap<WebSocket, string>()
+const phoneStatus = () =>
+  remoteStatus(!!phones, phones?.wss.clients.size ?? 0, phoneError, new Set([...(phones?.wss.clients ?? [])].map((s) => deviceOf.get(s)).filter((id): id is string => !!id)))
+const tokenOf = (req: IncomingMessage) => new URL(req.url ?? '/', 'http://link').searchParams.get('token') ?? ''
 
 /** Starts or stops the phone listener to match the setting; reports the outcome to the desktop windows. */
 async function syncPhones() {
@@ -235,10 +241,21 @@ async function syncPhones() {
       server,
       // Over Wi-Fi or Tailscale: a joining phone's replay can be megabytes of text, which compresses well.
       perMessageDeflate: { threshold: 1024 },
-      verifyClient: ({ req }: { req: IncomingMessage }) => remoteTokenOk(new URL(req.url ?? '/', 'http://link').searchParams.get('token') ?? ''),
+      // A paired device's own token, or the pairing code's (a phone pairing now). Everyone else is turned away.
+      verifyClient: ({ req }: { req: IncomingMessage }) => phoneAuth(tokenOf(req)) !== undefined,
     })
-    pws.on('connection', (ws) => {
+    pws.on('connection', (ws, req) => {
       remoteSockets.add(ws)
+      const auth = phoneAuth(tokenOf(req))
+      if (auth && auth !== 'pair') (deviceOf.set(ws, auth.device.id), sawDevice(auth.device.id))
+      // Paired with the code: it gets a token of its own, so a new code later never unpairs it.
+      if (auth === 'pair') {
+        void addDevice(deviceName(req.headers['user-agent'])).then((d) => {
+          deviceOf.set(ws, d.id)
+          sendTo(ws, { t: 'paired', token: d.token })
+          broadcastLocal({ t: 'remote_status', status: phoneStatus() })
+        }, (e) => console.warn('[remote] could not pair a phone:', e))
+      }
       alive.set(ws, true)
       ws.on('pong', () => alive.set(ws, true))
       serve(ws)
@@ -683,6 +700,7 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       return sendTo(ws, {
         t: 'hello', version: VERSION, settings: await loadSettings(), auth: await auth.get(), dataDir: DATA_DIR, voiceKey: hasVoiceKey(), casualKey: hasCasualKey(), slack: slack.status(),
         remote: remoteSockets.has(ws),
+        ...(remoteSockets.has(ws) ? { addresses: addresses() } : {}),
       })
     case 'settings_set': {
       need(m.settings && typeof m.settings === 'object' && m.settings.version === 1, 'settings')
@@ -916,6 +934,7 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       return attach(ws)
     case 'remote_set':
     case 'remote_reset':
+    case 'remote_forget':
     case 'remote_status':
       // Only the desktop turns phone access on, or sees its token.
       need(!remoteSockets.has(ws), 'phone access is managed on the desktop')
@@ -925,8 +944,14 @@ async function handle(ws: WebSocket, m: ClientMsg) {
         return syncPhones()
       }
       if (m.t === 'remote_reset') {
+        // Only what new phones scan changes: the phones already paired keep their own tokens.
         await resetRemoteToken()
-        for (const p of phones?.wss.clients ?? []) p.close(4001, 'unpaired')
+        return broadcastLocal({ t: 'remote_status', status: phoneStatus() })
+      }
+      if (m.t === 'remote_forget') {
+        need(isStr(m.id), 'id')
+        await removeDevice(m.id)
+        for (const p of phones?.wss.clients ?? []) if (deviceOf.get(p) === m.id) p.close(4001, 'unpaired')
         return broadcastLocal({ t: 'remote_status', status: phoneStatus() })
       }
       return sendTo(ws, { t: 'remote_status', status: phoneStatus() })

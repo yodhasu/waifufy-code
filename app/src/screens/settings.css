@@ -275,3 +275,10 @@
 .set-wcard-acts { display: flex; gap: 6px; flex-shrink: 0; }
 .set-hearts { color: #e06a8c; letter-spacing: 1px; }
 .set-hearts i { font-style: normal; opacity: .25; }
+
+/* Paired phones (Settings → Phone) */
+.set-devices { margin-top: 12px; }
+.set-devices h5 { margin: 0 0 6px; font-size: 13px; letter-spacing: .06em; color: var(--heading); }
+.set-device { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 12px; border: 1px solid var(--panel-line); margin-bottom: 6px; }
+.set-device span { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.set-device small { font-size: 12px; color: var(--text-soft); }

@@ -15,7 +15,11 @@ use std::{
 };
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, PhysicalSize, RunEvent, WebviewWindow};
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Manager, PhysicalSize, RunEvent, WebviewWindow, WindowEvent,
+};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult};
 
 /// How the page reaches the link sidecar: its port, and the token its WebSocket requires.
@@ -129,6 +133,49 @@ fn data_dir(app: &AppHandle) -> PathBuf {
         .or_else(|| app.path().data_dir().ok())
         .unwrap_or_default()
         .join("waifufy-code")
+}
+
+/// Whether phone access is on (link/src/remote.ts keeps it in remote.json). Then closing the window keeps the app,
+/// and its link, running in the tray: a phone paired with this computer can always reach it.
+fn phone_access_on(app: &AppHandle) -> bool {
+    fs::read_to_string(data_dir(app).join("remote.json"))
+        .map(|s| s.replace(' ', "").contains("\"enabled\":true"))
+        .unwrap_or(false)
+}
+
+/// Brings the window back from the tray (or from behind other windows).
+fn show_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+/// The tray icon: a click brings the window back; its menu opens or quits.
+fn tray(app: &tauri::App) -> tauri::Result<()> {
+    let open = MenuItem::with_id(app, "open", "Open Waifufy Code", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &quit])?;
+    let mut builder = TrayIconBuilder::with_id("main")
+        .tooltip("Waifufy Code")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "open" => show_window(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                show_window(tray.app_handle());
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    builder.build(app)?;
+    Ok(())
 }
 
 fn free_port() -> u16 {
@@ -585,10 +632,25 @@ pub fn run() {
     let mut context = tauri::generate_context!();
     enable_cdp(&mut context);
     let app = tauri::Builder::default()
+        // First, so a second launch hands over to this one before it starts anything of its own.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_window(app)))
         .plugin(tauri_plugin_dialog::init())
+        .on_window_event(|window, event| {
+            // With phone access on, the window's close button only hides it: the link keeps running for the phone.
+            // Quit (the tray, or Exit on the title screen) ends it.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if phone_access_on(window.app_handle()) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
             let handle = app.handle().clone();
             let mut log = SidecarLog::open(&data_dir(&handle).join("logs"));
+            if let Err(e) = tray(app) {
+                log.note(&format!("no tray icon: {e}"));
+            }
             if let Some(window) = app.get_webview_window("main") {
                 if let Err(e) = fit_to_screen(&window) {
                     log.note(&format!("could not fit the window to the screen: {e}"));

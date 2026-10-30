@@ -773,3 +773,32 @@ html[data-focus='1'] .chat .chat-status .ribbon { display: none; }
   & .ask { max-height: calc(860px / var(--pz)); overflow-y: auto; justify-content: flex-start; }
   & .ask > * { flex-shrink: 0; }
 }
+
+/* ---------- Low-spec mode (lowspec.ts): no character, a chat room in place of the visual novel ---------- */
+html[data-lowspec='1'] #chara, html[data-lowspec='1'] #petals { display: none; }
+/* The dialogue keeps running unseen: it plays her voice line by line. */
+html[data-lowspec='1'] .chat .dialogue { visibility: hidden; }
+/* AUTO stays on (it moves the unseen dialogue along); SKIP has nothing to skip. Above the phone layouts' tile rules. */
+html[data-lowspec='1'] #stage .chat :is([data-test='qm-auto'], [data-test='qm-skip']) { display: none !important; }
+.chat .chatroom { display: none; position: absolute; z-index: 3; left: 378px; right: 358px; top: 40px; bottom: 130px; flex-direction: column;
+  gap: 12px; padding: 20px; overflow-y: auto; overscroll-behavior: contain; border-radius: 28px; background: var(--panel);
+  border: 1.5px solid var(--gold-soft); box-shadow: var(--panel-shadow); backdrop-filter: blur(10px); font-size: 24px; line-height: 1.45; }
+html[data-lowspec='1'] .chat .chatroom { display: flex; }
+#stage[data-orient='portrait'] .chat .chatroom { left: 24px; right: 24px; top: 250px; bottom: 192px; font-size: 30px; }
+#stage[data-orient='portrait'][data-compact='on'] .chat .chatroom { top: 40px; bottom: 176px; }
+#stage[data-device='phone'][data-orient='landscape'] .chat .chatroom { left: var(--col); right: calc(var(--rail) + 16px); top: 190px; bottom: 170px; }
+.chat .chatroom .cr { display: flex; flex-direction: column; max-width: 86%; }
+.chat .chatroom .cr.char { align-self: flex-start; }
+.chat .chatroom .cr.user { align-self: flex-end; align-items: flex-end; }
+.chat .chatroom .cr .who { font-size: .62em; font-weight: 700; letter-spacing: .06em; color: var(--name-color); margin: 0 14px 4px; }
+.chat .chatroom .cr.char .who { color: var(--accent); }
+.chat .chatroom .bubble { padding: 12px 18px; border-radius: 22px; overflow-wrap: anywhere; color: var(--text); }
+.chat .chatroom .cr.char .bubble { background: var(--panel-inset); border: 1px solid var(--panel-line); border-top-left-radius: 6px; }
+.chat .chatroom .cr.user .bubble { background: color-mix(in oklab, var(--accent) 22%, var(--panel-inset)); border-top-right-radius: 6px; }
+.chat .chatroom .bubble p { margin: 0 0 .5em; }
+.chat .chatroom .bubble p:last-child { margin-bottom: 0; }
+.chat .chatroom .bubble pre { max-width: 100%; overflow-x: auto; font-size: .7em; }
+.chat .chatroom .cr:is(.tool, .shell, .system, .error) { align-self: center; max-width: 100%; }
+.chat .chatroom .note { font-size: .62em; color: var(--text-soft); text-align: center; }
+.chat .chatroom .cr.error .note { color: var(--bad); }
+.chat .chatroom .note code { font-size: .95em; }

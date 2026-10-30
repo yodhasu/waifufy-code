@@ -62,7 +62,8 @@ const samePath = (a: string, b: string) => {
 }
 
 /** `notify`: a short line for the user (main.ts's toast), for what they should know about her model. */
-export function createCharacter(root: HTMLElement, link: Link, store: Store, notify?: (text: string) => void): Character {
+/** `none`: low-spec mode (lowspec.ts): no model is loaded or drawn; she is only her voice and her words. */
+export function createCharacter(root: HTMLElement, link: Link, store: Store, notify?: (text: string) => void, none = false): Character {
   root.innerHTML = TEMPLATE
   const box = root.querySelector<HTMLElement>('.chara-box')!
   const fxLayer = root.querySelector<HTMLElement>('.chara-fx')!
@@ -178,6 +179,8 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store, not
     else updateRunning()
     stage?.setResolution(resolution())
     mmd?.setResolution(resolution())
+    // A phone's chat has the dialogue box over her legs: a 3D model frames her from the waist up there.
+    mmd?.setShot(portrait() && lastVisible === 'chat' ? 'bust' : 'full')
     interact.refresh()
   }
 
@@ -435,19 +438,21 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store, not
     if (!rig) await reloadFolder()
   }
 
-  const ready = Promise.race([
-    applyModel(),
-    new Promise<void>((r) => setTimeout(r, READY_TIMEOUT_MS)),
-  ]).then(() => {
-    if (!rig) showPlaceholder()
-  }, (e) => {
-    console.warn('[waifufy-code] character failed to start', e)
-    showPlaceholder()
-  })
+  const ready = none
+    ? Promise.resolve(void (ds.model = 'none'))
+    : Promise.race([
+        applyModel(),
+        new Promise<void>((r) => setTimeout(r, READY_TIMEOUT_MS)),
+      ]).then(() => {
+        if (!rig) showPlaceholder()
+      }, (e) => {
+        console.warn('[waifufy-code] character failed to start', e)
+        showPlaceholder()
+      })
 
   // A listing lost to a sidecar restart is asked for again once the link is back (R24).
   link.onStatus((status) => {
-    if (status === 'up' && !rig && !mmd && loading === undefined && mmdLoading === undefined) void applyModel()
+    if (!none && status === 'up' && !rig && !mmd && loading === undefined && mmdLoading === undefined) void applyModel()
   })
 
   // ---------------------------------------------------------------- live settings
@@ -459,7 +464,9 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store, not
     const was = lastSettings
     lastSettings = s
     if (s.appearance.zoom !== was.appearance.zoom) actor()?.setZoom(s.appearance.zoom)
-    if (s.appearance.model !== was.appearance.model || s.appearance.mmdFile !== was.appearance.mmdFile) {
+    if (none) {
+      // Nothing to draw: the settings that would change her look have nothing to change.
+    } else if (s.appearance.model !== was.appearance.model || s.appearance.mmdFile !== was.appearance.mmdFile) {
       // After the store has saved settings.json: the link serves the 3D model of the card as it has it on disk.
       clearTimeout(modelTimer)
       modelTimer = window.setTimeout(() => void applyModel(), FOLDER_SETTLE_MS)

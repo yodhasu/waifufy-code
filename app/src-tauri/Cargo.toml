@@ -1,6 +1,6 @@
 [package]
 name = "waifufy-code"
-version = "0.8.2"
+version = "0.8.3"
 edition = "2021"
 
 [lib]
@@ -13,12 +13,15 @@ crate-type = ["rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# tray-icon: with phone access on, closing the window leaves the app in the tray, so the phone can still reach it.
+tauri = { version = "2", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 
-# The desktop shell: the sidecar supervisor's error dialogs and the folder picker.
+# The desktop shell: the sidecar supervisor's error dialogs and the folder picker; one instance only (launching it
+# again while it sits in the tray brings its window back instead of starting a second link on the same phone port).
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
 
 # The phone app pairs with a desktop by scanning the QR code its Settings show.
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]

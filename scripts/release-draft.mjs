@@ -39,14 +39,20 @@ run(`git push origin ${branch}`)
 const notes = join(tmpdir(), `waifufy-${tag}-notes.md`)
 writeFileSync(
   notes,
-  `Waifufy Code ${version}: her in 3D on the phone
+  `Waifufy Code ${version}: a phone that stays connected, and a low-spec mode
 
-A patch for 0.8.1: 3D cards now load in the Android app.
+**Your phone stays connected**
+- After a drop it tries every address it knows at once (home Wi-Fi, Tailscale…), over and over, and gets back in on its own
+- If the computer isn't there when you open the app, it waits for it instead of asking you to scan the code again
+- Each phone is paired for good with its own key: a new pairing code no longer unpairs anyone, and Settings → Phone lists your phones with Remove
+- With phone access on, closing the window keeps Waifufy Code in the tray, so your phone can always reach it (Quit is in the tray menu)
 
-**On the phone**
-- The phone gets her model with textures scaled to 1024 pixels (Reine's: 68 MB → 12 MB, and about a tenth of the GPU memory), converted once on the computer and cached. The computer keeps the full textures
-- The phone draws her lighter: no self-shadows, no antialiasing, a capped pixel density
-- If the phone still can't hold her, she falls back to her Live2D costume, a toast says why, and the reason is written to the computer's \`link.log\`
+**Reine on the phone**
+- Framed from the waist up in the chat, her head centered; zoom closes in on her head
+- Lighter 3D on the phone: no outline pass, 1× density, physics at 30 steps a second
+
+**Low-spec mode** (Settings → Phone, on the phone)
+- No character at all, and the chat becomes a chat room. Her voice still reads every line, and everything else works
 
 Install: \`Waifufy-Code-${version}-setup.exe\` on Windows, the \`.apk\` on Android (arm64).
 `,

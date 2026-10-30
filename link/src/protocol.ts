@@ -405,6 +405,8 @@ export type RemoteStatus = {
   addresses: string[]
   /** Phones connected right now. */
   clients: number
+  /** Phones paired with this computer, each with its own token (never sent here), seen most recently first. */
+  devices: { id: string; name: string; pairedAt: number; lastSeen: number; online: boolean }[]
   /** What the pairing QR code holds (with the token); only while enabled. */
   pairUrl?: string
   error?: string
@@ -509,6 +511,8 @@ export type ClientMsg =
   | { t: 'remote_reset' }
   /** Desktop only: answered with `remote_status`. */
   | { t: 'remote_status' }
+  /** Desktop only: removes a paired phone; it is disconnected and has to scan the code again. */
+  | { t: 'remote_forget'; id: string }
   /**
    * Joins the session running now (a phone picking up the desktop's chat): answered with `attached`, then the
    * session's current state as ordinary session events (started with its history so far, ready, stats, todos,
@@ -600,7 +604,11 @@ export type SessionEvent =
 
 export type ServerMsg =
   /** `remote`: this window is a phone (phone access), so desktop-only things (folder pickers, Explorer) don't apply. */
-  | { t: 'hello'; version: string; settings: Settings; auth: Auth; dataDir: string; voiceKey: boolean; casualKey: boolean; slack: SlackStatus; remote: boolean }
+  /**
+   * `addresses`: to a phone, the computer's addresses right now (LAN, Tailscale…), so a pairing made on another
+   * network, or before the router handed out a new address, keeps finding it.
+   */
+  | { t: 'hello'; version: string; settings: Settings; auth: Auth; dataDir: string; voiceKey: boolean; casualKey: boolean; slack: SlackStatus; remote: boolean; addresses?: string[] }
   /** One clip: base64 audio, or why there is none. */
   | { t: 'tts'; id: string; audio?: string; mime?: string; error?: string }
   /** Whether a Fish Audio key is stored now (after voice_key, to every window). */
@@ -635,6 +643,8 @@ export type ServerMsg =
   | { t: 'slack_history'; id: string; channel: string; name?: string; messages?: SlackMessage[]; lastRead?: string; error?: string }
   | { t: 'slack_sent'; id: string; ok: boolean; error?: string }
   | { t: 'remote_status'; status: RemoteStatus }
+  /** To a phone that just paired with the code: its own token, for good. It connects with this from now on. */
+  | { t: 'paired'; token: string }
   /** The answer to `attach`: the running session's epoch, or none when nothing runs. */
   | { t: 'attached'; epoch?: number }
   /** Where an attachment was kept (`path`, for the message to mention), or why it wasn't (`error`). */

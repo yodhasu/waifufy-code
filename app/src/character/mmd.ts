@@ -37,16 +37,19 @@ import { createEngine, standIn } from './mmd-engine.ts'
 RegisterPmxLoader()
 RegisterMmdOutlineRenderer()
 
-// The camera frames her whole body in the character box, feet at its bottom edge, like the Live2D costumes stand.
-// MMD units: she is about 20 tall. The camera faces her front (MMD models face -Z).
+// The camera frames her in the character box: her whole body, feet at its bottom edge, like the Live2D costumes stand,
+// or (a phone's chat, with the dialogue box over her legs) from the waist up. MMD units: she is about 20 tall. The
+// camera faces her front (MMD models face -Z).
 const FOV = 0.5
-const TARGET_Y = 11
-const RADIUS = 46
-/**
- * The top of the frame at zoom 1 (just above her head ornament): zoom scales the distance and keeps this edge where it
- * is, so zooming in closes on her face and upper body and her feet leave the frame first.
- */
-const FRAME_TOP = TARGET_Y + RADIUS * Math.tan(FOV / 2)
+/** What a shot shows at zoom 1: from `bottom` to `top`, in MMD units up her body. */
+const SHOTS = { full: { bottom: -0.74, top: 22.74 }, bust: { bottom: 10, top: 23.2 } } as const
+export type Shot = keyof typeof SHOTS
+/** Where her head's center is when the model has no 頭 bone to measure (MMD units). */
+const HEAD_Y = 19.5
+/** The frame always keeps this much above the top of her head, so zooming in on her head never cuts it off. */
+const HEAD_ROOM = 0.4
+/** Her head's half height (MMD units): its center is the 頭 bone plus this. */
+const HEAD_HALF = 1.6
 /** MMD gravity is ten times Earth's: models are measured in 8 cm units. */
 const GRAVITY = -98
 /** Her mouth for the typewriter flap when no voice plays: an open-close a few times a second, never wide. */
@@ -103,6 +106,8 @@ export type MmdActor = Actor & {
   orbit(dx: number, dy: number): void
   pan(dy: number): void
   resetView(): void
+  /** Her whole body, or from the waist up (a phone's chat). */
+  setShot(shot: Shot): void
   setRunning(on: boolean): void
   setFps(fps: number): void
   setResolution(r: number): void
@@ -133,8 +138,10 @@ function sharedPhysics() {
  * Loads her model from `url` (the link's /mmd/ route, which serves the folder of the card's .pmx) into a new canvas
  * inserted in `box` before `before`.
  */
-/** A phone draws her lighter: no self-shadows, and at most this pixel density. */
-const PHONE_MAX_RESOLUTION = 1.5
+/** A phone draws her lighter: no self-shadows or outlines, physics at 30 steps a second, and at most this density. */
+const PHONE_MAX_RESOLUTION = 1
+const PHONE_PHYSICS_STEP = 1 / 30
+const PHONE_PHYSICS_SUBSTEPS = 2
 
 export type MmdOptions = {
   zoom: number
@@ -170,15 +177,21 @@ async function build(
 ): Promise<MmdActor> {
   scene.clearColor = new Color4(0, 0, 0, 0)
   scene.ambientColor = new Color3(0.5, 0.5, 0.5)
-  const camera = new ArcRotateCamera('camera', -Math.PI / 2, Math.PI / 2, RADIUS, new Vector3(0, TARGET_Y, 0), scene)
+  const camera = new ArcRotateCamera('camera', -Math.PI / 2, Math.PI / 2, 46, new Vector3(0, 11, 0), scene)
   camera.fov = FOV
   camera.minZ = 0.5
-  /** The camera as the user moved it: a turn round her and a height, on top of the zoom's framing. */
-  const view = { yaw: 0, pitch: 0, rise: 0, zoom }
+  const tan = Math.tan(FOV / 2)
+  /** The camera as the user moved it: a shot, a zoom, a turn round her and a height. */
+  const view = { shot: 'full' as Shot, yaw: 0, pitch: 0, rise: 0, zoom, head: HEAD_Y }
+  // Zoom closes in on her head: its center stays where it is on screen, and the frame keeps the top of her head in.
   const frame = (z = view.zoom) => {
     view.zoom = z
-    camera.radius = RADIUS / z
-    camera.target.y = FRAME_TOP - (RADIUS / z) * Math.tan(FOV / 2) + view.rise
+    const { bottom, top } = SHOTS[view.shot]
+    const half = (top - bottom) / 2 / z
+    let y = view.head + ((top + bottom) / 2 - view.head) / z
+    y = Math.max(y, view.head + HEAD_HALF + HEAD_ROOM - half)
+    camera.radius = half / tan
+    camera.target.y = y + view.rise
     camera.alpha = -Math.PI / 2 + view.yaw
     camera.beta = Math.PI / 2 + view.pitch
   }
@@ -202,6 +215,10 @@ async function build(
   }
 
   const physics = await sharedPhysics()
+  if (light) {
+    physics.fixedTimeStep = PHONE_PHYSICS_STEP
+    physics.maxSubSteps = PHONE_PHYSICS_SUBSTEPS
+  }
   // Stepped by this scene, after its animations, the way MultiPhysicsRuntime.register does it; register() binds one
   // scene only, and while cards swap two scenes are briefly alive.
   const stepPhysics = scene.onAfterAnimationsObservable.add(() => physics.afterAnimations(engine.getDeltaTime()))
@@ -217,6 +234,8 @@ async function build(
     for (const m of mesh.metadata.meshes as Mesh[]) m.receiveShadows = true
     shadows.addShadowCaster(mesh)
   }
+  // MMD's ink outline draws her a second time; on a phone that is frame time she can't spare.
+  if (light) for (const m of mesh.metadata.materials as readonly { renderOutline?: boolean }[]) if ('renderOutline' in m) m.renderOutline = false
   const model = runtime.createMmdModel(mesh)
   for (const b of model.runtimeBones) if (STILL.test(b.name)) for (const i of b.rigidBodyIndices) model.rigidBodyStates[i] = 0
 
@@ -228,6 +247,13 @@ async function build(
     return { name: b.name, parent: b.parentBone ? index.get(b.parentBone)! : -1, rest: [m[12]!, m[13]!, -m[14]!] }
   }))
   const byName = new Map(bones.map((b) => [b.name, b]))
+  // Her head's center, for zoom to close in on (the 頭 bone sits at its base).
+  const headBone = byName.get('頭')
+  if (headBone) {
+    const at = new Vector3()
+    headBone.getWorldTranslationToRef(at)
+    if (at.y > 1) (view.head = at.y + HEAD_HALF), frame()
+  }
   const eng = createEngine(rig)
   let held: Emotion = 'normal'
   eng.emote(held, true)
@@ -236,6 +262,8 @@ async function build(
   const bq = new Quaternion()
   const writes = eng.controlled.map((b) => ({ b, lb: byName.get(b.name)?.linkedBone })).filter((x) => x.lb)
   const morphCache = new Map<string, readonly number[]>()
+  /** Weights last written, so a morph that didn't change isn't written again (each write re-uploads it). */
+  const written = new Map<string, number>()
   const morphIndices = (name: string) => {
     let list = morphCache.get(name)
     if (!list) morphCache.set(name, (list = model.morph.getMorphIndices(name) ?? []))
@@ -267,7 +295,11 @@ async function build(
     const weights: Record<string, number> = { ...eng.face, あ: Math.max(eng.face['あ'] ?? 0, mouth) }
     if (talking || voice) for (const m of MOUTH_SHAPES) if (weights[m]) weights[m] *= MOUTH_WHILE_TALKING
     if (blush) weights['照れ'] = Math.max(weights['照れ'] ?? 0, 0.6)
-    for (const [name, w] of Object.entries(weights)) for (const i of morphIndices(name)) model.morph.setMorphWeightFromIndex(i, w)
+    for (const [name, w] of Object.entries(weights)) {
+      if (Math.abs((written.get(name) ?? -1) - w) < 0.002) continue
+      written.set(name, w)
+      for (const i of morphIndices(name)) model.morph.setMorphWeightFromIndex(i, w)
+    }
     scene.render()
     // Physics starts from her first real pose, not from the T-pose she loads in.
     if (!warmed) (warmed = true), model.initializePhysics()
@@ -351,6 +383,11 @@ async function build(
       }
     },
     setZoom: (z) => frame(z),
+    setShot(shot) {
+      if (shot === view.shot) return
+      view.shot = shot
+      frame()
+    },
     setRunning(on) {
       if (on === running) return
       running = on

@@ -1,6 +1,7 @@
 // Phone access (docs/V0.5.md R77–R78): the desktop turns it on and shows a pairing code; a phone (a second, phone-sized
 // headless Chrome loading the app with ?pair=…, driver.mjs openPhone) joins the session running on the desktop,
-// chats in it, answers a prompt the desktop sees close, and is dropped by a new pairing code.
+// chats in it, answers a prompt the desktop sees close, keeps its own pairing through a new code, and is dropped when
+// the desktop removes it.
 import { openPhone } from '../driver.mjs'
 import { assert, eq, fastText, newGame, say, setField, T, turnEnd } from '../lib.mjs'
 
@@ -232,13 +233,71 @@ export default {
       },
     },
     {
+      r: 'R78',
+      name: 'low-spec mode: no character is loaded, and the session reads as a chat room',
+      timeout: 120_000,
+      async run({ app, project }) {
+        const pair = await enablePhone(app)
+        await newGame(app, project)
+        await fastText(app)
+        await say(app, 'hello from the desk')
+        await turnEnd(app)
+        const phone = await openPhone(pair)
+        try {
+          await phone.eval(() => (localStorage.setItem('wc-lowspec', '1'), location.reload()))
+          await phone.waitFor(() => window.__wc?.router.current() === 'title' && document.documentElement.dataset.lowspec === '1', { timeout: 30_000, label: 'low-spec title' })
+          await phone.waitFor(() => !document.querySelector('[data-test="title-join"]')?.hidden, { label: 'Join' })
+          await fastText(phone)
+          await phone.click(T('title-join'))
+          await phone.waitVisible(T('chatroom'), 20_000)
+          await phone.waitFor(() => [...document.querySelectorAll('[data-test="chatroom-entry"]')].some((e) => e.dataset.who === 'user' && e.textContent.includes('hello from the desk')), { label: 'the desk line in the room' })
+          eq(await phone.eval(() => document.getElementById('chara').dataset.model), 'none', 'no model')
+          eq(await phone.eval(() => document.querySelectorAll('canvas').length), 0, 'nothing drawn')
+          assert(!(await phone.visible(T('tutorial'))), 'no visual-novel tutorial')
+        } finally {
+          await phone.close()
+        }
+      },
+    },
+    {
       r: 'R77',
-      name: 'a new pairing code drops the phone back to the pairing screen',
+      name: 'a phone that cannot reach its computer waits and keeps its pairing, then connects on its own once it can',
+      async run({ app }) {
+        const pair = await enablePhone(app)
+        await setField(app, 'phone.enabled', false)
+        const phone = await openPhone(pair, { boot: false })
+        try {
+          await phone.waitVisible(T('pair-waiting'), 20_000)
+          assert(!(await phone.visible(T('pair'))), 'not sent back to the pairing screen')
+          // The computer comes back: the phone connects without anyone touching it.
+          await setField(app, 'phone.enabled', true)
+          await phone.waitVisible(T('title-join'), 30_000)
+          assert(!(await phone.visible(T('pair-waiting'))), 'the waiting screen is gone')
+        } finally {
+          await phone.close()
+          await setField(app, 'phone.enabled', false)
+        }
+      },
+    },
+    {
+      r: 'R77',
+      name: 'a phone keeps its own pairing through a new code; removing it on the desktop drops it to the pairing screen',
       async run({ app }) {
         const pair = await enablePhone(app)
         const phone = await openPhone(pair)
         try {
+          // Paired with the code: the phone now holds a token of its own, and the desktop lists it.
+          await phone.waitFor((code) => JSON.parse(localStorage.getItem('wc-pairing') ?? '{}').token !== code, {
+            args: [new URL(pair.replace('waifufy-code://', 'http://x/')).searchParams.get('t')],
+            label: 'a device token saved',
+          })
+          await app.waitVisible(T('phone-device'))
           await app.click(T('set-phone.reset'))
+          await app.waitVisible('#confirm.show')
+          await app.click('#confirmYes')
+          await new Promise((r) => setTimeout(r, 1500))
+          assert(!(await phone.visible(T('pair'))), 'a new code leaves the phone paired')
+          await app.click(T('phone-forget'))
           await app.waitVisible('#confirm.show')
           await app.click('#confirmYes')
           await phone.waitVisible(T('pair'), 15_000)

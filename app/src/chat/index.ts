@@ -5,6 +5,7 @@ import { getCurrentWindow, UserAttentionType } from '@tauri-apps/api/window'
 import type { BgTask, ChatMode, Command, HistoryEntry, Image, ModelChoice, PermissionModeName, ServerMsg, SessionEvent, Stats } from '../../../link/src/protocol.ts'
 import { AFFECTION_LEVELS, clampPoints, levelOf, levelStart, type Mood } from '../../../link/src/affection.ts'
 import type { ChatParams, Ctx, Gesture, Screen } from '../contracts'
+import { lowSpec } from '../lowspec'
 import { addressOf } from '../screens/title'
 import { ICONS, type IconName } from '../icons'
 import { esc, fmtK } from '../ui'
@@ -255,6 +256,8 @@ export function chatScreen(): Screen {
   const log: LogEntry[] = []
   const layers: Layer[] = []
   let logView: { el: HTMLElement; add(e: LogEntry): void; refresh(e: LogEntry): void } | undefined
+  /** Low-spec mode's chat room, in place of the visual novel. */
+  let room: ReturnType<typeof createRoom> | undefined
   /** A finished turn waiting for its stats, so the save records the new turn count. */
   let pendingSave: number | undefined
 
@@ -446,10 +449,57 @@ export function chatScreen(): Screen {
   function addLog(e: LogEntry) {
     log.push(e)
     logView?.add(e)
+    room?.add(e)
   }
 
   function refreshLog(e: LogEntry) {
     logView?.refresh(e)
+    room?.refresh(e)
+  }
+
+  // ---------------------------------------------------------------- low-spec mode: the chat room
+
+  /**
+   * Low-spec mode's chat room (lowspec.ts): the conversation as bubbles, from the same entries as the backlog. Her
+   * lines arrive when each message is complete; her steps are one-line notes; the dialogue box behind it keeps
+   * running unseen, so her voice still plays line by line.
+   */
+  function createRoom(el: HTMLElement) {
+    const els = new Map<LogEntry, HTMLElement>()
+    const build = (e: LogEntry) => {
+      const b = document.createElement('div')
+      b.className = `cr ${e.who}`
+      b.dataset.test = 'chatroom-entry'
+      b.dataset.who = e.who
+      const n = names()
+      if (e.who === 'char' || e.who === 'user') {
+        b.innerHTML = `<div class="who">${esc(e.who === 'char' ? n.char : n.user)}</div><div class="bubble">${e.who === 'char' ? markdown(e.text) : esc(e.text)}</div>`
+      } else if (e.who === 'tool') {
+        const t = e.tool
+        b.innerHTML = `<span class="note"><b>${esc(toolLabel(t.name))}</b> <code>${esc(oneLine(relPath(t.detail, cwd), LOG_DETAIL_CHARS))}</code> <em class="${t.state}">${toolState(t)}</em></span>`
+      } else if (e.who === 'shell') {
+        b.innerHTML = `<span class="note"><code>$ ${esc(oneLine(e.command, LOG_DETAIL_CHARS))}</code> <em>${e.code === null ? 'killed' : `exit ${e.code}`}</em></span>`
+      } else {
+        b.innerHTML = `<span class="note">${e.who === 'error' ? '✖ ' : ''}${esc(oneLine(e.text, LOG_DETAIL_CHARS * 2))}</span>`
+      }
+      els.set(e, b)
+      return b
+    }
+    const atBottom = () => el.scrollHeight - el.scrollTop - el.clientHeight < LOG_STICK_PX
+    return {
+      add(e: LogEntry) {
+        const stick = atBottom()
+        el.append(build(e))
+        if (stick) el.scrollTop = el.scrollHeight
+      },
+      refresh(e: LogEntry) {
+        els.get(e)?.replaceWith(build(e))
+      },
+      clear() {
+        els.clear()
+        el.replaceChildren()
+      },
+    }
   }
 
   function entryHtml(e: LogEntry) {
@@ -961,6 +1011,8 @@ export function chatScreen(): Screen {
   function maybeTutorial() {
     if (!tutorialDue || asks.isOpen()) return
     tutorialDue = false
+    // Its taps and swipes are the visual novel's; the chat room has none of them.
+    if (lowSpec()) return
     phoneTutorial({ modal })
   }
 
@@ -1011,6 +1063,7 @@ export function chatScreen(): Screen {
     shellsRunning = 0
     tools.clear()
     log.length = 0
+    room?.clear()
     pager.reset()
     asks.clear()
     closeAllLayers()
@@ -1512,6 +1565,7 @@ export function chatScreen(): Screen {
         <aside class="panel chat-right"></aside>
         <div class="chat-status"><div class="ribbon" data-test="ribbon"></div><div class="spinner" data-test="spinner"></div></div>
         <div class="dialogue" data-test="dialogue"></div>
+        <div class="chatroom" data-test="chatroom"></div>
         <div class="chat-input"></div>
         <div class="chat-ask"></div>`
       ribbonEl = root.querySelector('.ribbon')!
@@ -1537,6 +1591,16 @@ export function chatScreen(): Screen {
       root.append(qm)
       autoBtn = qm.querySelector('[data-test="qm-auto"]')!
       skipBtn = qm.querySelector<HTMLElement>('[data-test="qm-skip"]')!
+      // Low-spec mode: the chat room is what you read; the unseen dialogue shows each line whole and moves on by
+      // itself, so her voice plays them one after another.
+      if (lowSpec()) {
+        room = createRoom(root.querySelector<HTMLElement>('.chatroom')!)
+        for (const e of log) room.add(e)
+        auto = true
+        autoBtn.classList.add('on')
+        dialogue.setAuto(true)
+        dialogue.setFocus(true)
+      }
       // SLACK carries how many conversations have unread messages, as the link's scan finds them.
       const slackBtn = qm.querySelector<HTMLElement>('[data-test="qm-slack"]')!
       const slackBadge = () => {

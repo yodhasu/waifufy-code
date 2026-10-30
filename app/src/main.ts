@@ -11,6 +11,7 @@ import { settingsScreen } from './screens/settings'
 import { titleScreen } from './screens/title'
 import { wizardScreen } from './screens/wizard'
 import { applyAppearance, createStore } from './state'
+import { lowSpec } from './lowspec'
 import { installBackButton } from './back'
 import { pickRemoteFolder } from './remote-folder'
 import { createSlack } from './slack'
@@ -147,7 +148,9 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => appl
 if (link.remote) document.getElementById('offline')!.textContent = 'Reconnecting to your computer…'
 link.onStatus((s) => document.getElementById('offline')!.classList.toggle('show', s === 'down'))
 
-const character = createCharacter(document.getElementById('chara')!, link, store, (text) => toast(text, 6000))
+// Low-spec mode (a phone's choice): no character drawn, and the chat is a chat room (chat/index.ts).
+if (lowSpec()) document.documentElement.dataset.lowspec = '1'
+const character = createCharacter(document.getElementById('chara')!, link, store, (text) => toast(text, 6000), lowSpec())
 
 const screens: Record<ScreenName, Screen> = {
   title: titleScreen(),
