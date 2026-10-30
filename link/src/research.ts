@@ -12,6 +12,8 @@ export type ResearchOptions = {
   series: string
   /** The user's own direction, e.g. "make her more tsundere" or "post-arc 4". Overrides canon. */
   notes: string
+  /** The language her voice speaks (Settings → Voice): the voice notes are written for it. */
+  language?: 'ja' | 'en'
   signal: AbortSignal
   onProgress(text: string): void
   /** Full path to the Claude Code executable; undefined = SDK default lookup. */
@@ -42,7 +44,7 @@ const stringList = (description: string) => ({ type: 'array', items: { type: 'st
 export const RESEARCH_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['profile', 'prompt', 'sources'],
+  required: ['profile', 'prompt', 'voice', 'sources'],
   properties: {
     profile: {
       type: 'object',
@@ -64,6 +66,27 @@ export const RESEARCH_SCHEMA = {
       },
     },
     prompt: { type: 'string', description: 'The roleplay prompt, second person, starting "You are <name>".' },
+    voice: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['styleNotes', 'pronunciations'],
+      properties: {
+        styleNotes: stringList('5-8 notes on how she speaks aloud in the voice language: register, how she refers to herself, sentence endings, laughter and interjections, pacing.'),
+        pronunciations: {
+          type: 'array',
+          description: 'Words a text-to-speech voice is likely to say wrong (her name and full name, the series, catchphrases, nicknames), each with a respelling it will read right.',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['word', 'say'],
+            properties: {
+              word: { type: 'string', description: 'As written, e.g. "Pavolia Reine".' },
+              say: { type: 'string', description: 'A respelling the voice reads right, e.g. "Pah-VOH-lee-ah RAY-neh" for English, katakana for Japanese.' },
+            },
+          },
+        },
+      },
+    },
     sources: stringList('URLs actually used.'),
   },
 } as const
@@ -93,11 +116,16 @@ Write it in second person, starting "You are <name>…". It is shown to the codi
 - Do not write instructions about formatting, emotion tags or markdown; the app adds those.
 - Aim for 400-900 words.
 
+# Her voice
+The app gives her a text-to-speech voice. The request says which language it speaks. Fill \`voice\`:
+- styleNotes: how she sounds when she speaks that language aloud, one note each: register, how she refers to herself, sentence endings and verbal tics, laughter and interjections, pacing. For a character who speaks several languages, write how she speaks this one.
+- pronunciations: the words a text-to-speech voice would likely say wrong, with how it should say them: her name and full name first, then the series, nicknames, catchphrases, any non-English words she uses. Respell for the voice language: plain English syllables with the stressed one in capitals for English (Pavolia Reine → Pah-VOH-lee-ah RAY-neh), katakana for Japanese. Use how the character, her official channels or fans actually say it. Leave out words any voice reads right.
+
 # Content
 Keep everything suitable for a work tool that may be on screen at the office: warmth and devotion are fine, sexual or suggestive content is not, and neither is graphic violence. Leave out anything of that kind even if canon has it or the notes ask for it.
 
 # Output
-Return the result through the structured output: the profile, the prompt, and the URLs you actually used as sources. If no structured output tool is available, reply with only that JSON object: {"profile": {…}, "prompt": "…", "sources": […]}.`
+Return the result through the structured output: the profile, the prompt, her voice, and the URLs you actually used as sources. If no structured output tool is available, reply with only that JSON object: {"profile": {…}, "prompt": "…", "voice": {"styleNotes": […], "pronunciations": [{"word": "…", "say": "…"}]}, "sources": […]}.`
 
 /** An error research() describes itself; anything else came from the SDK and gets the CLI's stderr appended. */
 class ResearchError extends Error {}
@@ -192,7 +220,19 @@ export function toProfile(raw: unknown): ResearchProfile {
 }
 
 /** Builds the preset from the model's output plus the pages it actually read. Throws when there is no usable prompt. */
-export function toPreset(o: Pick<ResearchOptions, 'name' | 'series' | 'notes'>, output: Record<string, unknown>, read: string[]): PersonaPreset {
+/** The research's voice notes and respellings as the settings keep them: one per line, `word = say`. */
+function toVoice(raw: unknown, language: 'ja' | 'en'): NonNullable<PersonaPreset['voice']> {
+  const v = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  const pairs = Array.isArray(v.pronunciations) ? (v.pronunciations as unknown[]) : []
+  const pronunciations = pairs
+    .map((x) => (x && typeof x === 'object' ? (x as Record<string, unknown>) : {}))
+    .map((x) => [asText(x.word).replace(/[=\n]/g, ' ').trim(), asText(x.say).replace(/\n/g, ' ').trim()])
+    .filter(([w, say]) => w && say && w.toLowerCase() !== say.toLowerCase())
+    .map(([w, say]) => `${w} = ${say}`)
+  return { language, styleNotes: asList(v.styleNotes).join('\n'), pronunciations: pronunciations.join('\n') }
+}
+
+export function toPreset(o: Pick<ResearchOptions, 'name' | 'series' | 'notes' | 'language'>, output: Record<string, unknown>, read: string[]): PersonaPreset {
   const prompt = asText(output.prompt)
   if (!prompt) throw new ResearchError('The research finished without a roleplay prompt. Try again.')
   const sources = [...new Set([...asList(output.sources), ...read].filter((s) => /^https?:\/\//i.test(s)))].slice(0, SOURCES_MAX)
@@ -205,14 +245,16 @@ export function toPreset(o: Pick<ResearchOptions, 'name' | 'series' | 'notes'>, 
     profile: toProfile(output.profile),
     prompt,
     sources,
+    voice: toVoice(output.voice, o.language === 'en' ? 'en' : 'ja'),
   }
 }
 
-export function researchRequest(o: Pick<ResearchOptions, 'name' | 'series' | 'notes'>) {
+export function researchRequest(o: Pick<ResearchOptions, 'name' | 'series' | 'notes' | 'language'>) {
   const who = o.series.trim() ? `${o.name.trim()} from ${o.series.trim()}` : o.name.trim()
   const notes = o.notes.trim()
   return [
     `Research ${who} and write their roleplay profile and prompt.`,
+    `Her voice speaks ${o.language === 'en' ? 'English' : 'Japanese'}: write the voice notes and respellings for that.`,
     notes ? `The user's notes, which take priority over canon:\n${notes}` : 'The user gave no notes: follow canon.',
   ].join('\n\n')
 }

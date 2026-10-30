@@ -3,9 +3,11 @@ import type { Actor, Director, Geometry } from './director.ts'
 import { BOX_W } from './layout.ts'
 import { BODY_TAPS, FACE_TAPS, PAT_BUSY, PAT_TIERS, type Mark, type Tier } from './motions.ts'
 
-// Pointer life: her head and eyes follow the cursor anywhere in the window (R32), press-and-drag on her head
-// pats her (R33, ported from waifufy's overlay without voices), and clicks on her face or body are taps (R34).
-// Only her own canvas receives presses, and only while the pointer is over her, so UI above her always wins.
+// Pointer life: her head and eyes follow the cursor anywhere in the window (R32), and on the desktop anywhere on the
+// screen; press-and-drag on her head pats her (R33, ported from waifufy's overlay without voices), and clicks on her
+// face or body are taps (R34). The wheel over her zooms; on a 3D model a right-drag moves the camera round her, a
+// middle-drag (or Shift + right-drag) up and down, and a right double-click puts it back. Only her own canvas receives
+// presses, and only while the pointer is over her, so UI above her always wins.
 
 /** A full head turn at this many head radii from her head, like the overlay's focus radius. */
 const FOCUS_RADII = 5
@@ -26,6 +28,10 @@ const TAP_SLOP = 12
 const TAP_WINDOW_MS = 1200
 /** The lower tiers are fond; hearts keep floating up while she is stroked through them. */
 const FOND_TIERS = 2
+/** Outside the window, the cursor is read this often (the screen position, from the desktop shell). */
+const SCREEN_POLL_MS = 120
+/** Two right presses this close together reset the camera. */
+const RESET_CLICK_MS = 400
 
 type Zone = 'head' | 'face' | 'body'
 
@@ -61,6 +67,10 @@ export function createInteract(o: {
   fx(mark: Mark): void
   /** A headpat began while she was free (a busy one is a telling-off, not a pat). */
   onPat(): void
+  /** The wheel turned over her: zoom by this many steps (negative: closer). */
+  onZoom(steps: number): void
+  /** The cursor in client pixels while it is outside the window, when the shell can tell; undefined otherwise. */
+  screenCursor?(): Promise<{ x: number; y: number } | undefined>
 }): Interact {
   const { root, box, director } = o
   let stroke: Stroke | undefined
@@ -71,6 +81,10 @@ export function createInteract(o: {
   let zone: Zone | undefined
   /** The pointer's last client position, to re-check what is under it when she moves or resizes under it. */
   let lastPoint: { x: number; y: number } | undefined
+  /** A right- or middle-drag moving a 3D camera: its pointer and where it was last. */
+  let camDrag: { pointerId: number; target: Element; last: { x: number; y: number }; pan: boolean } | undefined
+  let lastRightDown = 0
+  let screenTimer: number | undefined
 
   /** Client pixels → character box pixels. The box rect already carries the stage scale and placement. */
   function toBox(clientX: number, clientY: number) {
@@ -145,6 +159,7 @@ export function createInteract(o: {
     if (isMoving) {
       lastPatAt = now
       if (!s.isBusy && s.playedTier < FOND_TIERS) o.fx('heart')
+      o.actor()?.stroke?.()
     }
     if (director.reacting()) return void (s.gapStart = undefined)
     if (s.isBusy) {
@@ -189,17 +204,66 @@ export function createInteract(o: {
 
   // ---------------------------------------------------------------- listeners
 
+  /** Looks at a client point, and back to the front once it rests. */
+  function follow(a: Actor, clientX: number, clientY: number) {
+    if (!o.motion().cursor) return
+    lookAt(a, a.geometry(), toBox(clientX, clientY))
+    clearTimeout(focusTimer)
+    focusTimer = window.setTimeout(center, FOCUS_IDLE_MS)
+  }
+
+  // ---------------------------------------------------------------- outside the window
+
+  /** While the pointer is out of the window, the screen cursor stands in for it (desktop only). */
+  function watchScreen() {
+    if (!o.screenCursor || screenTimer !== undefined) return
+    let last = ''
+    const poll = async () => {
+      const p = document.hidden ? undefined : await o.screenCursor!().catch(() => undefined)
+      if (screenTimer === undefined) return
+      const a = o.actor()
+      const key = p ? `${Math.round(p.x)},${Math.round(p.y)}` : ''
+      // Only a move turns her: a resting cursor lets her look back to the front, as inside the window.
+      if (a && p && key !== last) follow(a, p.x, p.y)
+      last = key
+      screenTimer = window.setTimeout(poll, SCREEN_POLL_MS)
+    }
+    screenTimer = window.setTimeout(poll, 0)
+  }
+
+  function unwatchScreen() {
+    clearTimeout(screenTimer)
+    screenTimer = undefined
+  }
+
+  // ---------------------------------------------------------------- a 3D camera
+
+  function onCamMove(e: PointerEvent) {
+    const d = camDrag
+    if (!d || e.pointerId !== d.pointerId) return false
+    const p = toBox(e.clientX, e.clientY)
+    const a = o.actor()
+    if (d.pan || e.shiftKey) a?.pan?.(p.y - d.last.y)
+    else a?.orbit?.(p.x - d.last.x, p.y - d.last.y)
+    d.last = p
+    return true
+  }
+
+  function endCam() {
+    if (!camDrag) return
+    if (camDrag.target.hasPointerCapture(camDrag.pointerId)) camDrag.target.releasePointerCapture(camDrag.pointerId)
+    camDrag = undefined
+  }
+
   function onMove(e: PointerEvent) {
     lastPoint = { x: e.clientX, y: e.clientY }
+    unwatchScreen()
     const a = o.actor()
     if (!a) return
     const g = a.geometry()
     const p = toBox(e.clientX, e.clientY)
-    if (o.motion().cursor) {
-      lookAt(a, g, p)
-      clearTimeout(focusTimer)
-      focusTimer = window.setTimeout(center, FOCUS_IDLE_MS)
-    }
+    follow(a, e.clientX, e.clientY)
+    if (onCamMove(e)) return
     const next = zoneAt(g, p)
     if (next !== zone) (zone = next), updateCursor()
     const s = stroke
@@ -211,12 +275,25 @@ export function createInteract(o: {
   }
 
   function onDown(e: PointerEvent) {
-    if (e.button !== 0 || stroke) return
     const a = o.actor()
     if (!a) return
     const p = toBox(e.clientX, e.clientY)
     const z = zoneAt(a.geometry(), p)
     if (!z) return
+    // Right or middle button on a model with a camera: move the camera; a right double-click puts it back.
+    if ((e.button === 2 || e.button === 1) && a.orbit && !stroke && !camDrag) {
+      e.preventDefault()
+      if (e.button === 2 && performance.now() - lastRightDown < RESET_CLICK_MS) {
+        lastRightDown = 0
+        return a.resetView?.()
+      }
+      if (e.button === 2) lastRightDown = performance.now()
+      const target = e.target as Element
+      target.setPointerCapture(e.pointerId)
+      camDrag = { pointerId: e.pointerId, target, last: p, pan: e.button === 1 }
+      return
+    }
+    if (e.button !== 0 || stroke) return
     // Keeps the press from moving focus: clicking her never takes the caret out of the chat input.
     e.preventDefault()
     const target = e.target as Element
@@ -229,6 +306,7 @@ export function createInteract(o: {
   }
 
   function onUp(e: PointerEvent) {
+    if (camDrag && e.pointerId === camDrag.pointerId) return endCam()
     const s = stroke
     if (!s || e.pointerId !== s.pointerId) return
     // A press on her head that never became a pat is a tap on her face.
@@ -237,14 +315,27 @@ export function createInteract(o: {
   }
 
   // Losing the pointer mid-press (another window took it, or the OS cancelled it) ends the stroke without a tap.
-  const onCancel = (e: PointerEvent) => e.pointerId === stroke?.pointerId && endStroke()
+  const onCancel = (e: PointerEvent) => {
+    if (e.pointerId === camDrag?.pointerId) endCam()
+    if (e.pointerId === stroke?.pointerId) endStroke()
+  }
   const onLeave = (e: PointerEvent) => {
     if (e.relatedTarget) return
-    clearTimeout(focusTimer)
-    center()
     lastPoint = undefined
     zone = undefined
     updateCursor()
+    // On the desktop she keeps following the cursor across the screen; elsewhere she looks back to the front.
+    if (o.screenCursor && o.motion().cursor) return watchScreen()
+    clearTimeout(focusTimer)
+    center()
+  }
+
+  /** The wheel over her zooms her in and out. */
+  function onWheel(e: WheelEvent) {
+    const a = o.actor()
+    if (!a || e.ctrlKey || !zoneAt(a.geometry(), toBox(e.clientX, e.clientY))) return
+    e.preventDefault()
+    o.onZoom(Math.sign(e.deltaY))
   }
 
   /** Re-reads the zone under a resting pointer: placements, zoom and costumes move her without a pointermove. */
@@ -255,6 +346,7 @@ export function createInteract(o: {
   }
 
   function reset() {
+    endCam()
     endStroke()
     clearTimeout(focusTimer)
     center()
@@ -262,6 +354,9 @@ export function createInteract(o: {
 
   addEventListener('pointermove', onMove)
   box.addEventListener('pointerdown', onDown)
+  addEventListener('wheel', onWheel, { passive: false })
+  // A right-drag on her moves the camera, so no menu opens there.
+  box.addEventListener('contextmenu', (e) => o.actor()?.orbit && e.preventDefault())
   addEventListener('pointerup', onUp)
   addEventListener('pointercancel', onCancel)
   box.addEventListener('lostpointercapture', onCancel, true)

@@ -100,9 +100,31 @@ async function request(text: string, v: VoiceSettings, key: string): Promise<Cli
   return { audio: Buffer.from(await res.arrayBuffer()), mime: res.headers.get('content-type')?.split(';')[0] || 'audio/mpeg' }
 }
 
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * Respells words the voice gets wrong, from `Reine = Ray-neh` lines (`→` or `->` work too); longer words first, so
+ * "Pavolia Reine" wins over "Reine". Latin words match whole and ignore case; others (kana, kanji) match as written.
+ */
+export function pronounce(text: string, rules: string): string {
+  const pairs = (rules ?? '')
+    .split('\n')
+    .map((l) => l.split(/\s*(?:=|→|->)\s*/))
+    .filter((p): p is [string, string] => p.length === 2 && !!p[0]!.trim() && !!p[1]!.trim())
+    .map(([w, say]) => [w.trim(), say.trim()] as const)
+    .sort((a, b) => b[0].length - a[0].length)
+  let out = text
+  for (const [word, say] of pairs) {
+    const latin = /^[\p{Script=Latin}\d\s'-]+$/u.test(word)
+    const re = latin ? new RegExp(`(?<![\\p{L}\\d])${escapeRe(word)}(?![\\p{L}\\d])`, 'giu') : new RegExp(escapeRe(word), 'gu')
+    out = out.replace(re, say)
+  }
+  return out
+}
+
 /** One clip for `text` in her voice. Retries a 429 or 503 once; throws a VoiceError with a readable message. */
 export async function synthesize(text: string, v: VoiceSettings): Promise<Clip> {
-  const line = text.trim().slice(0, TEXT_MAX)
+  const line = pronounce(text, v.pronunciations).trim().slice(0, TEXT_MAX)
   if (!line) throw new VoiceError('Nothing to say.')
   const id = `${v.model}|${v.voiceId}|${v.speed}|${line}`
   const hit = cache.get(id)

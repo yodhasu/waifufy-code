@@ -6,6 +6,15 @@ export const BOX_H = 900
 /** The box's left edge in the chat placement: centered on the column between the panels (x 378–1242). */
 export const BOX_LEFT = 378
 export const STAGE_W = 1600
+/** Her zoom (appearance.zoom), from the wheel over her or Settings → Appearance. */
+export const ZOOM_MIN = 0.6
+export const ZOOM_MAX = 2.5
+export const ZOOM_STEP = 0.05
+/**
+ * Beside the settings pages a 3D model stands taller than the Live2D costumes (PLACEMENTS.side): her framing leaves
+ * room above her head, and at the costumes' scale she looked small next to the panels.
+ */
+export const MMD_SIDE_SCALE = 0.93
 export const STAGE_H = 900
 
 type Spot = { x: number; y: number; scale: number }

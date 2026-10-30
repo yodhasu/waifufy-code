@@ -42,8 +42,11 @@ RegisterMmdOutlineRenderer()
 const FOV = 0.5
 const TARGET_Y = 11
 const RADIUS = 46
-/** Zoom scales the distance; her feet stay near the box's bottom, so the target rises as she gets closer. */
-const ZOOM_RISE = 4
+/**
+ * The top of the frame at zoom 1 (just above her head ornament): zoom scales the distance and keeps this edge where it
+ * is, so zooming in closes on her face and upper body and her feet leave the frame first.
+ */
+const FRAME_TOP = TARGET_Y + RADIUS * Math.tan(FOV / 2)
 /** MMD gravity is ten times Earth's: models are measured in 8 cm units. */
 const GRAVITY = -98
 /** Her mouth for the typewriter flap when no voice plays: an open-close a few times a second, never wide. */
@@ -61,9 +64,31 @@ const BODY_RY = 5.5
 /** Her necklace's small trinkets (and the chain they hang from) never settle under physics: they follow their bones. */
 const STILL = /^acce_small_|^neck_acce_/
 
+// A greeting smiles rather than laughs: she is usually saying something with it.
 const GESTURE_EMOTE: Record<Gesture, Emotion> = {
-  confirm: 'think', danger: 'worried', push: 'happy', success: 'delighted', fail: 'sad', interrupt: 'surprised', greet: 'happy', costume: 'smile',
+  confirm: 'think', danger: 'worried', push: 'happy', success: 'delighted', fail: 'sad', interrupt: 'surprised', greet: 'smile', costume: 'smile',
 }
+/** The Live2D touch tiers (motions.ts) as emotions: a pat starts happy and gets shy, a run of them pouty; taps surprise. */
+const TIER_EMOTE: Record<string, Emotion> = {
+  'pat-happy': 'happy', 'pat-shy': 'shy', 'pat-pout': 'pout', 'pat-sulk': 'sad', 'pat-busy': 'angry',
+  'tap-surprised': 'surprised', 'tap-startled': 'surprised', 'tap-pout': 'pout', 'tap-angry': 'angry',
+  'tap-shy': 'shy', 'tap-flustered': 'shy', 'tap-sulk': 'pout',
+}
+/** How long she leans into the hand after each stroke of a headpat. */
+const STROKE_MS = 450
+/**
+ * Mouth shapes from her expression, which fight the lip sync while she talks (a laughing mouth flapping reads as a
+ * laugh, whatever she says): they shrink to this while her mouth moves.
+ */
+const MOUTH_SHAPES = ['にこり口', '笑い口', '大笑い', 'お', '口角上げ', '口角下げ', '結ぶ', 'くいしばる', 'ムッ', '左口角上げ', 'はぅ']
+const MOUTH_WHILE_TALKING = 0.3
+/** How far the camera moves round her: a right-drag turns it (radians per box pixel), up to these limits. */
+const ORBIT_PER_PX = 0.006
+const ORBIT_YAW_MAX = 1.2
+const ORBIT_PITCH_MAX = 0.45
+/** A middle-drag (or Shift + right-drag) moves the camera up and down her, in MMD units per box pixel. */
+const PAN_PER_PX = 0.03
+const PAN_MAX = 8
 
 export type MmdActor = Actor & {
   readonly kind: 'mmd'
@@ -72,7 +97,12 @@ export type MmdActor = Actor & {
   readonly canvas: HTMLCanvasElement
   emote(e: Emotion): void
   gesture(g: Gesture): void
-  react(kind: 'tap' | 'pat'): void
+  react(kind: 'tap' | 'pat', tier: string): void
+  stroke(): void
+  /** Moves the camera round her (a right-drag) or up and down her (a middle-drag), in box pixels; reset puts it back. */
+  orbit(dx: number, dy: number): void
+  pan(dy: number): void
+  resetView(): void
   setRunning(on: boolean): void
   setFps(fps: number): void
   setResolution(r: number): void
@@ -127,9 +157,14 @@ async function build(engine: Engine, scene: Scene, canvas: HTMLCanvasElement, ur
   const camera = new ArcRotateCamera('camera', -Math.PI / 2, Math.PI / 2, RADIUS, new Vector3(0, TARGET_Y, 0), scene)
   camera.fov = FOV
   camera.minZ = 0.5
-  const frame = (z: number) => {
+  /** The camera as the user moved it: a turn round her and a height, on top of the zoom's framing. */
+  const view = { yaw: 0, pitch: 0, rise: 0, zoom }
+  const frame = (z = view.zoom) => {
+    view.zoom = z
     camera.radius = RADIUS / z
-    camera.target.y = TARGET_Y + ZOOM_RISE * (z - 1)
+    camera.target.y = FRAME_TOP - (RADIUS / z) * Math.tan(FOV / 2) + view.rise
+    camera.alpha = -Math.PI / 2 + view.yaw
+    camera.beta = Math.PI / 2 + view.pitch
   }
   frame(zoom)
   // The lighting babylon-mmd's examples use: a soft fill from above, and a key light that casts her self-shadows.
@@ -188,6 +223,8 @@ async function build(engine: Engine, scene: Scene, canvas: HTMLCanvasElement, ur
 
   let talking = false
   let voice: (() => number) | undefined
+  /** Where "straight ahead" is for her look: toward the camera, wherever it went round her. */
+  const faceCamera = () => eng.lookBase(-view.yaw / 0.6, view.pitch / 0.4)
   let blush = false
   let mouth = 0
   let back: number | undefined
@@ -207,6 +244,7 @@ async function build(engine: Engine, scene: Scene, canvas: HTMLCanvasElement, ur
     const open = voice ? Math.min(1, voice() * VOICE_GAIN) : talking ? FLAP_OPEN * Math.max(0, Math.sin((now / 1000) * Math.PI * 2 * FLAP_HZ)) : 0
     mouth += (open - mouth) * Math.min(1, dt * 18)
     const weights: Record<string, number> = { ...eng.face, あ: Math.max(eng.face['あ'] ?? 0, mouth) }
+    if (talking || voice) for (const m of MOUTH_SHAPES) if (weights[m]) weights[m] *= MOUTH_WHILE_TALKING
     if (blush) weights['照れ'] = Math.max(weights['照れ'] ?? 0, 0.6)
     for (const [name, w] of Object.entries(weights)) for (const i of morphIndices(name)) model.morph.setMorphWeightFromIndex(i, w)
     scene.render()
@@ -249,10 +287,29 @@ async function build(engine: Engine, scene: Scene, canvas: HTMLCanvasElement, ur
       eng.emote(e)
     },
     gesture(g) {
+      // While she talks, the emotion her words carry is the one to show.
+      if (talking || voice) return
       flash(GESTURE_EMOTE[g], GESTURE_MS)
     },
-    react(kind) {
-      flash(kind === 'pat' ? 'shy' : 'surprised', REACT_MS)
+    react(kind, tier) {
+      flash(TIER_EMOTE[tier] ?? (kind === 'pat' ? 'shy' : 'surprised'), REACT_MS)
+      if (kind === 'pat') eng.stroked(STROKE_MS)
+    },
+    stroke: () => eng.stroked(STROKE_MS),
+    orbit(dx, dy) {
+      view.yaw = Math.max(-ORBIT_YAW_MAX, Math.min(ORBIT_YAW_MAX, view.yaw - dx * ORBIT_PER_PX))
+      view.pitch = Math.max(-ORBIT_PITCH_MAX, Math.min(ORBIT_PITCH_MAX, view.pitch - dy * ORBIT_PER_PX))
+      frame()
+      faceCamera()
+    },
+    pan(dy) {
+      view.rise = Math.max(-PAN_MAX, Math.min(PAN_MAX, view.rise + dy * PAN_PER_PX))
+      frame()
+    },
+    resetView() {
+      view.yaw = view.pitch = view.rise = 0
+      frame()
+      faceCamera()
     },
     setBlush: (on) => void (blush = on),
     setTalking: (on) => void (talking = on),
@@ -272,7 +329,7 @@ async function build(engine: Engine, scene: Scene, canvas: HTMLCanvasElement, ur
         body: { x: chest.x, y: chest.y + BODY_RY * 0.4 * chest.unit, rx: BODY_RX * chest.unit, ry: BODY_RY * chest.unit },
       }
     },
-    setZoom: frame,
+    setZoom: (z) => frame(z),
     setRunning(on) {
       if (on === running) return
       running = on

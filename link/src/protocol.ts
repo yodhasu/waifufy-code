@@ -84,6 +84,8 @@ export type PersonaPreset = {
   /** The tailored roleplay prompt, editable by the user. Used verbatim in the persona when active. */
   prompt: string
   sources: string[]
+  /** How she speaks aloud in `language`, and how the voice should say her name and words, from the research. */
+  voice?: { language: 'ja' | 'en'; styleNotes: string; pronunciations: string }
 }
 
 export type Appearance = {
@@ -130,8 +132,13 @@ export type VoiceSettings = {
   volume: number
   /** Show the Japanese line under the English one while she speaks it. */
   subtitles: boolean
-  /** How she speaks Japanese: register, self-reference, endings (the default is Rem's). */
+  /** How she speaks in `language`: register, self-reference, endings (the default is Rem's Japanese). */
   styleNotes: string
+  /**
+   * How the voice should say words it gets wrong, one per line: `Reine = Ray-neh`. Only the voice uses them; the
+   * text keeps the real spelling.
+   */
+  pronunciations: string
 }
 
 /** Slack (link/src/slack.ts). The tokens live in the link's own file, never here. */
@@ -226,9 +233,10 @@ export type WaifuCard = {
   version: 1
   id: string
   waifu: Waifu
+  /** The preset she plays (waifu.activePreset), if any; the library itself is shared by every card. */
   presets: PersonaPreset[]
   look: Pick<Appearance, 'model' | 'modelsDir' | 'costume' | 'zoom' | 'mmdFile'>
-  voice: Pick<VoiceSettings, 'voiceId' | 'language' | 'speed' | 'styleNotes'>
+  voice: Pick<VoiceSettings, 'voiceId' | 'language' | 'speed' | 'styleNotes' | 'pronunciations'>
   /** The love meter: affection points (affection.ts), carried from session to session with the card. */
   love: { points: number }
   createdAt: number

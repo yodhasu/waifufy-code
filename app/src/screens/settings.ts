@@ -80,7 +80,7 @@ const DEFAULTS: {
   claude: { model: '', permissionMode: 'default', defaultDir: '', settingSources: ['user', 'project', 'local'] },
   voice: {
     enabled: true, voiceId: DEFAULT_VOICE_ID, model: 's2.1-pro-free', language: 'ja', speed: 1, volume: 80, subtitles: true,
-    styleNotes: REM_VOICE_STYLE,
+    styleNotes: REM_VOICE_STYLE, pronunciations: '',
   },
   casual: {
     provider: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-6-luna', reasoningEffort: 'none', claudeModel: 'sonnet',
@@ -283,8 +283,8 @@ const FONT_MAX = 30
 const OPACITY_MIN = 0.5
 const OPACITY_MAX = 1
 const OPACITY_STEP = 0.02
-const ZOOM_MIN = 0.8
-const ZOOM_MAX = 1.6
+const ZOOM_MIN = 0.6
+const ZOOM_MAX = 2.5
 const ZOOM_STEP = 0.05
 const AUTO_DELAY_MAX_MS = 5000
 const AUTO_DELAY_STEP_MS = 100
@@ -575,7 +575,11 @@ function appearancePane() {
         note('The box under her shows the result →'),
     )}
     ${card('Scene', row('Background', seg('appearance.background', BACKGROUNDS)) + toggle('appearance.petals', 'Sakura petals', 'Petals drifting across the window.'))}
-    ${card('Framing', row('Sprite zoom', range('appearance.zoom', ZOOM_MIN, ZOOM_MAX, ZOOM_STEP)))}
+    ${card(
+      'Framing',
+      row('Zoom', range('appearance.zoom', ZOOM_MIN, ZOOM_MAX, ZOOM_STEP)) +
+        note('Or turn the wheel over her. On a 3D card, right-drag turns the camera round her, middle-drag (or Shift + right-drag) moves it up and down, and a right double-click puts it back; she keeps following your cursor.'),
+    )}
     ${card(
       'Model',
       row('Drawn as', seg('appearance.model', MODEL_KINDS)) +
@@ -677,16 +681,22 @@ function voicePane() {
         row('Voice id', text('voice.voiceId', `placeholder="${DEFAULT_VOICE_ID}"`), 'From the voice page on fish.audio') +
         row('Model', seg('voice.model', VOICE_MODEL_OPTS)) +
         row('Language', seg('voice.language', VOICE_LANGS)) +
-        toggle('voice.subtitles', 'Japanese subtitle', 'Show her Japanese line under the English while she speaks it.') +
+        `<div data-when="voice.language=ja">${toggle('voice.subtitles', 'Japanese subtitle', 'Show her Japanese line under the English while she speaks it.')}</div>` +
         row('Speed', range('voice.speed', 0.7, 1.4, 0.05)) +
         row('Volume', range('voice.volume', 0, 100, 5)) +
         `<div class="set-actions"><button class="btn" type="button" data-act="voice-test" data-test="set-voice.test">▶ Test voice</button></div>`,
       'wide',
     )}
     ${card(
-      'How she speaks Japanese',
+      'How she speaks <span data-when="voice.language=ja">Japanese</span><span data-when="voice.language=en">English</span>',
       area('voice.styleNotes', 8, 'maxlength="4000"') +
-        note('One note per line: her register, how she refers to herself, her sentence endings. The default is Rem\'s (docs/research/rem-voice.md). The Japanese lines are part of her persona, so changes here, to Language and to the key apply from the next session; speed, volume and subtitles apply at once.'),
+        note('One note per line: her register, how she refers to herself, her sentence endings. Applying a researched preset fills it in for the language picked above; the default is Rem\'s Japanese (docs/research/rem-voice.md). These notes are part of her persona, so changes here, to Language and to the key apply from the next session; speed, volume and subtitles apply at once.'),
+      'wide',
+    )}
+    ${card(
+      'Pronunciation',
+      area('voice.pronunciations', 5, 'maxlength="2000" placeholder="Pavolia Reine = Pah-VOH-lee-ah RAY-neh"') +
+        note('Words the voice says wrong, one per line: <code>word = how to say it</code>. Only the voice uses them; the text keeps the real spelling. Applying a researched preset fills these in too.'),
       'wide',
     )}
   </div>`
@@ -1157,6 +1167,11 @@ export function settingsScreen(): Screen {
       const fromPresets = new Set(s.presets.flatMap((x) => x.profile.catchphrases))
       const own = s.waifu.catchphrases.filter((c) => !fromPresets.has(c))
       s.waifu.catchphrases = [...own, ...p.profile.catchphrases].slice(0, MAX_CATCHPHRASES)
+      // How she speaks and how her name is said come along, when the research was for the language her voice speaks.
+      if (p.voice && p.voice.language === s.voice.language) {
+        if (p.voice.styleNotes.trim()) s.voice.styleNotes = p.voice.styleNotes
+        if (p.voice.pronunciations.trim()) s.voice.pronunciations = p.voice.pronunciations
+      }
     })
     ctx.toast(`${p.name} is now her persona. It takes effect from the next session.`)
     say(stripTags(p.profile.sampleLines[0] ?? '') || 'Nice to meet you, {you}.', 'delighted')

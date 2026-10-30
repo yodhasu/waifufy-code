@@ -117,5 +117,30 @@ await test('list and delete', async () => {
   eq((await C.listCards()).length, before.length - 1, 'deleted')
 })
 
+await test('the preset library is shared: a card keeps only the preset she plays, and a switch keeps the rest', async () => {
+  const t = structuredClone(s)
+  const preset = (id, name) => ({ id, name, series: '', notes: '', createdAt: 0, profile: {}, prompt: `You are ${name}`, sources: [] })
+  t.presets = [preset('ram-1', 'Ram'), preset('emilia-1', 'Emilia')]
+  t.waifu.activePreset = 'ram-1'
+  eq(C.cardOf(t).presets.map((p) => p.id), ['ram-1'], 'only the active preset on the card')
+  C.applyCard(t, { ...C.cardOf(t), presets: [preset('reine-1', 'Reine')] })
+  eq(t.presets.map((p) => p.id).sort(), ['emilia-1', 'ram-1', 'reine-1'], 'the library keeps everyone and gains hers')
+})
+
+await test('a card is brought up to date with settings an older app version edited', async () => {
+  const t = structuredClone(s)
+  t.card = 'rem'
+  t.waifu.personality = 'edited by 0.7.2'
+  await C.ensureCard(t, async () => 0)
+  eq((await C.readCard('rem')).waifu.personality, 'edited by 0.7.2', 'synced at startup')
+})
+
+await test('pronunciations respell whole words for the voice only, longest first', async () => {
+  const { pronounce } = await import('../../link/src/tts.ts')
+  const rules = 'Reine = RAY-neh\nPavolia Reine = Pah-VOH-lee-ah RAY-neh\nnot a rule'
+  eq(pronounce('I am Pavolia Reine!', rules), 'I am Pah-VOH-lee-ah RAY-neh!', 'full name first')
+  eq(pronounce('reine, not Reineke', rules), 'RAY-neh, not Reineke', 'whole words, any case')
+})
+
 console.log(failures ? `\n${failures} failed` : '\nAll passed')
 process.exit(failures ? 1 : 0)

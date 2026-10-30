@@ -94,6 +94,7 @@ export function defaultSettings(): Settings {
       volume: 80,
       subtitles: true,
       styleNotes: REM_VOICE_STYLE,
+      pronunciations: '',
     },
     slack: { clientId: '' },
     casual: {
@@ -148,6 +149,7 @@ export async function loadSettings(): Promise<Settings> {
   delete (s.voice as { provider?: unknown }).provider
   if (!VOICE_MODELS.includes(s.voice.model)) s.voice.model = 's2.1-pro-free'
   if (s.voice.language !== 'en') s.voice.language = 'ja'
+  if (typeof s.voice.pronunciations !== 'string') s.voice.pronunciations = ''
   // Only an empty folder gets the default here. A saved folder that is missing right now (an external drive not
   // plugged in yet) is kept; listing and serving costumes fall back to the default on their own meanwhile.
   if (!s.appearance.modelsDir) s.appearance.modelsDir = defaultModelsDir()

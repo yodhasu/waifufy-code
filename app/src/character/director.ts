@@ -43,8 +43,18 @@ export type Actor = {
    */
   emote?(e: Emotion): void
   gesture?(g: Gesture): void
-  react?(kind: 'tap' | 'pat'): void
+  /** A touch tier by its name (motions.ts, e.g. 'pat-shy'); the director plays the tier's marks. */
+  react?(kind: 'tap' | 'pat', tier: string): void
+  /** Each moment of a headpat stroke, for an actor that leans into the hand. */
+  stroke?(): void
+  /** A camera that moves round her (a 3D model): a right-drag turns it, a middle-drag raises it, reset puts it back. */
+  orbit?(dx: number, dy: number): void
+  pan?(dy: number): void
+  resetView?(): void
 }
+
+/** Each step of a touch tier, for an actor that plays tiers itself: its mark floats up this far apart. */
+const REACT_STEP_MS = 900
 
 export type DirectorHost = {
   motion(): MotionSettings
@@ -257,8 +267,14 @@ export function createDirector(host: DirectorHost) {
     react(kind: 'tap' | 'pat', tier: Tier) {
       if (!actor) return false
       if (actor.react) {
+        if (playing && playing.priority > PRIORITY[kind]) return false
         host.onGesture(tier.name)
-        actor.react(kind)
+        actor.react(kind, tier.name)
+        // Its marks float up step by step, and it counts as playing until they're done, so the headpat tiers keep pace.
+        const my = ++gen
+        playing = { kind, priority: PRIORITY[kind] }
+        tier.steps.forEach((step, i) => step.fx && window.setTimeout(() => my === gen && host.fx(step.fx!), i * REACT_STEP_MS))
+        window.setTimeout(() => my === gen && (playing = undefined), tier.steps.length * REACT_STEP_MS)
         return true
       }
       if (playing && playing.priority > PRIORITY[kind]) return false

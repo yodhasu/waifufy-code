@@ -4,7 +4,9 @@ import './character.css'
 import { createDirector, type Actor } from './director.ts'
 import { createFx } from './fx.ts'
 import { createInteract } from './interact.ts'
-import { BOX_H, BOX_LEFT, BOX_W, HIDDEN_DROP, PHONE_LANDSCAPE, PLACEMENTS, portraitPlacements, STAGE_H, STAGE_W } from './layout.ts'
+import {
+  BOX_H, BOX_LEFT, BOX_W, HIDDEN_DROP, MMD_SIDE_SCALE, PHONE_LANDSCAPE, PLACEMENTS, portraitPlacements, STAGE_H, STAGE_W, ZOOM_MAX, ZOOM_MIN, ZOOM_STEP,
+} from './layout.ts'
 // The engine is imported on first use (see startStage): it throws at import when the Cubism core is missing.
 import type { Rig, Stage } from './live2d.ts'
 import type { MmdActor } from './mmd.ts'
@@ -108,14 +110,33 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
   const patListeners = new Set<() => void>()
   /** Her voice's loudness while a clip plays; every rig loaded meanwhile follows it too. */
   let voiceLevel: (() => number) | undefined
-  const interact = createInteract({ root, box, actor, director, motion, fx: spawnFx, onPat: () => patListeners.forEach((f) => f()) })
+  /** The cursor's position in client pixels from the desktop shell, for when it is outside the window. */
+  const screenCursor =
+    '__TAURI_INTERNALS__' in window && !link.remote
+      ? async () => {
+          const w = await import('@tauri-apps/api/window')
+          const win = w.getCurrentWindow()
+          const [c, inner, k] = await Promise.all([w.cursorPosition(), win.innerPosition(), win.scaleFactor()])
+          return { x: (c.x - inner.x) / k, y: (c.y - inner.y) / k }
+        }
+      : undefined
+  const interact = createInteract({
+    root, box, actor, director, motion, fx: spawnFx, onPat: () => patListeners.forEach((f) => f()), screenCursor,
+    onZoom(steps) {
+      const z = store.get().appearance.zoom
+      const next = Math.round(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z - steps * ZOOM_STEP * 2)) * 100) / 100
+      if (next !== z) store.update((s) => void (s.appearance.zoom = next))
+    },
+  })
 
   // ---------------------------------------------------------------- rendering
 
   const stageScale = () => Number(stageEl.dataset.scale) || stageEl.getBoundingClientRect().width / STAGE_W || 1
   const portrait = () => stageEl.dataset.orient === 'portrait'
-  const spot = () =>
-    (portrait() ? portraitPlacements(stageEl.offsetHeight, stageEl.dataset.compact === 'on') : stageEl.dataset.device === 'phone' ? PHONE_LANDSCAPE : PLACEMENTS)[lastVisible]
+  const spot = () => {
+    const at = (portrait() ? portraitPlacements(stageEl.offsetHeight, stageEl.dataset.compact === 'on') : stageEl.dataset.device === 'phone' ? PHONE_LANDSCAPE : PLACEMENTS)[lastVisible]
+    return mmd && lastVisible === 'side' && !portrait() ? { ...at, scale: MMD_SIDE_SCALE } : at
+  }
   const visibleScale = () => spot().scale
   const resolution = () => Math.min(MAX_RESOLUTION, (devicePixelRatio || 1) * stageScale() * visibleScale())
 
@@ -353,6 +374,7 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
       dropPlaceholder()
       ds.model = 'mmd'
       ds.costume = ''
+      applyPlacement()
       return true
     } catch (e) {
       if (mmdLoading === file) mmdLoading = undefined
@@ -369,7 +391,7 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
     mmd = undefined
     old.destroy()
     if (stage) stage.app.canvas.style.display = ''
-    updateRunning()
+    applyPlacement()
     if (rig) {
       director.setActor(rig)
       interact.refresh()

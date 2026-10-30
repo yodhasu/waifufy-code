@@ -41,9 +41,10 @@ export function cardOf(s: Settings, prev?: WaifuCard): WaifuCard {
     version: 1,
     id: prev?.id ?? s.card,
     waifu: structuredClone(s.waifu),
-    presets: structuredClone(s.presets),
+    // The library is shared by every card; a card keeps only the preset she plays, so an export carries it.
+    presets: structuredClone(s.presets.filter((p) => p.id === s.waifu.activePreset)),
     look: { model: a.model, modelsDir: a.modelsDir, costume: a.costume, zoom: a.zoom, mmdFile: a.mmdFile },
-    voice: { voiceId: v.voiceId, language: v.language, speed: v.speed, styleNotes: v.styleNotes },
+    voice: { voiceId: v.voiceId, language: v.language, speed: v.speed, styleNotes: v.styleNotes, pronunciations: v.pronunciations },
     love: { points: prev?.love.points ?? 0 },
     createdAt: prev?.createdAt ?? now,
     updatedAt: now,
@@ -54,7 +55,8 @@ export function cardOf(s: Settings, prev?: WaifuCard): WaifuCard {
 export function applyCard(s: Settings, c: WaifuCard) {
   s.card = c.id
   s.waifu = structuredClone(c.waifu)
-  s.presets = structuredClone(c.presets)
+  // Her preset joins the shared library; the presets researched for anyone else stay.
+  s.presets = [...s.presets.filter((p) => !c.presets.some((x) => x.id === p.id)), ...structuredClone(c.presets)]
   // A card from another machine may name a models folder that isn't here: the default one stands in.
   const modelsDir = c.look.modelsDir && existsSync(c.look.modelsDir) ? c.look.modelsDir : s.appearance.modelsDir
   Object.assign(s.appearance, c.look, { modelsDir })
@@ -144,7 +146,12 @@ function newId(name: string) {
  */
 export function ensureCard(s: Settings, love: () => Promise<number>): Promise<string> {
   return serial(async () => {
-    if (isCardId(s.card) && existsSync(fileOf(s.card))) return s.card
+    if (isCardId(s.card) && existsSync(fileOf(s.card))) {
+      // settings.json is the live copy: an older version of the app may have edited it without knowing about cards.
+      const prev = await readCard(s.card)
+      if (prev) await writeCard(cardOf(s, prev))
+      return s.card
+    }
     const id = isCardId(s.card) ? s.card : slugify(s.waifu.name.trim() || defaultSettings().waifu.name) || 'character'
     s.card = id
     const c = cardOf(s)

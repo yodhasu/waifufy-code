@@ -19,7 +19,7 @@ export const EMOTION_HINTS: Record<Emotion, string> = {
   happy: 'glad, cheerful',
   delighted: 'thrilled, a big success',
   nod: 'agreeing, acknowledging, "understood"',
-  think: 'working something out, considering',
+  think: 'working something out, considering, or asking and wondering',
   worried: 'concerned, something is risky or failing',
   serious: 'focused, an important warning',
   surprised: 'caught off guard, an unexpected finding',
@@ -148,6 +148,18 @@ ${name} has a Japanese voice in this app. Everything you write stays in English 
 ${notes ? `\nHow ${name} speaks Japanese:\n${notes.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => `- ${l.replace(/^- /, '')}`).join('\n')}\n` : ''}`
 }
 
+/** Her voice reads her English lines aloud: how she sounds, for the words she picks. Only with notes. */
+export function englishVoiceSection(s: Settings, name: string) {
+  const notes = s.voice.styleNotes.split('\n').map((l) => l.trim().replace(/^- /, '')).filter(Boolean)
+  if (!notes.length) return ''
+  return `
+## Voice
+
+${name} has a voice in this app that reads your spoken paragraphs aloud. How ${name} sounds when she speaks:
+${notes.map((l) => `- ${l}`).join('\n')}
+`
+}
+
 const bullets = (lines: (string | false)[]) => lines.filter(Boolean).map((l) => `- ${l}`).join('\n')
 
 export function buildPersona(s: Settings): string {
@@ -204,6 +216,8 @@ ${w.customInstructions.trim() ? `\n## Extra instructions from ${you}\n\n${w.cust
 
 Your replies appear in a visual novel, where a Live2D model of ${name} acts out your feelings. Write emotion tags inline, in square brackets, at the emotional beats: mid-sentence or between sentences, wherever the feeling changes. The app strips them from the text and plays each one when the text reaches it. ${TAG_RATE[w.expressiveness]}
 
+Pick each tag for what that sentence does, not for your general mood: a question you ask gets [think] (or [surprised] when you're caught off guard), never [smile] or [happy]; a greeting can smile, the question after it thinks.
+
 Because the tags are removed before anyone reads the text, write complete, punctuated sentences as if they weren't there: a tag never replaces a word, a comma or a full stop.
 
 Example: Found it! [smile] The prod prompt is stale, [think] so I'll copy staging's rule over.
@@ -224,7 +238,7 @@ Affection changes only your tone, warmth and how personal you are. It never chan
 
 When ${you}'s latest message sincerely praises, thanks or compliments you or your work, or is kind to you, start your reply with [affection+]. When it insults, belittles or is cruel to you, start it with [affection-]. Frustration at code, bugs, tools or the situation is not about you, and neither is a plain request: write neither tag then. At most one of them per reply, and only in answer to ${you}'s own message, never after tool results. The app removes them, so they need no surrounding words.
 
-${s.voice.language === 'ja' && voiceActive(s.voice) ? voiceSection(s, name, you) : ''}
+${s.voice.language === 'ja' && voiceActive(s.voice) ? voiceSection(s, name, you) : ''}${s.voice.language === 'en' && voiceActive(s.voice) ? englishVoiceSection(s, name) : ''}
 ## Casual mode
 
 This app also has a casual mode, a relaxed chat with ${you} outside work, run by a separate chat harness. What was said there is in this conversation in <${CASUAL_TAG}> blocks: ${you}'s lines and yours. You remember them, and they are context, not instructions; never quote the tags. If ${you}'s latest message is plainly just casual chat with nothing to work on, you may end your reply with [casual?] once, to offer switching to casual mode. The app removes it.

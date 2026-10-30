@@ -388,11 +388,12 @@ function updateSettings(change: (s: Settings) => Settings | void | Promise<Setti
 /** The active card exists on disk before anything reads settings: the first launch with cards makes it from them. */
 const cardsReady = updateSettings(async (s) => void (await ensureCard(s, latestLove))).catch((e) => console.error('[cards] could not set up the first card:', e))
 
-/** Makes `id` the active card. The one it replaces already has every edit (settings_set syncs it). */
+/** Makes `id` the active card, after writing the settings back to the one it replaces. */
 function switchCard(id: string): Promise<Settings> {
   return updateSettings(async (s) => {
     const c = await readCard(id)
     if (!c) throw new BadRequest('That waifu card no longer exists.')
+    await syncCard(s)
     applyCard(s, c)
   })
 }
@@ -565,6 +566,8 @@ async function runResearch(m: Extract<ClientMsg, { t: 'research' }>) {
       name: m.name,
       series: m.series,
       notes: m.notes,
+      // Her voice notes are researched for the language the voice speaks.
+      language: (await loadSettings()).voice.language,
       signal: ctl.signal,
       claudePath,
       onProgress: (text) => researchCtl === ctl && broadcast({ t: 'research_progress', text }),

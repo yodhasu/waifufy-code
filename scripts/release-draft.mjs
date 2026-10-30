@@ -39,25 +39,23 @@ run(`git push origin ${branch}`)
 const notes = join(tmpdir(), `waifufy-${tag}-notes.md`)
 writeFileSync(
   notes,
-  `Waifufy Code ${version}: waifu cards, and her in 3D
+  `Waifufy Code ${version}: her in 3D, closer to life
 
-Everything that makes her *her* now lives on a waifu card you can swap, and a card can draw her as a 3D model.
-
-**Waifu cards** (Settings → Cards)
-- A card is one whole character: her persona, her Roleplay presets, her model, her voice and her **love meter**. Make a new one, duplicate one, and swap between sessions; resuming a save swaps to the card it was played with
-- The love meter belongs to the card now: it carries from one New Game to the next, and each card has its own
-- What she remembers about you stays with each card on your computer and is never put in a card file. Export a card as a \`.waifu.json\`, import one as a new card
-- Upgrading makes your first card from your current settings, keeping her memory and your latest love meter
+A patch for 0.8.0's 3D cards, her voice and the preset library.
 
 **Her in 3D**
-- A card can draw her as an MMD model (\`.pmx\`): MMD shading and outlines, hair and cloth physics, her emotions as face expressions and small head and shoulder movements, lip sync with her voice, eyes that follow the cursor
-- Bring your own model; if it can't load, her Live2D costume stands in
+- She turns the right way toward the cursor, follows it across the whole screen, and moves from the waist up, not just her head
+- She breathes, leans into a headpat (with the Live2D headpat and tap reactions and their hearts), and stands taller beside Settings
+- **Zoom** with the wheel over her (Live2D too); on a 3D card a **right-drag** turns the camera round her, a middle-drag moves it up and down, a right double-click puts it back
+- Her face fits what she says: lip sync isn't fighting a laughing mouth any more, and a question doesn't come with a smile
 
-**Messages while she works, as in the CLI**
-- **Enter** reaches her at her next step (when the running tool call finishes); **Ctrl+X Enter** waits until her turn ends
-- **Send now** (Ctrl+Enter, Ctrl+X Ctrl+S, or the button on the queue) sends what you queued and your draft at once
-- **Esc** interrupts and sends what you queued next; **Ctrl+S** stashes the draft; **↑** takes queued messages back
-- The queue sits on the input's top edge, clear of the quick menu
+**Her voice**
+- **Pronunciation**: tell the voice how to say words it gets wrong (\`Pavolia Reine = Pah-VOH-lee-ah RAY-neh\`); the text keeps the real spelling
+- Roleplay research now writes how she speaks in your voice's language and those respellings, and Apply fills them in
+
+**Waifu cards**
+- The preset library is shared by every card, so swapping cards no longer swaps it away
+- A swap, or settings edited by an older version, never loses an edit
 
 Install: \`Waifufy-Code-${version}-setup.exe\` on Windows, the \`.apk\` on Android (arm64).
 `,

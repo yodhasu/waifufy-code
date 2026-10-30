@@ -133,21 +133,59 @@ function relaxedPose() {
   return pose
 }
 
+/** One breath, in seconds: a quicker inhale than exhale, as at rest. */
+const BREATH_S = 4.4
+/** 0 (breathed out) – 1 (breathed in), rising for the first 40% of the cycle and easing out after. */
+function breath(t: number) {
+  const u = (t / BREATH_S) % 1
+  return u < 0.4 ? 0.5 - 0.5 * Math.cos((Math.PI * u) / 0.4) : 0.5 + 0.5 * Math.cos((Math.PI * (u - 0.4)) / 0.6)
+}
+
 /** Always on top: breathing, a slow sway, small head movements. */
 function idle(name: string, t: number): Turn | null {
   const tau = Math.PI * 2
+  const b = breath(t)
   // A slow weight shift at the hips (leg IK keeps her feet planted); the upper body leans back the other way so her
   // head stays level. It is what sets the skirt and hair swinging.
   const hip = 0.022 * Math.sin((tau * t) / 6.7)
   if (name === '下半身') return [0, 0.01 * Math.sin((tau * t) / 8.3), hip]
-  if (name === '上半身2') return [0.018 * Math.sin((tau * t) / 4.2), 0, 0]
+  // Breathing in, the chest rises and opens back a little and the shoulders lift; the neck keeps her head level.
+  if (name === '上半身2') return [-0.028 * b, 0, 0]
+  if (name === '首') return [0.02 * b, 0, 0]
+  if (name === '左肩') return [0, 0, 0.022 * b]
+  if (name === '右肩') return [0, 0, -0.022 * b]
   if (name === '上半身') return [0, 0.012 * Math.sin((tau * t) / 9.1), 0.01 * Math.sin((tau * t) / 7.3) - 0.8 * hip]
   if (name === '頭') return [0.012 * Math.sin((tau * t) / 6.1), 0.025 * Math.sin((tau * t) / 9.7), 0.01 * Math.sin((tau * t) / 11.3)]
   return null
 }
 
-/** How far she turns toward the cursor at full focus (radians): the head most, the neck a little, the eyes on top. */
-const LOOK = { 頭: [0.14, 0.32], 首: [0.05, 0.12], 両目: [0.08, 0.16] } as const
+const IDLE_BONES = ['下半身', '上半身', '上半身2', '首', '左肩', '右肩', '頭']
+
+/**
+ * A head turn carried down her body, so she moves from the waist up rather than from the neck: the neck, chest and
+ * waist each take a share of it (on top of what a stance gives them itself).
+ */
+const CARRY: [string, number][] = [['首', 0.3], ['上半身2', 0.22], ['上半身', 0.12]]
+function carried(turns: Record<string, number[]>): Record<string, number[]> {
+  const head = turns['頭']
+  if (!head) return turns
+  const out: Record<string, number[]> = { ...turns }
+  for (const [bone, k] of CARRY) {
+    const own = out[bone] ?? [0, 0, 0]
+    // Nods stay mostly in the neck; turns and tilts spread further.
+    out[bone] = [own[0]! + head[0]! * k * 0.5, own[1]! + head[1]! * k, own[2]! + head[2]! * k]
+  }
+  return out
+}
+
+/**
+ * How far she turns toward the cursor at full focus (radians, [pitch, turn]), from the waist up: the head most, the
+ * neck, chest and waist each a little, the eyes on top. About 35° of turn in all.
+ */
+const LOOK = { 上半身: [0.02, 0.06], 上半身2: [0.03, 0.09], 首: [0.05, 0.12], 頭: [0.1, 0.24], 両目: [0.08, 0.16] } as const
+/** While her head is stroked: a dip into the hand, and a small sway from side to side. */
+const PAT_DIP = 0.12
+const PAT_SWAY = 0.05
 
 /**
  * The engine on a stand-in rig. `update(dt)` moves the stand-in; read `controlled` (the bones it drives) and `face`
@@ -169,7 +207,10 @@ export function createEngine(rig: Rig) {
   let beat: { d: number; f: (u: number) => Record<string, number[]>; t: number } | null = null
   // Eyelids closed by the face (まばたき in a face), apart from blinking: the more closed of the two shows.
   let t = 0, nextBlink = 2, blinkT = -1, lids = 0
-  const look = { x: 0, y: 0, tx: 0, ty: 0 }
+  const look = { x: 0, y: 0, tx: 0, ty: 0, bx: 0, by: 0 }
+  /** 0 – 1: how much her head is being stroked right now. */
+  let pat = 0
+  let patUntil = 0
 
   function setPose(target: Map<string, Quaternion>, instant: boolean) {
     const now = performance.now()
@@ -184,7 +225,7 @@ export function createEngine(rig: Rig) {
   function emote(name: Emotion, instant = false) {
     const e = EMOTES[name]
     const target = new Map(relaxed)
-    for (const [n, v] of Object.entries(e.stance)) {
+    for (const [n, v] of Object.entries(carried(e.stance as Record<string, number[]>))) {
       const q = target.get(n)?.clone() ?? new Quaternion()
       target.set(n, q.multiply(new Quaternion().setFromEuler(new Euler(v![0], v![1], v![2], 'YXZ'))))
     }
@@ -217,17 +258,25 @@ export function createEngine(rig: Rig) {
       beat.t += dt
       const u = beat.t / beat.d
       if (u >= 1) beat = null
-      else for (const [n, v] of Object.entries(beat.f(u))) turn(bone[n], v)
+      else for (const [n, v] of Object.entries(carried(beat.f(u)))) turn(bone[n], v)
     }
-    for (const name of ['下半身', '上半身', '上半身2', '頭']) {
+    for (const name of IDLE_BONES) {
       const v = idle(name, t)
       if (v) turn(bone[name], v)
     }
     const k = Math.min(1, dt * 4)
-    look.x += (look.tx - look.x) * k
-    look.y += (look.ty - look.y) * k
-    // Positive x is to her left as you see her (screen right): a turn about up; y up lifts her chin.
-    for (const [n, [pitch, yaw]] of Object.entries(LOOK)) turn(bone[n], [-look.y * pitch, -look.x * yaw, 0])
+    // Where to look: the cursor, on top of the camera's direction (she faces whoever is looking at her).
+    const tx = Math.max(-1.6, Math.min(1.6, look.tx + look.bx))
+    const ty = Math.max(-1.2, Math.min(1.2, look.ty + look.by))
+    look.x += (tx - look.x) * k
+    look.y += (ty - look.y) * k
+    // Screen right (x > 0) is her left: in three's axes a turn about up toward +x is positive. y up lifts her chin.
+    for (const [n, [pitch, yaw]] of Object.entries(LOOK)) turn(bone[n], [-look.y * pitch, look.x * yaw, 0])
+    pat += ((performance.now() < patUntil ? 1 : 0) - pat) * Math.min(1, dt * 5)
+    if (pat > 0.001) {
+      turn(bone['頭'], [PAT_DIP * pat, 0, PAT_SWAY * pat * Math.sin(t * 5)])
+      turn(bone['首'], [PAT_DIP * 0.4 * pat, 0, 0])
+    }
     if (faceLater && t >= faceLater.at) (faceTarget = faceLater.face), (faceLater = null)
     const ease = Math.min(1, dt * 6)
     for (const n of new Set([...Object.keys(faceTarget), ...Object.keys(face)])) {
@@ -246,6 +295,15 @@ export function createEngine(rig: Rig) {
     look(x: number, y: number) {
       look.tx = Math.max(-1, Math.min(1, x))
       look.ty = Math.max(-1, Math.min(1, y))
+    },
+    /** Where "straight ahead" is, in the same units: toward the camera when it has moved round her. */
+    lookBase(x: number, y: number) {
+      look.bx = x
+      look.by = y
+    },
+    /** Her head is being stroked: she leans into it for a moment after each call. */
+    stroked(ms: number) {
+      patUntil = performance.now() + ms
     },
   }
 }
