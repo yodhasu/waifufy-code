@@ -27,6 +27,13 @@ export function createStore(link: Link, initial: Settings): Store {
     for (const fn of subs) fn(settings)
   })
 
+  function send() {
+    clearTimeout(timer)
+    timer = undefined
+    synced = settings
+    link.send({ t: 'settings_set', settings })
+  }
+
   return {
     get: () => settings,
     update(mutate) {
@@ -35,11 +42,10 @@ export function createStore(link: Link, initial: Settings): Store {
       settings = next
       for (const fn of subs) fn(settings)
       clearTimeout(timer)
-      timer = window.setTimeout(() => {
-        timer = undefined
-        synced = settings
-        link.send({ t: 'settings_set', settings })
-      }, SAVE_DEBOUNCE_MS)
+      timer = window.setTimeout(send, SAVE_DEBOUNCE_MS)
+    },
+    flush() {
+      if (timer !== undefined) send()
     },
     subscribe(fn) {
       subs.add(fn)

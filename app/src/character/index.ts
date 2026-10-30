@@ -7,11 +7,13 @@ import { createInteract } from './interact.ts'
 import { BOX_H, BOX_LEFT, BOX_W, HIDDEN_DROP, PHONE_LANDSCAPE, PLACEMENTS, portraitPlacements, STAGE_H, STAGE_W } from './layout.ts'
 // The engine is imported on first use (see startStage): it throws at import when the Cubism core is missing.
 import type { Rig, Stage } from './live2d.ts'
+import type { MmdActor } from './mmd.ts'
 import type { Mark } from './motions.ts'
 import { createPlaceholder, type Placeholder } from './placeholder.ts'
 
-// The character layer (#chara): loads Rem's costumes, keeps her alive and lets her be touched. Everything she
-// does goes through the director, which drives either the Live2D rig or the placeholder sprite.
+// The character layer (#chara): loads her costumes, keeps her alive and lets her be touched. Everything she does
+// goes through the director, which drives the Live2D rig, a 3D (MMD) model when the waifu card has one, or the
+// placeholder sprite.
 
 const COSTUMES_TIMEOUT_MS = 8000
 /**
@@ -76,6 +78,10 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
   let stage: Stage | undefined
   let stageReady: Promise<Stage> | undefined
   let rig: Rig | undefined
+  /** The card's 3D model, when it has one; it takes the Live2D rig's place while it is loaded. */
+  let mmd: MmdActor | undefined
+  /** The .pmx being loaded, so a newer card wins over an older one still in flight. */
+  let mmdLoading: string | undefined
   let sprite: Placeholder | undefined
   let list: Costume[] = []
   /** The costume being loaded, so a newer request wins over an older one still in flight. */
@@ -86,7 +92,7 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
   let lastVisible: Exclude<Placement, 'hidden'> = 'title'
   let hideTimer: number | undefined
 
-  const actor = (): Actor | undefined => rig ?? sprite
+  const actor = (): Actor | undefined => mmd ?? rig ?? sprite
   const fx = createFx(fxLayer)
   const spawnFx = (mark: Mark) => {
     const a = actor()
@@ -114,7 +120,9 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
   const resolution = () => Math.min(MAX_RESOLUTION, (devicePixelRatio || 1) * stageScale() * visibleScale())
 
   function updateRunning() {
-    stage?.setRunning(rig !== undefined && !document.hidden && placement !== 'hidden')
+    const shown = !document.hidden && placement !== 'hidden'
+    stage?.setRunning(rig !== undefined && !mmd && shown)
+    mmd?.setRunning(shown)
   }
 
   let resizeTimer: number | undefined
@@ -122,7 +130,7 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
     // A portrait stage changes height with the window, and her spot hangs from its bottom.
     if (portrait()) applyPlacement()
     clearTimeout(resizeTimer)
-    resizeTimer = window.setTimeout(() => stage?.setResolution(resolution()), RESIZE_DEBOUNCE_MS)
+    resizeTimer = window.setTimeout(() => (stage?.setResolution(resolution()), mmd?.setResolution(resolution())), RESIZE_DEBOUNCE_MS)
   })
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) interact.reset()
@@ -130,7 +138,11 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
   })
   // Full motion only where it is watched: 60 fps in the focused desktop window, 30 on a phone (battery) or while
   // another window is in front. Her breathing and blinks look the same at 30.
-  const updateFps = () => stage?.setFps(stageEl.dataset.device !== 'phone' && document.hasFocus() ? FPS_FRONT : FPS_BACK)
+  const updateFps = () => {
+    const fps = stageEl.dataset.device !== 'phone' && document.hasFocus() ? FPS_FRONT : FPS_BACK
+    stage?.setFps(fps)
+    mmd?.setFps(fps)
+  }
   addEventListener('focus', updateFps)
   addEventListener('blur', updateFps)
 
@@ -143,6 +155,7 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
     if (placement === 'hidden') fx.clear(), (hideTimer = window.setTimeout(updateRunning, HIDE_MS))
     else updateRunning()
     stage?.setResolution(resolution())
+    mmd?.setResolution(resolution())
     interact.refresh()
   }
 
@@ -186,7 +199,7 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
   }
 
   function showPlaceholder() {
-    if (sprite || rig) return
+    if (sprite || rig || mmd) return
     sprite = createPlaceholder(box, store.get().appearance.zoom)
     sprite.setVoice(voiceLevel)
     box.insertBefore(sprite.el, fxLayer)
@@ -248,6 +261,8 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
 
   /** Loads a costume and swaps to it. On any failure she keeps what she has and it is only logged. */
   async function swapTo(id: string, withGesture: boolean) {
+    // A 3D card has no costumes; the Live2D one loads again when the card goes back to Live2D.
+    if (mmd || mmdLoading) return
     const costume = list.find((c) => c.id === id)
     if (!costume) return void console.warn(`[waifufy-code] no costume "${id}" in the models folder`)
     loading = id
@@ -306,8 +321,75 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
     if (!rig) showPlaceholder()
   }
 
+  // ---------------------------------------------------------------- a 3D card
+
+  /** The .pmx the card asks for, or undefined for Live2D. */
+  const wantedMmd = () => {
+    const a = store.get().appearance
+    return a.model === 'mmd' && a.mmdFile.trim() ? a.mmdFile.trim() : undefined
+  }
+
+  /** Loads the card's 3D model and puts it in the Live2D rig's place. False when it couldn't (she keeps her look). */
+  async function useMmd(file: string) {
+    if (mmd?.file === file) return true
+    mmdLoading = file
+    try {
+      // The link serves the folder of the active card's .pmx; textures load from it by their relative paths.
+      const name = file.split(/[\\/]/).pop()!
+      const { loadMmd } = await import('./mmd.ts')
+      const next = await loadMmd(box, fxLayer, `${link.base}/mmd/${encodeURIComponent(name)}`, file, store.get().appearance.zoom, resolution())
+      if (mmdLoading !== file) return next.destroy(), false
+      mmdLoading = undefined
+      const prev = mmd
+      mmd = next
+      prev?.destroy()
+      next.setVoice(voiceLevel)
+      if (stage) stage.app.canvas.style.display = 'none'
+      updateRunning()
+      updateFps()
+      fx.clear()
+      director.setActor(next)
+      interact.refresh()
+      dropPlaceholder()
+      ds.model = 'mmd'
+      ds.costume = ''
+      return true
+    } catch (e) {
+      if (mmdLoading === file) mmdLoading = undefined
+      console.warn(`[waifufy-code] her 3D model (${file}) failed to load; showing her Live2D costume`, e)
+      return false
+    }
+  }
+
+  /** Back to the Live2D costume (or the placeholder until it loads). */
+  function dropMmd() {
+    mmdLoading = undefined
+    const old = mmd
+    if (!old) return
+    mmd = undefined
+    old.destroy()
+    if (stage) stage.app.canvas.style.display = ''
+    updateRunning()
+    if (rig) {
+      director.setActor(rig)
+      interact.refresh()
+      ds.model = 'live2d'
+      ds.costume = rig.costume
+    } else showPlaceholder()
+    void reloadFolder()
+  }
+
+  /** Follows the card: its 3D model when it has one, else the Live2D costume. */
+  async function applyModel() {
+    const want = wantedMmd()
+    if (want && (await useMmd(want))) return
+    if (want && mmdLoading) return
+    dropMmd()
+    if (!rig) await reloadFolder()
+  }
+
   const ready = Promise.race([
-    reloadFolder(),
+    applyModel(),
     new Promise<void>((r) => setTimeout(r, READY_TIMEOUT_MS)),
   ]).then(() => {
     if (!rig) showPlaceholder()
@@ -318,18 +400,23 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
 
   // A listing lost to a sidecar restart is asked for again once the link is back (R24).
   link.onStatus((status) => {
-    if (status === 'up' && !rig && loading === undefined) void reloadFolder()
+    if (status === 'up' && !rig && !mmd && loading === undefined && mmdLoading === undefined) void applyModel()
   })
 
   // ---------------------------------------------------------------- live settings
 
   let lastSettings = store.get()
   let folderTimer: number | undefined
+  let modelTimer: number | undefined
   store.subscribe((s) => {
     const was = lastSettings
     lastSettings = s
     if (s.appearance.zoom !== was.appearance.zoom) actor()?.setZoom(s.appearance.zoom)
-    if (s.appearance.modelsDir !== was.appearance.modelsDir) {
+    if (s.appearance.model !== was.appearance.model || s.appearance.mmdFile !== was.appearance.mmdFile) {
+      // After the store has saved settings.json: the link serves the 3D model of the card as it has it on disk.
+      clearTimeout(modelTimer)
+      modelTimer = window.setTimeout(() => void applyModel(), FOLDER_SETTLE_MS)
+    } else if (s.appearance.modelsDir !== was.appearance.modelsDir) {
       clearTimeout(folderTimer)
       folderTimer = window.setTimeout(() => void reloadFolder(), FOLDER_SETTLE_MS)
     } else if (s.appearance.costume !== was.appearance.costume && s.appearance.costume !== (loading ?? rig?.costume)) {
@@ -397,7 +484,10 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
         const r = el.getBoundingClientRect()
         return [(r.left - stageRect.left) / s, (r.top - stageRect.top) / s, r.width / s, r.height / s] as const
       }
-      if (rig && stage) {
+      if (mmd) {
+        mmd.render()
+        g.drawImage(mmd.canvas, ...at(mmd.canvas))
+      } else if (rig && stage) {
         // The WebGL buffer is only valid in the task that drew it, so render and copy back to back.
         stage.app.render()
         g.drawImage(stage.app.canvas, ...at(stage.app.canvas))
@@ -418,7 +508,7 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
 
   return {
     ready,
-    hasModel: () => rig !== undefined,
+    hasModel: () => rig !== undefined || mmd !== undefined,
     costumes: () => list,
     async setCostume(id) {
       if (!list.some((c) => c.id === id)) list = await fetchCostumes().catch(() => list)

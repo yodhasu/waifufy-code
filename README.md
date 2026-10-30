@@ -64,13 +64,16 @@ For her voice, get a key at [fish.audio](https://fish.audio/app/api-keys), paste
 | Key | Does |
 |---|---|
 | Enter · Shift+Enter, Ctrl+J or `\` Enter | Send · new line |
-| Enter while she works · Ctrl+Enter | Queue for her next step · send now, into the running turn |
+| Enter while she works | She reads it at her next step (when the running tool call finishes), as the CLI does |
+| Ctrl+Enter · Ctrl+X Ctrl+S · Send now | Send now, with anything queued: work that can go to the background goes there, else her turn stops for it |
+| Ctrl+X Enter | Queue until her turn ends (× removes a queued message, ↑ takes them back) |
+| Ctrl+S | Stash the draft; on an empty prompt, bring it back |
 | ↑ ↓ · Ctrl+R | Input history per project · search it (Enter runs, Tab edits) |
 | `/` · Ctrl+K · `?` | Commands · the command palette · the shortcut sheet |
 | `@` | Mention a file, folder or agent (`@agent-Explore`) |
 | `!` | Shell command in the session folder; she answers the output, as the CLI does (`respondToBashCommands`) |
 | Paste / drop / 📎 / Alt+V | Images |
-| Esc · Ctrl+C | Close the top menu, then interrupt · Esc Esc on an empty prompt: rewind |
+| Esc · Ctrl+C | Close the top menu, then interrupt (what you queued goes out next) · Esc Esc on an empty prompt: rewind |
 | Shift+Tab | Permission mode: manual → accept edits → plan (→ auto); on a permission prompt, accept and switch |
 | Ctrl+O · Ctrl+L · Ctrl+B | LOG (the full trace) · clear the prompt · send the running command to the background |
 | Tab on an empty prompt | Take her greyed suggestion for the next prompt |
@@ -92,6 +95,13 @@ Pat her head, tap her, or open 👗 to change her costume.
 
 Settings (⚙ or `/config`) has a tab for each part:
 
+- **Cards**: waifu cards. Each card is a whole character: her Waifu-tab persona, her Roleplay presets, her model
+  (a Live2D costume, or a 3D MMD `.pmx`: babylon-mmd draws it with MMD shading, outlines and Bullet physics, and
+  plays her emotions with its face morphs and small head and shoulder movements), her voice
+  (voice id, language, speed, Japanese style notes) and her love meter. Make a new card, duplicate one, swap
+  between sessions, export one to a `.waifu.json` file or import one. Resuming a save swaps to the card it was
+  played with. What she remembers about you (casual memory, her mood) stays with each card on this computer and is
+  never exported; your profile and app settings stay the same whichever card is in.
 - **You**: name, how she addresses you, pronouns, title, a note about you, avatar, nameplate color.
 - **Waifu**: her name and series, your relationship (maid, childhood friend, senpai, kouhai, partner, rival, or your
   own), a personality preset (devoted, tsundere, kuudere, dandere, genki, onee-san, yandere-lite, ojou-sama,
@@ -109,6 +119,7 @@ Persona changes apply from the next session; everything else applies live.
 ## Data
 
 - Settings, saves, thumbnails: `%APPDATA%\waifufy-code\`
+- Waifu cards: `%APPDATA%\waifufy-code\cards\` (one `<id>.json` each); her memory per card in `memory\<id>\`
 - Logs: `%APPDATA%\waifufy-code\logs\` (`link.log` from the sidecar, `sidecar.log` from the shell)
 - Transcripts stay where Claude Code keeps them (`~\.claude\projects\`), so `claude --resume` in a terminal
   finds the same sessions. Deleting a save only removes it from the app's list.

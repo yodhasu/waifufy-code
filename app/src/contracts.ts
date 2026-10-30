@@ -28,6 +28,8 @@ export type Store = {
   /** Applies a change locally, notifies subscribers, and persists it (debounced). */
   update(mutate: (s: Settings) => void): void
   subscribe(fn: (s: Settings) => void): () => void
+  /** Sends a pending edit now, so a request sent after it (a card swap) can't be overtaken by it. */
+  flush(): void
 }
 
 // ---------------------------------------------------------------- character (app/src/character/)
@@ -98,6 +100,10 @@ export type Ctx = {
   confirm(title: string, body: string, yes?: string, no?: string): Promise<boolean>
   /** Opens the OS folder picker; resolves '' when cancelled. */
   pickFolder(title: string, defaultPath?: string): Promise<string>
+  /** Opens the OS file picker for one file of the given extensions (no dots); resolves its path, '' when cancelled or on the phone. */
+  pickFile(title: string, name: string, extensions: string[], defaultPath?: string): Promise<string>
+  /** Opens the OS save dialog; resolves the chosen path, '' when cancelled or on the phone. */
+  pickSavePath(title: string, defaultPath: string, name: string, extensions: string[]): Promise<string>
   /** Opens the OS file picker for images; resolves data URLs. */
   pickImages(multiple: boolean): Promise<{ name: string; dataUrl: string }[]>
 }

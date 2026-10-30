@@ -20,7 +20,8 @@ import { openMemory, type Memory } from './memory.ts'
 import type { PoolEntry } from './prompt.ts'
 
 /** A character's files (heart, memory) are keyed by her name. */
-export const characterSlug = (s: Settings) => slugify(s.waifu.name.trim() || defaultSettings().waifu.name) || 'character'
+/** Where her memory and mood live: the active card's id. Before cards (and the first card keeps it), the slug of her name. */
+export const characterSlug = (s: Settings) => s.card || slugify(s.waifu.name.trim() || defaultSettings().waifu.name) || 'character'
 
 /** The running session's heart, for the voice speed (server.ts). */
 let active: HeartBox | undefined

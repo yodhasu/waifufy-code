@@ -41,6 +41,12 @@ const MIME: Record<string, string> = {
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
   '.ogg': 'audio/ogg',
+  // MMD (a 3D card): the model, its textures and toon/sphere maps.
+  '.pmx': 'application/octet-stream',
+  '.tga': 'image/x-tga',
+  '.bmp': 'image/bmp',
+  '.spa': 'image/bmp',
+  '.sph': 'image/bmp',
 }
 
 /** Costume id → its folder, from the last listing. Ids not listed yet are looked up in the known roots. */
@@ -168,6 +174,26 @@ export async function serveModel(pathname: string, res: ServerResponse) {
   if (!folder) return reply(res, 404, 'no such costume')
   const file = resolve(folder, ...rest)
   if (!file.startsWith(resolve(folder) + sep)) return reply(res, 403, 'forbidden')
+  await sendFile(res, file)
+}
+
+const MMD_FILES = new Set(['.pmx', '.png', '.jpg', '.jpeg', '.tga', '.bmp', '.spa', '.sph', '.gif', '.webp'])
+
+/**
+ * Serves `/mmd/<path>` from the folder of the active card's .pmx (a 3D card), for the 3D stage: the model by its
+ * file name, its textures by their relative paths. Nothing outside that folder, and nothing while the card is Live2D.
+ */
+export async function serveMmd(pathname: string, res: ServerResponse) {
+  const parts = segments(pathname.slice('/mmd/'.length))
+  if (!parts) return reply(res, 400, 'bad request')
+  if (!parts.length || parts.some((p) => BAD_SEGMENT.test(p))) return reply(res, 403, 'forbidden')
+  const { appearance: a } = await loadSettings()
+  if (a.model !== 'mmd' || !a.mmdFile.toLowerCase().endsWith('.pmx')) return reply(res, 404, 'no 3D model on this card')
+  const folder = resolve(a.mmdFile, '..')
+  const file = resolve(folder, ...parts)
+  if (!file.startsWith(folder + sep)) return reply(res, 403, 'forbidden')
+  // The phone listener serves these too, without the token: the model and its textures only, never the folder's other files.
+  if (!MMD_FILES.has(extname(file).toLowerCase())) return reply(res, 403, 'forbidden')
   await sendFile(res, file)
 }
 

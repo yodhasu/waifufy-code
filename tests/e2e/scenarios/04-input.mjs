@@ -17,6 +17,13 @@ const CONFIRM_MS = 1500
 
 const inputValue = (app) => app.value(T('chat-input'))
 
+/**
+ * Ctrl+X as the composer sees it. Headless Chrome driven over CDP never hands the page a Ctrl+X keydown (it runs its
+ * cut command instead; Ctrl+S and Ctrl+L do arrive), so the test dispatches the keydown itself.
+ */
+const ctrlX = (app) =>
+  app.eval(() => document.querySelector('[data-test="chat-input"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'x', code: 'KeyX', ctrlKey: true, bubbles: true, cancelable: true })))
+
 async function clearInput(app) {
   await focusInput(app)
   await app.key('Ctrl+A')
@@ -96,41 +103,103 @@ export default {
     },
     {
       r: 'R11',
-      name: 'typing while she works queues the message as a chip; it goes out at the next turn; × removes one',
+      name: 'Enter while she works reaches her at her next step: sent at once, a chip until her next step',
       timeout: 90_000,
       async run({ app, project }) {
         await freshChat(app, project)
-        const m = await say(app, 'use some tools please')
+        // The slow rebuild: its steps are far enough apart to see the chip before her next one.
+        const m = await say(app, 'go slow please')
         await app.waitEvent('tool', {}, m, 15_000)
         await focusInput(app)
-        await app.type('queued one')
+        await app.type('steer one')
         await app.key('Enter')
-        await app.waitVisible(T('queue-chip'))
-        await app.type('queued two')
-        await app.key('Enter')
-        await app.waitFor(() => document.querySelectorAll('[data-test="queue-chip"]').length === 2, { label: 'two chips' })
-        const chips = await app.texts(T('queue-chip'))
-        assert(chips[0].includes('queued one') && chips[1].includes('queued two'), `chip texts ${chips}`)
+        const sent = await app.waitSent('say', { text: 'steer one' }, m, 5_000)
+        assert(!sent.now, 'not a send-now')
+        await app.waitVisible(`${T('queue-chip')}.sent`)
+        eq(await app.count(`${T('queue-chip')}.sent button`), 0, 'a sent message has no ×: it is already hers')
+        // Her next step (a finished tool call, or the end of the turn) clears it.
+        await app.waitHidden(T('queue-chip'), 60_000)
+        await turnEnd(app, m, 60_000)
+        await readAll(app)
+      },
+    },
+    {
+      r: 'R11',
+      name: 'Ctrl+X Enter holds a message until her turn ends; × removes one; ↑ takes the rest back',
+      timeout: 90_000,
+      async run({ app, project }) {
+        await freshChat(app, project)
+        // The slow rebuild: a turn long enough to type several messages into.
+        const m = await say(app, 'go slow please')
+        await app.waitEvent('tool', {}, m, 15_000)
+        await focusInput(app)
+        for (const text of ['held one', 'held two', 'held three']) {
+          await app.type(text)
+          await ctrlX(app)
+          await app.key('Enter')
+        }
+        await app.waitFor(() => document.querySelectorAll('[data-test="queue-chip"]:not(.sent)').length === 3, { label: 'three held chips' })
+        assert(!(await app.sent(m, 'say')).some((s) => s.text.startsWith('held')), 'nothing held was sent yet')
         await app.eval(() => {
-          const chip = [...document.querySelectorAll('[data-test="queue-chip"]')].find((c) => c.textContent.includes('queued two'))
-          const x = chip.querySelector('button, [role=button], .x, .remove') ?? chip
-          x.setAttribute('data-e2e-pick', 'x')
+          const chip = [...document.querySelectorAll('[data-test="queue-chip"]')].find((c) => c.textContent.includes('held two'))
+          chip.querySelector('button').setAttribute('data-e2e-pick', 'x')
         })
         await app.click('[data-e2e-pick="x"]')
-        await app.waitFor(() => document.querySelectorAll('[data-test="queue-chip"]').length === 1, { label: 'chip removed' })
-
+        await app.waitFor(() => document.querySelectorAll('[data-test="queue-chip"]').length === 2, { label: 'chip removed' })
+        // ↑ on the first line takes the held ones back into the input (the × click took the focus).
+        await focusInput(app)
+        await app.key('ArrowUp')
+        await app.waitFor(() => document.querySelector('[data-test="chat-input"]').value === 'held one\nheld three', { label: 'taken back' })
+        eq(await app.count(T('queue-chip')), 0, 'no chip left')
+        await clearInput(app)
+        // One held again goes out as its own turn once hers ends.
+        await app.type('held again')
+        await ctrlX(app)
+        await app.key('Enter')
+        await app.waitVisible(T('queue-chip'))
         const first = await turnEnd(app, m, 60_000)
-        const queued = await app.waitSent('say', { text: 'queued one' }, m, 20_000)
-        // The app sends it from its own turn_end handler, which runs just before the recorder logs that event.
-        assert(queued.at >= first.at - SAME_TICK_MS, 'the queued message went out when the running turn ended, not before')
-        await app.waitFor((f, at) => window.__e2e.events.slice(f).some((e) => e.t === 'turn_end' && e.at > at), {
-          args: [m.events, queued.at],
-          timeout: 30_000,
-          label: 'the queued message ran as its own turn',
-        })
+        const queued = await app.waitSent('say', { text: 'held again' }, m, 20_000)
+        assert(queued.at >= first.at - SAME_TICK_MS, 'the held message went out when the running turn ended, not before')
         await app.waitHidden(T('queue-chip'))
         await sleep(QUEUE_SETTLE_MS)
-        assert(!(await app.sent(m, 'say')).some((s) => s.text === 'queued two'), 'the removed chip was never sent')
+        assert(!(await app.sent(m, 'say')).some((s) => s.text === 'held two'), 'the removed chip was never sent')
+        await turnEnd(app, queued, 60_000)
+        await readAll(app)
+      },
+    },
+    {
+      r: 'R11',
+      name: 'Send now sends what you held and the draft together, at once; Ctrl+S stashes the draft and brings it back',
+      timeout: 90_000,
+      async run({ app, project }) {
+        await freshChat(app, project)
+        // The slow rebuild: a turn long enough to type several messages into.
+        const m = await say(app, 'go slow please')
+        await app.waitEvent('tool', {}, m, 15_000)
+        await focusInput(app)
+        await app.type('held for now')
+        await ctrlX(app)
+        await app.key('Enter')
+        await app.waitVisible(T('queue-send-now'))
+        await app.click(T('queue-send-now'))
+        const now = await app.waitSent('say', { text: 'held for now', now: true }, m, 5_000)
+        assert(now, 'sent now')
+        await app.waitHidden(T('queue-chip'))
+        // Ctrl+X Ctrl+S is the same send-now, with the draft.
+        await focusInput(app)
+        await app.type('and this too')
+        await ctrlX(app)
+        await app.key('Ctrl+S')
+        await app.waitSent('say', { text: 'and this too', now: true }, m, 5_000)
+        // Ctrl+S on a draft puts it aside; on an empty prompt it comes back.
+        await app.type('a draft for later')
+        await app.key('Ctrl+S')
+        await app.waitFor(() => document.querySelector('[data-test="chat-input"]').value === '', { label: 'stashed' })
+        await app.key('Ctrl+S')
+        await app.waitFor(() => document.querySelector('[data-test="chat-input"]').value === 'a draft for later', { label: 'back' })
+        await clearInput(app)
+        await app.key('Escape')
+        await app.waitEvent('turn_end', {}, m, 60_000)
         await readAll(app)
       },
     },
@@ -154,7 +223,7 @@ export default {
     },
     {
       r: ['R12', 'R11'],
-      name: 'Esc interrupts and gives queued messages back to the input instead of running them',
+      name: 'Esc interrupts, and what you held goes out next, as in the CLI',
       timeout: 60_000,
       async run({ app, project }) {
         await freshChat(app, project)
@@ -162,18 +231,17 @@ export default {
         await app.waitEvent('tool', {}, m, 15_000)
         await focusInput(app)
         await app.type('queued after all')
+        await ctrlX(app)
         await app.key('Enter')
         await app.waitVisible(T('queue-chip'))
         await app.key('Escape')
         await app.waitSent('interrupt', {}, m)
         await app.waitEvent('turn_end', { interrupted: true }, m)
-        await app.waitFor(() => document.querySelector('[data-test="chat-input"]').value.includes('queued after all'), {
-          label: 'the queued message is back in the input',
-        })
-        eq(await app.count(T('queue-chip')), 0, 'no chip is left')
-        await sleep(QUEUE_SETTLE_MS)
-        assert(!(await app.sent(m, 'say')).some((x) => x.text === 'queued after all'), 'the queued message was not sent')
-        await clearInput(app)
+        await app.waitSent('say', { text: 'queued after all' }, m, 10_000)
+        await app.waitHidden(T('queue-chip'))
+        eq(await app.eval(() => document.querySelector('[data-test="chat-input"]').value), '', 'nothing came back to the input')
+        await app.waitEvent('turn_end', {}, m, 60_000)
+        await readAll(app)
       },
     },
     {

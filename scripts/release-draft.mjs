@@ -39,20 +39,25 @@ run(`git push origin ${branch}`)
 const notes = join(tmpdir(), `waifufy-${tag}-notes.md`)
 writeFileSync(
   notes,
-  `Waifufy Code ${version}: she talks first
+  `Waifufy Code ${version}: waifu cards, and her in 3D
 
-Casual mode isn't only answers any more: she decides on her own when to say something, like someone you're texting.
+Everything that makes her *her* now lives on a waifu card you can swap, and a card can draw her as a 3D model.
 
-**She messages first**
-- In casual mode she picks her own moments, from her personality and how she feels: sooner when she's clingy, close to you or missing you, later when she's annoyed or too proud to look eager. Then she decides, as herself, to say something, send a couple of short texts in a row, look something up first, or stay quiet
-- **She waits while you type**: a draft in the box holds her, and she goes on a few seconds after you clear it. A draft left for 20 minutes means you've gone away
-- **When you're away, her personality decides**: patient, a huffy line, checking in, or pinging you. Each message you leave unanswered stretches the next gap, a lot for a calm heart and barely for a clingy one
-- **Your rules win**: Settings → Casual → Messaging first has "She can message first" (on by default) and Boundaries, rules in your own words she never breaks
-- Her own messages are remembered like any other, and her learning judges whether reaching out landed
+**Waifu cards** (Settings → Cards)
+- A card is one whole character: her persona, her Roleplay presets, her model, her voice and her **love meter**. Make a new one, duplicate one, and swap between sessions; resuming a save swaps to the card it was played with
+- The love meter belongs to the card now: it carries from one New Game to the next, and each card has its own
+- What she remembers about you stays with each card on your computer and is never put in a card file. Export a card as a \`.waifu.json\`, import one as a new card
+- Upgrading makes your first card from your current settings, keeping her memory and your latest love meter
 
-**On your phone**
-- Her casual lines arrive as **notifications** while the app is in the background, in one conversation thread like a chat app's, with an inline **Reply** that goes straight to her
-- The phone **stays connected** in the background while it's joined to a session, with one quiet "Connected to …" notification. Opening the app clears her thread
+**Her in 3D**
+- A card can draw her as an MMD model (\`.pmx\`): MMD shading and outlines, hair and cloth physics, her emotions as face expressions and small head and shoulder movements, lip sync with her voice, eyes that follow the cursor
+- Bring your own model; if it can't load, her Live2D costume stands in
+
+**Messages while she works, as in the CLI**
+- **Enter** reaches her at her next step (when the running tool call finishes); **Ctrl+X Enter** waits until her turn ends
+- **Send now** (Ctrl+Enter, Ctrl+X Ctrl+S, or the button on the queue) sends what you queued and your draft at once
+- **Esc** interrupts and sends what you queued next; **Ctrl+S** stashes the draft; **↑** takes queued messages back
+- The queue sits on the input's top edge, clear of the quick menu
 
 Install: \`Waifufy-Code-${version}-setup.exe\` on Windows, the \`.apk\` on Android (arm64).
 `,

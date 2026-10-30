@@ -18,7 +18,7 @@ export type Geometry = {
 }
 
 export type Actor = {
-  readonly kind: 'live2d' | 'placeholder'
+  readonly kind: 'live2d' | 'placeholder' | 'mmd'
   /**
    * Starts a pose: holds loop, one-shots play once. Resolves with the one-shot's length in ms (0 for a hold),
    * or -1 when the costume has none of the candidates.
@@ -37,6 +37,13 @@ export type Actor = {
   geometry(): Geometry
   setZoom(zoom: number): void
   destroy(): void
+  /**
+   * An actor that plays emotions, gestures and touches itself (a 3D model, whose rig has none of the Live2D motions
+   * the pose tables name). The director still keeps her state (emotion, busy, talking) and tells the host.
+   */
+  emote?(e: Emotion): void
+  gesture?(g: Gesture): void
+  react?(kind: 'tap' | 'pat'): void
 }
 
 export type DirectorHost = {
@@ -199,11 +206,18 @@ export function createDirector(host: DirectorHost) {
       a.setTalking(lipSync())
       queue.length = 0
       settle()
+      a.emote?.(emotion)
     },
 
     emote(e: Emotion) {
       const em = EMOTES[e]
       if (!em) return
+      if (actor?.emote) {
+        if (busy) (stopWorking(), scheduleWork(WORK_SETTLE_MS))
+        if (em.hold) emotion = e
+        host.onEmotion(e)
+        return actor.emote(e)
+      }
       // Before a model or the placeholder is up, remember it; setActor applies it.
       if (!actor) return void (em.hold && ((emotion = e), host.onEmotion(e)))
       if (busy) (stopWorking(), scheduleWork(WORK_SETTLE_MS))
@@ -228,6 +242,11 @@ export function createDirector(host: DirectorHost) {
     gesture(g: Gesture) {
       if (!actor || !host.motion().gestures || !GESTURES[g]) return
       if (Date.now() - (lastPlayed.get(g) ?? 0) < DEDUPE_MS) return
+      if (actor.gesture) {
+        lastPlayed.set(g, Date.now())
+        host.onGesture(g)
+        return actor.gesture(g)
+      }
       // A destructive command usually asks for permission next; her warning already covers that.
       if (g === 'confirm' && playing?.kind === 'danger') return
       if (!playing || playing.priority < 0 || PRIORITY[g] > playing.priority) return play(g)
@@ -237,6 +256,11 @@ export function createDirector(host: DirectorHost) {
     /** A tap or headpat tier. Plays unless a gesture outranks it; a newer tap replaces an older one. */
     react(kind: 'tap' | 'pat', tier: Tier) {
       if (!actor) return false
+      if (actor.react) {
+        host.onGesture(tier.name)
+        actor.react(kind)
+        return true
+      }
       if (playing && playing.priority > PRIORITY[kind]) return false
       queue.length = 0
       host.onGesture(tier.name)

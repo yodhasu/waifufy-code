@@ -18,8 +18,15 @@ export type InputHost = {
   busy(): boolean
   /** A normal message (may contain @paths; the CLI expands them). */
   submit(text: string, images: Image[]): void
-  /** Ctrl+Enter while she works: the CLI's "send now", delivered at once instead of after her turn. */
+  /**
+   * Ctrl+Enter, Ctrl+X Ctrl+S or "Send now" while she works: the CLI's send-now. What you queued goes with the draft
+   * (which may be empty), at once: work that can go to the background goes there, else her turn stops for it.
+   */
   submitNow(text: string, images: Image[]): void
+  /** Ctrl+X Enter while she works: the CLI's queue-submit. Held until her turn ends; never interrupts. */
+  submitLater(text: string, images: Image[]): void
+  /** ↑ on the first line: held messages come back to the input. False when none are held. */
+  takeBack(): boolean
   /** `!cmd` */
   shell(command: string): void
   /** App-native commands: model, clear, resume, config, costume, help, exit, login. Return true if handled. */
@@ -52,8 +59,11 @@ export type InputHost = {
  */
 export type InputApi = {
   focus(): void
-  /** Queued messages shown as chips above the input; clicking a chip's × removes it (host.dequeue). */
-  setQueued(items: { id: string; text: string }[], onRemove: (id: string) => void): void
+  /**
+   * Queued messages, as chips on the input's top edge. `sent`: already with her for her next step (no ×); else held
+   * for after her turn, and clicking its × removes it.
+   */
+  setQueued(items: { id: string; text: string; sent?: boolean }[], onRemove: (id: string) => void): void
   setEnabled(on: boolean, placeholder?: string): void
   /** Puts text back into the input (Esc restores queued messages, as in the CLI). */
   restore(text: string): void
@@ -115,6 +125,10 @@ const JPEG_MATTE = '#ffffff'
 const ESC_CLEAR_MS = 900
 const HINT_MS = 2400
 const QUEUE_CHIP_CHARS = 60
+/** Chips shown on the input's edge; more are counted in a "+N" chip. */
+const QUEUE_CHIPS_SHOWN = 3
+/** The CLI's Ctrl+X chords: the second key must come this soon. */
+const CHORD_MS = 1500
 const DROP_LINGER_MS = 160
 const MAX_FILES = 10
 /** The link keeps files up to 25 MB (link/src/attachments.ts). */
@@ -224,7 +238,6 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
           <input data-test="history-search" spellcheck="false" autocomplete="off" placeholder="type to search · Ctrl+R older · Enter picks"></label>
         <div class="wci-hist-list"></div>
       </div>
-      <div class="wci-queue"></div>
       <div class="wci-offer" data-test="mode-offer" hidden><span></span>
         <button type="button" class="btn primary" data-test="mode-offer-yes">Switch</button>
         <button type="button" class="btn" data-test="mode-offer-no">Not now</button></div>
@@ -237,6 +250,7 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
         <button type="button" class="wci-attach" data-test="chat-attach" title="Attach files or images (or paste / drop them)" aria-label="Attach files">${ICON_CLIP}</button>
         <input type="file" class="wci-pick" data-test="chat-pick" multiple hidden>
         <div class="wci-box" data-test="input-mode" data-mode="normal">
+          <div class="wci-queue" data-test="queue"></div>
           <div class="wci-files"></div>
           <div class="wci-images"></div>
           <div class="wci-line">
@@ -722,13 +736,15 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
     host.submit(text, takeImages())
   }
 
-  function send(now = false) {
+  /** `how`: Enter, the CLI's send-now (Ctrl+Enter, Ctrl+X Ctrl+S), or its queue-submit (Ctrl+X Enter). */
+  function send(how: 'enter' | 'now' | 'later' = 'enter') {
     if (suggestion) (suggestion = ''), updatePlaceholder()
     // Bash mode only when `!` is the very first character, matching the visual mode (refreshMode).
     const bash = ta.value.startsWith('!')
     if (!bash && files.some((f) => !f.path)) return hint('Wait a moment: the files are still on their way')
     const typed = ta.value.trim()
-    if (!typed && !images.length && !files.length) return host.advance()
+    // Send-now on an empty draft still sends what you queued.
+    if (!typed && !images.length && !files.length) return how === 'now' && host.busy() ? host.submitNow('', []) : host.advance()
     // Commands and `!` keep the files for the next real message.
     const text = bash || /^\/\S/.test(typed) ? typed : withFiles(typed)
     setValue('')
@@ -741,8 +757,36 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
     }
     if (/^\/\S/.test(text)) return runCommand(text)
     if (text) remember(text)
-    if (now && host.busy()) return host.submitNow(text, takeImages())
+    if (how === 'now' && host.busy()) return host.submitNow(text, takeImages())
+    if (how === 'later' && host.busy()) return host.submitLater(text, takeImages())
     host.submit(text, takeImages())
+  }
+
+  /** Ctrl+X was pressed, waiting for the chord's second key (the CLI's Ctrl+X Ctrl+S, Ctrl+X Enter). */
+  let chordAt = 0
+  /** Ctrl+S: the draft put aside, and the same key brings it back (the CLI's stash). */
+  let stash = ''
+
+  /** The second key of a Ctrl+X chord; false when it isn't one (the key then does its own job). */
+  function chord(e: KeyboardEvent) {
+    if (!chordAt) return false
+    const live = performance.now() - chordAt < CHORD_MS
+    chordAt = 0
+    if (!live) return false
+    if (ctrlOnly(e, 's')) return e.preventDefault(), send('now'), true
+    if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.metaKey) return e.preventDefault(), send('later'), true
+    return false
+  }
+
+  function toggleStash() {
+    if (ta.value.trim()) {
+      stash = ta.value
+      setValue('')
+      return hint('Stashed · Ctrl+S on an empty prompt brings it back')
+    }
+    if (!stash) return hint('Nothing stashed · Ctrl+S puts a draft aside')
+    setValue(stash)
+    stash = ''
   }
 
   let lastEsc = 0
@@ -781,6 +825,14 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
       return escToClear(e)
     }
     lastKeyAt = performance.now()
+    if (chord(e)) return
+    // Ctrl+X starts a chord, as in the CLI; with text selected it is still cut.
+    if (ctrlOnly(e, 'x') && ta.selectionStart === ta.selectionEnd) {
+      e.preventDefault()
+      chordAt = performance.now()
+      return hint('Ctrl+X … Ctrl+S sends now · Enter queues until her turn ends')
+    }
+    if (ctrlOnly(e, 's')) return e.preventDefault(), toggleStash()
     if (suggestion && e.key === 'Tab' && plain && !ta.value) {
       e.preventDefault()
       const s = suggestion
@@ -807,7 +859,7 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
       if (e.shiftKey) return
       e.preventDefault()
       if (e.altKey || e.metaKey) return insertText('\n')
-      if (e.ctrlKey) return send(true)
+      if (e.ctrlKey) return send('now')
       // `\` + Enter is the CLI's portable newline.
       const caret = ta.selectionStart
       if (caret === ta.selectionEnd && ta.value[caret - 1] === '\\') {
@@ -828,6 +880,8 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
     if (plain && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
       const onFirst = !ta.value.slice(0, ta.selectionStart).includes('\n')
       const onLast = !ta.value.slice(ta.selectionEnd).includes('\n')
+      // ↑ takes queued messages back first, as in the CLI, then walks the history.
+      if (e.key === 'ArrowUp' && onFirst && host.takeBack()) return e.preventDefault()
       if ((e.key === 'ArrowUp' ? onFirst : onLast) && recall(e.key === 'ArrowUp' ? -1 : 1)) e.preventDefault()
       return
     }
@@ -1057,6 +1111,7 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
 
   queueEl.addEventListener('click', (e) => {
     const btn = (e.target as HTMLElement).closest<HTMLElement>('button')
+    if (btn?.dataset.act === 'send-now') return send('now')
     const chip = btn?.closest<HTMLElement>('.wci-qchip')
     if (chip) queueRemove(chip.dataset.id!)
   })
@@ -1096,14 +1151,19 @@ export function createInput(root: HTMLElement, host: InputHost): InputApi {
     focus: () => ta.focus(),
     setQueued(items, onRemove) {
       queueRemove = onRemove
-      queueEl.innerHTML = items
-        .map((it) => {
-          const one = it.text.replace(/\s+/g, ' ').trim()
-          const short = one.length > QUEUE_CHIP_CHARS ? `${one.slice(0, QUEUE_CHIP_CHARS - 1)}…` : one
-          return `<div class="wci-qchip" data-test="queue-chip" data-id="${esc(it.id)}" title="${esc(it.text)}">
-            <span class="ico">⏳</span><span class="txt">${esc(short)}</span><button type="button" aria-label="Remove from queue">×</button></div>`
-        })
-        .join('')
+      const held = items.filter((it) => !it.sent).length
+      const chips = items.slice(0, QUEUE_CHIPS_SHOWN).map((it) => {
+        const one = it.text.replace(/\s+/g, ' ').trim()
+        const short = one.length > QUEUE_CHIP_CHARS ? `${one.slice(0, QUEUE_CHIP_CHARS - 1)}…` : one
+        const tip = it.sent ? 'With her · she reads it at her next step' : 'After her turn · × removes it · ↑ takes it back'
+        return `<div class="wci-qchip${it.sent ? ' sent' : ''}" data-test="queue-chip" data-id="${esc(it.id)}" title="${esc(`${it.text}\n\n${tip}`)}">
+          <span class="ico">${it.sent ? '➤' : '⏳'}</span><span class="txt">${esc(short)}</span>${it.sent ? '' : '<button type="button" aria-label="Remove from queue">×</button>'}</div>`
+      })
+      const more = items.length - QUEUE_CHIPS_SHOWN
+      queueEl.innerHTML =
+        chips.join('') +
+        (more > 0 ? `<span class="wci-qmore">+${more}</span>` : '') +
+        (held ? '<button type="button" class="wci-qnow" data-act="send-now" data-test="queue-send-now" title="Send what you queued now (Ctrl+Enter)">Send now</button>' : '')
       queueEl.classList.toggle('show', items.length > 0)
     },
     setEnabled(on, placeholder) {
@@ -1192,6 +1252,6 @@ const SEND_LABELS: Record<string, string> = {
 const SEND_TITLES: Record<string, string> = {
   say: 'Send (Enter)',
   run: 'Run in the session folder (Enter)',
-  queue: 'Queue for her next step (Enter) · Ctrl+Enter sends now',
+  queue: 'She reads it at her next step (Enter) · Ctrl+Enter sends now · Ctrl+X Enter waits for her turn to end',
   stop: 'Interrupt her (Esc)',
 }

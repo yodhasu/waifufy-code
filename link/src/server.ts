@@ -5,7 +5,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { join, resolve } from 'node:path'
 import { format } from 'node:util'
 import { WebSocket, WebSocketServer } from 'ws'
-import { listCostumes, serveModel, serveThumb } from './assets.ts'
+import { listCostumes, serveMmd, serveModel, serveThumb } from './assets.ts'
 import { asMood } from './affection.ts'
 import { putAttachment } from './attachments.ts'
 import { createAuth } from './auth.ts'
@@ -14,7 +14,8 @@ import { searchFiles } from './files.ts'
 import { buildPersona } from './persona.ts'
 import { CTL_OPS, type ClientMsg, type FileHit, type PermissionModeName, type ServerMsg, type SessionEvent, type Settings } from './protocol.ts'
 import { research } from './research.ts'
-import { deleteSave, errorText, getSave, isSaveId, listSaves, loadHistory, remember, renameSave, saveMeta, shortPath, unhide } from './saves.ts'
+import { deleteSave, errorText, getSave, isSaveId, latestLove, listSaves, loadHistory, remember, renameSave, saveMeta, shortPath, unhide } from './saves.ts'
+import { applyCard, cardLove, keepCard, deleteCard, ensureCard, exportCard, importCard, isCardId, listCards, newCard, readCard, setCardLove, syncCard } from './cards.ts'
 import type { SessionApi, SessionFactory } from './session-api.ts'
 import { createSession } from './session.ts'
 import { scheduleLearning } from './casual/learn.ts'
@@ -146,6 +147,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   // Model files and thumbnails are served without the token: the page loads them by URL.
   if (pathname.startsWith('/models/')) return serveModel(pathname, res)
   if (pathname.startsWith('/thumbs/')) return serveThumb(pathname, res)
+  if (pathname.startsWith('/mmd/')) return serveMmd(pathname, res)
   text(res, 404, 'not found')
 }
 
@@ -370,10 +372,10 @@ function slackReply(ws: WebSocket, work: () => Promise<ServerMsg>, failed: (erro
 /** Settings writes run one at a time and re-read the file, so a lastDir or preset write never undoes a settings_set. */
 let settingsWrites: Promise<unknown> = Promise.resolve()
 
-function updateSettings(change: (s: Settings) => Settings | void): Promise<Settings> {
+function updateSettings(change: (s: Settings) => Settings | void | Promise<Settings | void>): Promise<Settings> {
   const run = settingsWrites.then(async () => {
     const s = await loadSettings()
-    const next = change(s) ?? s
+    const next = (await change(s)) ?? s
     await saveSettings(next)
     return next
   })
@@ -381,11 +383,38 @@ function updateSettings(change: (s: Settings) => Settings | void): Promise<Setti
   return run
 }
 
+// ---------------------------------------------------------------- waifu cards
+
+/** The active card exists on disk before anything reads settings: the first launch with cards makes it from them. */
+const cardsReady = updateSettings(async (s) => void (await ensureCard(s, latestLove))).catch((e) => console.error('[cards] could not set up the first card:', e))
+
+/** Makes `id` the active card. The one it replaces already has every edit (settings_set syncs it). */
+function switchCard(id: string): Promise<Settings> {
+  return updateSettings(async (s) => {
+    const c = await readCard(id)
+    if (!c) throw new BadRequest('That waifu card no longer exists.')
+    applyCard(s, c)
+  })
+}
+
+async function sendCards(ws?: WebSocket) {
+  const m: ServerMsg = { t: 'cards', list: await listCards(), active: (await loadSettings()).card }
+  if (ws) sendTo(ws, m)
+  else broadcast(m)
+}
+
+/** Cards change what she is; one switched mid-session would leave the running session's persona and love meter behind. */
+function needNoSession() {
+  if (current) throw new BadRequest('Finish the current session first: a waifu card is swapped between sessions.')
+}
+
 // ---------------------------------------------------------------- sessions
 
 type Live = {
   epoch: number
   cwd: string
+  /** The waifu card the session plays: its love meter is what the session's affection writes to. */
+  card: string
   session?: SessionApi
   /** Set by an intentional close: only its `ended` still goes out. */
   closing: boolean
@@ -410,7 +439,7 @@ let current: Live | undefined
 /** Bumped by every start and end, so a start that was overtaken while it awaited drops out instead of spawning a CLI. */
 let startGen = 0
 
-function makeLive(epoch: number, cwd: string): Live {
+function makeLive(epoch: number, cwd: string, card: string): Live {
   let markEnded = () => {}
   const ended = new Promise<void>((r) => (markEnded = r))
   const emit = (e: SessionEvent) => {
@@ -430,7 +459,7 @@ function makeLive(epoch: number, cwd: string): Live {
     record(live, e)
     broadcast({ ...e, epoch } as ServerMsg)
   }
-  const live: Live = { epoch, cwd, closing: false, ended, emit, latest: new Map(), asks: new Map(), journal: [], journalBytes: 0, trimmed: false }
+  const live: Live = { epoch, cwd, card, closing: false, ended, emit, latest: new Map(), asks: new Map(), journal: [], journalBytes: 0, trimmed: false }
   return live
 }
 
@@ -492,15 +521,22 @@ async function start(m: Extract<ClientMsg, { t: 'start' }>) {
     // A rewind shows the conversation only up to the point it keeps.
     const [history, save] = m.resume ? await Promise.all([loadHistory(m.resume, cwd, m.resumeAt), getSave(m.resume, cwd)]) : [[], undefined]
     if (gen !== startGen) return
+    // A save plays on with the card it was played with, when that card is still here.
+    await cardsReady
+    if (save?.card && isCardId(save.card) && save.card !== (await loadSettings()).card && (await readCard(save.card))) {
+      broadcast({ t: 'settings', settings: await switchCard(save.card) })
+      void sendCards()
+    }
     // Read inside the settings queue, so a settings_set sent just before (the profile, saved before New Game) is in the persona.
     const settings = await rememberDir(cwd)
+    const love = await cardLove(settings.card)
     if (gen !== startGen) return
     // From here to `current = live` nothing awaits, so no other start can slip in between.
-    live = makeLive(m.epoch, cwd)
+    live = makeLive(m.epoch, cwd, settings.card)
     current = live
     live.session = factory({ epoch: m.epoch, cwd, resume: m.resume, resumeAt: m.resumeAt, dropsTurn: m.dropsTurn, settings, claudePath, emit: live.emit })
     console.log(`[session] epoch ${m.epoch} ${m.resume ? `resume ${m.resume}` : 'new'} in ${cwd}${MOCK ? ' (mock)' : ''}`)
-    const started: SessionEvent = { t: 'started', cwd, cwdShort: shortPath(cwd), resumed: !!m.resume, history, save }
+    const started: SessionEvent = { t: 'started', cwd, cwdShort: shortPath(cwd), resumed: !!m.resume, history, save, love }
     live.latest.set('started', started)
     broadcast({ ...started, epoch: m.epoch })
     await live.session.start()
@@ -537,6 +573,7 @@ async function runResearch(m: Extract<ClientMsg, { t: 'research' }>) {
     const settings = await updateSettings((s) => {
       s.presets = [...s.presets.filter((p) => p.id !== preset.id), preset]
     })
+    await syncCard(settings)
     broadcast({ t: 'settings', settings })
     broadcast({ t: 'research_done', preset })
   } catch (e) {
@@ -632,15 +669,26 @@ async function handle(ws: WebSocket, m: ClientMsg) {
           void closeCurrent()
         }
       }
+      await cardsReady
       return sendTo(ws, {
         t: 'hello', version: VERSION, settings: await loadSettings(), auth: await auth.get(), dataDir: DATA_DIR, voiceKey: hasVoiceKey(), casualKey: hasCasualKey(), slack: slack.status(),
         remote: remoteSockets.has(ws),
       })
     case 'settings_set': {
       need(m.settings && typeof m.settings === 'object' && m.settings.version === 1, 'settings')
-      await updateSettings(() => m.settings)
+      // The active card changes only through card_switch; everything else of hers is written back to it. Settings
+      // from a window that hasn't heard of a switch yet carry the old card's fields: those go to the old card, and
+      // the new one keeps its own.
+      const from = m.settings.card
+      const saved = await updateSettings((s) => {
+        const next = { ...m.settings, card: s.card }
+        if (from !== s.card) keepCard(next, s)
+        return next
+      })
+      if (from !== saved.card) await syncCard(m.settings)
+      await syncCard(saved)
       // The sender already has these settings; echoing them back could undo an edit typed meanwhile.
-      return broadcast({ t: 'settings', settings: m.settings }, ws)
+      return broadcast({ t: 'settings', settings: saved }, ws)
     }
     case 'tts': {
       need(isStr(m.id) && isStr(m.text), 'tts')
@@ -677,9 +725,50 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       return sendTo(ws, { t: 'saves', list: await listSaves() })
     case 'save_meta': {
       need(isSaveId(m.id) && m.patch && typeof m.patch === 'object', 'id, patch')
-      const cwd = current?.session?.sessionId() === m.id ? current.cwd : undefined
-      return saveMeta(m.id, m.patch, m.thumb, cwd)
+      const live = current?.session?.sessionId() === m.id ? current : undefined
+      // Only the running session moves a love meter, and only its own card's; the save keeps a copy for the Load list.
+      if (live && typeof m.patch.affectionPts === 'number') await setCardLove(live.card, m.patch.affectionPts)
+      return saveMeta(m.id, live ? { ...m.patch, card: live.card } : m.patch, m.thumb, live?.cwd)
     }
+    case 'cards':
+      await cardsReady
+      return sendCards(ws)
+    case 'card_switch': {
+      need(isCardId(m.id), 'id')
+      needNoSession()
+      broadcast({ t: 'settings', settings: await switchCard(m.id) })
+      return sendCards()
+    }
+    case 'card_new': {
+      need(m.from === undefined || isCardId(m.from), 'from')
+      needNoSession()
+      const from = m.from ? await readCard(m.from) : undefined
+      if (m.from && !from) throw new BadRequest('That waifu card no longer exists.')
+      const c = await newCard(from)
+      broadcast({ t: 'settings', settings: await switchCard(c.id) })
+      return sendCards()
+    }
+    case 'card_delete': {
+      need(isCardId(m.id), 'id')
+      if (m.id === (await loadSettings()).card) throw new BadRequest('Switch to another card before deleting this one.')
+      await deleteCard(m.id)
+      return sendCards()
+    }
+    case 'card_export':
+      need(isCardId(m.id) && isStr(m.path) && m.path.trim(), 'id, path')
+      return exportCard(m.id, m.path).then(
+        (path) => sendTo(ws, { t: 'card_file', op: 'export', id: m.id, path }),
+        (e) => sendTo(ws, { t: 'card_file', op: 'export', id: m.id, path: m.path, error: errorText(e) }),
+      )
+    case 'card_import':
+      need(isStr(m.path) && m.path.trim(), 'path')
+      return importCard(m.path).then(
+        async (c) => {
+          sendTo(ws, { t: 'card_file', op: 'import', id: c.id, path: m.path })
+          await sendCards()
+        },
+        (e) => sendTo(ws, { t: 'card_file', op: 'import', path: m.path, error: errorText(e) }),
+      )
     case 'costumes': {
       const r = await listCostumes(isStr(m.dir) ? m.dir : undefined)
       return sendTo(ws, { t: 'costumes', ...r })

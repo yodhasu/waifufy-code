@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promise
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { getSessionInfo, getSessionMessages, listSessions, renameSession, type SDKSessionInfo, type SessionMessage } from '@anthropic-ai/claude-agent-sdk'
-import { AFFECTION_TAGS, CONTEXT_TAG, OFFER_TAGS, clampPoints, levelOf } from './affection.ts'
+import { AFFECTION_TAGS, CONTEXT_TAG, OFFER_TAGS, clampPoints, levelOf, levelStart } from './affection.ts'
 import { parseCasual } from './casual/block.ts'
 import { EMOTIONS, type HistoryEntry, type Save } from './protocol.ts'
 import { DATA_DIR, loadSettings } from './settings.ts'
@@ -45,6 +45,7 @@ type Entry = {
   affection: number
   affectionPts?: number
   costume?: string
+  card?: string
   lastLine?: string
   /** Set by rename; wins over the transcript's own title, so a rename sticks even if renameSession failed. */
   title?: string
@@ -162,6 +163,7 @@ function toSave(e: Entry, info: SDKSessionInfo | undefined): Save {
     affection: e.affection,
     ...(e.affectionPts !== undefined && { affectionPts: e.affectionPts }),
     costume: e.costume,
+    ...(e.card && { card: e.card }),
     thumb: e.thumbV > 0 ? `/thumbs/${e.id}.jpg?v=${e.thumbV}` : undefined,
     lastLine: e.lastLine,
   }
@@ -233,6 +235,14 @@ export async function listSaves(): Promise<Save[]> {
 }
 
 /** One save, for the `started` event of a resume. */
+/** The love meter the newest save ended on: the first waifu card starts from it (cards.ts ensureCard). */
+export async function latestLove(): Promise<number> {
+  await queue
+  const { saves } = await getRegistry()
+  const last = saves.reduce<Entry | undefined>((a, e) => (!a || e.updatedAt > a.updatedAt ? e : a), undefined)
+  return last ? (last.affectionPts ?? levelStart(last.affection)) : 0
+}
+
 export async function getSave(id: string, cwd: string): Promise<Save | undefined> {
   await queue
   const { saves } = await getRegistry()
@@ -272,7 +282,7 @@ export async function deleteSave(id: string) {
   await rm(join(THUMBS_DIR, `${id}.jpg`), { force: true })
 }
 
-export type MetaPatch = Partial<Pick<Save, 'playMs' | 'turns' | 'affection' | 'affectionPts' | 'costume' | 'lastLine'>>
+export type MetaPatch = Partial<Pick<Save, 'playMs' | 'turns' | 'affection' | 'affectionPts' | 'costume' | 'card' | 'lastLine'>>
 
 const count = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : undefined)
 
@@ -311,6 +321,7 @@ export async function saveMeta(id: string, patch: MetaPatch, thumb?: string, cwd
       e.affection = levelOf(e.affectionPts)
     }
     if (typeof patch.costume === 'string') e.costume = patch.costume
+    if (typeof patch.card === 'string' && patch.card) e.card = patch.card
     if (typeof patch.lastLine === 'string') e.lastLine = stripTags(patch.lastLine).trim().slice(0, LAST_LINE_MAX)
     if (jpeg) e.thumbV += 1
     e.updatedAt = Date.now()

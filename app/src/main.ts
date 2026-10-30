@@ -1,4 +1,4 @@
-import { open } from '@tauri-apps/plugin-dialog'
+import { open, save } from '@tauri-apps/plugin-dialog'
 import type { Settings } from '../../link/src/protocol.ts'
 import './theme.css'
 import './base.css'
@@ -98,6 +98,15 @@ async function pickFolder(title: string, defaultPath?: string) {
   return typeof dir === 'string' ? dir : ''
 }
 
+async function pickFile(title: string, name: string, extensions: string[], defaultPath?: string) {
+  const file = await open({ title, defaultPath: defaultPath || undefined, filters: [{ name, extensions }] }).catch(() => null)
+  return typeof file === 'string' ? file : ''
+}
+
+async function pickSavePath(title: string, defaultPath: string, name: string, extensions: string[]) {
+  return (await save({ title, defaultPath, filters: [{ name, extensions }] }).catch(() => null)) ?? ''
+}
+
 function pickImages(multiple: boolean) {
   const input = document.getElementById('filePicker') as HTMLInputElement
   input.multiple = multiple
@@ -186,6 +195,9 @@ const ctx: Ctx = {
   link, store, character, router, voice, slack, casual, toast, confirm: confirmDialog, pickImages,
   // A phone picks among the computer's folders (remote-folder.ts); the OS dialog would browse the phone.
   pickFolder: link.remote ? (title, dir) => pickRemoteFolder(link, store, title, dir) : pickFolder,
+  // The phone can't browse the desktop's files; the Cards tab says so instead of opening a picker.
+  pickFile: link.remote ? async () => '' : pickFile,
+  pickSavePath: link.remote ? async () => '' : pickSavePath,
 }
 for (const [name, screen] of Object.entries(screens)) screen.mount(document.getElementById(`screen-${name}`)!, ctx)
 

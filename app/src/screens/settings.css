@@ -261,3 +261,17 @@
 .set-phone-side { display: flex; flex-direction: column; gap: 10px; }
 /* Keyboard hints mean nothing on a touch screen. */
 #stage[data-orient='portrait'] .set-foot span { display: none; }
+
+/* Waifu cards */
+.set-cards { display: flex; flex-direction: column; gap: 8px; }
+.set-wcard { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--panel-line); }
+.set-wcard.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.set-wcard-main { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.set-wcard-main b { font-size: 15px; color: var(--heading); }
+.set-wcard-main small { flex-basis: 100%; font-size: 12.5px; color: var(--text-soft); }
+.set-wcard-active { font-size: 11.5px; font-weight: 700; letter-spacing: .06em; color: var(--accent); }
+.set-wcard-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.set-wcard-tags em { font-style: normal; font-size: 11.5px; padding: 1px 8px; border-radius: 99px; border: 1px solid var(--panel-line); color: var(--text-soft); }
+.set-wcard-acts { display: flex; gap: 6px; flex-shrink: 0; }
+.set-hearts { color: #e06a8c; letter-spacing: 1px; }
+.set-hearts i { font-style: normal; opacity: .25; }

@@ -102,7 +102,14 @@ export type Appearance = {
   zoom: number
   /** Folder containing costume model folders (each with a .model3.json). */
   modelsDir: string
+  /** Which rig she is drawn with. 'mmd' (a 3D .pmx) is stored on the card ahead of its renderer; until then the app shows Live2D. */
+  model: ModelKind
+  /** Absolute path of her .pmx when `model` is 'mmd'; '' otherwise. Never leaves this machine. */
+  mmdFile: string
 }
+
+export const MODEL_KINDS = ['live2d', 'mmd'] as const
+export type ModelKind = (typeof MODEL_KINDS)[number]
 
 /** Fish Audio models: the free developer tier, or the paid one with an SLA. */
 export const VOICE_MODELS = ['s2.1-pro-free', 's2.1-pro'] as const
@@ -202,8 +209,44 @@ export type Settings = {
   voice: VoiceSettings
   slack: SlackSettings
   casual: CasualSettings
+  /** Id of the active waifu card (link/src/cards.ts). The waifu, presets, model and voice fields above are its live copy. */
+  card: string
   /** Last folder a session was started in. */
   lastDir: string
+}
+
+// ---------------------------------------------------------------- waifu cards
+
+/**
+ * Everything that makes her *her*, bundled so the user can swap characters: persona, research presets, the rig she
+ * is drawn with, her voice, and the love meter. What she learned about the user (casual memory, her mood) is the
+ * user's personal save: it stays in the data folder under the card's id and never goes into a card file.
+ */
+export type WaifuCard = {
+  version: 1
+  id: string
+  waifu: Waifu
+  presets: PersonaPreset[]
+  look: Pick<Appearance, 'model' | 'modelsDir' | 'costume' | 'zoom' | 'mmdFile'>
+  voice: Pick<VoiceSettings, 'voiceId' | 'language' | 'speed' | 'styleNotes'>
+  /** The love meter: affection points (affection.ts), carried from session to session with the card. */
+  love: { points: number }
+  createdAt: number
+  updatedAt: number
+}
+
+/** A card as the picker lists it. */
+export type CardSummary = {
+  id: string
+  name: string
+  series: string
+  model: ModelKind
+  costume: string
+  /** 0 – 5 hearts. */
+  hearts: number
+  points: number
+  voiced: boolean
+  updatedAt: number
 }
 
 // ---------------------------------------------------------------- saves, costumes, files
@@ -225,6 +268,8 @@ export type Save = {
   /** Affection points (affection.ts); absent in saves from before points, read from the hearts then. */
   affectionPts?: number
   costume?: string
+  /** The waifu card the save was played with; absent in saves from before cards (the first card then). */
+  card?: string
   /** URL path of the thumbnail on the link server, with a cache-busting query; absent when none. */
   thumb?: string
   /** Last line the character said, tags stripped. */
@@ -370,6 +415,18 @@ export type ClientMsg =
   /** Opens the bundled Claude Code login in a console window. */
   | { t: 'login' }
   | { t: 'saves' }
+  /** The card list; answered by `cards`. */
+  | { t: 'cards' }
+  /** Makes `id` the active card: its persona, model and voice from the next session. Answered by `settings` and `cards`. */
+  | { t: 'card_switch'; id: string }
+  /** A new card, made active: a copy of `from` (a card id), or the default character when absent. */
+  | { t: 'card_new'; from?: string }
+  /** Deletes a card that isn't active. Its personal save (memory, mood) stays in the data folder. */
+  | { t: 'card_delete'; id: string }
+  /** Writes the card to `path` as a .waifu.json file, without any personal save. Answered by `card_file`. */
+  | { t: 'card_export'; id: string; path: string }
+  /** Reads a .waifu.json file into a new card (not made active). Answered by `card_file` and `cards`. */
+  | { t: 'card_import'; path: string }
   | { t: 'save_rename'; id: string; title: string }
   | { t: 'save_delete'; id: string }
   /** Updates play stats / thumbnail of the running save. `thumb` is a data: URL (JPEG). */
@@ -471,7 +528,8 @@ export type CtlOp = (typeof CTL_OPS)[number]
 
 /** Events of a running session. Each carries the `epoch` from its `start`. */
 export type SessionEvent =
-  | { t: 'started'; cwd: string; cwdShort: string; resumed: boolean; history: HistoryEntry[]; save?: Save }
+  /** `love`: the love meter of the session's waifu card, in affection points. */
+  | { t: 'started'; cwd: string; cwdShort: string; resumed: boolean; history: HistoryEntry[]; save?: Save; love?: number }
   /** Sent as soon as the CLI handshake completes (before the first turn). */
   /** `bypassAvailable`: the session was started with bypass permissions, so Shift+Tab may cycle to it, as in the CLI. */
   | { t: 'ready'; sessionId?: string; commands: Command[]; models: ModelChoice[]; mode: PermissionModeName; model?: string; account?: string; bypassAvailable?: boolean }
@@ -542,6 +600,9 @@ export type ServerMsg =
   | { t: 'settings'; settings: Settings }
   | { t: 'auth'; auth: Auth }
   | { t: 'saves'; list: Save[] }
+  | { t: 'cards'; list: CardSummary[]; active: string }
+  /** How an export or import went: the card it was, or why it failed. */
+  | { t: 'card_file'; op: 'export' | 'import'; id?: string; path: string; error?: string }
   | { t: 'costumes'; list: Costume[]; dir: string; found: boolean }
   | { t: 'files'; query: string; hits: FileHit[] }
   /** `concerns`: what the folder's own settings would apply without asking (hooks, MCP servers, pre-approved rules). */

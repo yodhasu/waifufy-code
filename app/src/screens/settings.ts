@@ -4,9 +4,10 @@
 // the store, and sync() paints the whole screen back from the store after each change.
 
 import type {
-  Appearance, ClaudeSettings, Costume, Emotion, MotionSettings, PersonaPreset, Profile, RemoteStatus, ResearchProfile, ServerMsg, Settings, Waifu,
+  Appearance, CardSummary, ClaudeSettings, Costume, Emotion, MotionSettings, PersonaPreset, Profile, RemoteStatus, ResearchProfile, ServerMsg, Settings, Waifu,
 } from '../../../link/src/protocol.ts'
 import qrcode from 'qrcode-generator'
+import { AFFECTION_LEVELS } from '../../../link/src/affection.ts'
 import { addressOf } from '../../../link/src/address.ts'
 import { DEFAULT_VOICE_ID, REM_VOICE_STYLE } from '../../../link/src/voice-style.ts'
 import { SLACK_MANIFEST, SLACK_REDIRECT_URL } from '../../../link/src/slack-app.ts'
@@ -19,6 +20,7 @@ import './settings.css'
 // ---------------------------------------------------------------- data
 
 const TABS = [
+  { id: 'cards', label: 'Cards', icon: '❖', blurb: 'Waifu cards: each one is a whole character, with her persona, model, voice and love meter. Swap between sessions.' },
   { id: 'you', label: 'You', icon: '♡', blurb: 'Who you are to her: your name, how she addresses you, your nameplate.' },
   { id: 'waifu', label: 'Waifu', icon: '✿', blurb: 'Her name, personality and way of speaking.' },
   { id: 'roleplay', label: 'Roleplay', icon: '✦', blurb: 'Research any character and turn them into a persona preset.' },
@@ -68,7 +70,10 @@ const DEFAULTS: {
     customInstructions: '',
     activePreset: '',
   },
-  appearance: { theme: 'system', accent: '#5b8de0', fontSize: 21, boxOpacity: 0.94, background: 'auto', petals: true, costume: 'ac_base_rem01', zoom: 1 },
+  appearance: {
+    theme: 'system', accent: '#5b8de0', fontSize: 21, boxOpacity: 0.94, background: 'auto', petals: true, costume: 'ac_base_rem01', zoom: 1,
+    model: 'live2d', mmdFile: '',
+  },
   motion: {
     textCps: 14, punctuationPauses: true, autoDelayMs: 1200, lipSync: true, idle: true, cursor: true, headpats: true, taps: true, gestures: true,
   },
@@ -87,7 +92,7 @@ const DEFAULTS: {
 const RESET: Partial<Record<TabId, (s: Settings) => void>> = {
   you: (s) => void (s.profile = structuredClone(DEFAULTS.profile)),
   waifu: (s) => void (s.waifu = structuredClone(DEFAULTS.waifu)),
-  appearance: (s) => void (s.appearance = { ...structuredClone(DEFAULTS.appearance), modelsDir: s.appearance.modelsDir }),
+  appearance: (s) => void (s.appearance = { ...structuredClone(DEFAULTS.appearance), modelsDir: s.appearance.modelsDir, mmdFile: s.appearance.mmdFile }),
   voice: (s) => void (s.voice = structuredClone(DEFAULTS.voice)),
   casual: (s) => void (s.casual = structuredClone(DEFAULTS.casual)),
   motion: (s) => void (s.motion = structuredClone(DEFAULTS.motion)),
@@ -137,6 +142,11 @@ const EXPRESSIVENESS: Opt[] = [
   { v: 'low', label: 'Low', hint: 'A tag now and then; calm, steady poses.' },
   { v: 'normal', label: 'Normal', hint: 'One emotion per paragraph.' },
   { v: 'high', label: 'High', hint: 'Several emotions per paragraph; she reacts to everything.' },
+]
+
+const MODEL_KINDS: Opt[] = [
+  { v: 'live2d', label: 'Live2D', hint: 'A 2D rigged costume from the models folder below' },
+  { v: 'mmd', label: '3D (MMD)', hint: 'A .pmx model, with MMD shading and physics' },
 ]
 
 const THEMES: Opt[] = [
@@ -206,6 +216,7 @@ const MOTION_TOGGLES: { path: keyof MotionSettings; label: string; hint: string;
 ]
 
 const TAB_LINES: Record<TabId, [string, Emotion]> = {
+  cards: ['Someone new, {you}? …I\'ll be right here in my card when you come back.', 'pout'],
   you: ['Tell me about yourself, {you}. I want to know everything.', 'smile'],
   waifu: ['Is this… about me? Please be gentle, {you}.', 'shy'],
   roleplay: ['Shall I study someone new? Just tell me who, {you}.', 'think'],
@@ -254,6 +265,8 @@ const MS_PER_S = 1000
 const S_PER_MIN = 60
 /** How long a reveal waits for the link's app_error (a missing folder) before assuming Explorer opened. */
 const REVEAL_WAIT_MS = 1500
+/** How long after a card request an app_error is taken as its refusal. */
+const CARD_REPLY_MS = 3000
 /**
  * "Use default" stores an empty models folder, and the link resolves an empty folder from settings.json, which the
  * store writes 400 ms after the last change. The costumes request waits until that save has landed.
@@ -403,7 +416,7 @@ function seg(path: string, opts: Opt[], variant: 'row' | 'list' | 'swatch' = 'ro
   return `<div class="set-seg ${variant}" data-test="${test}" data-seg="${path}">${body}</div>`
 }
 
-const card = (title: string, body: string, cls = '') => `<section class="set-card ${cls}"><h4>${title}</h4>${body}</section>`
+const card = (title: string, body: string, cls = '', attrs = '') => `<section class="set-card ${cls}" ${attrs}><h4>${title}</h4>${body}</section>`
 
 const note = (html: string) => `<p class="set-note">${html}</p>`
 
@@ -564,10 +577,19 @@ function appearancePane() {
     ${card('Scene', row('Background', seg('appearance.background', BACKGROUNDS)) + toggle('appearance.petals', 'Sakura petals', 'Petals drifting across the window.'))}
     ${card('Framing', row('Sprite zoom', range('appearance.zoom', ZOOM_MIN, ZOOM_MAX, ZOOM_STEP)))}
     ${card(
+      'Model',
+      row('Drawn as', seg('appearance.model', MODEL_KINDS)) +
+        `<div class="set-path" data-when="appearance.model=mmd">${text('appearance.mmdFile', 'placeholder="Path to her .pmx file"')}
+          <button class="btn" type="button" data-act="mmd-browse" data-test="set-appearance.mmdFile-browse">Browse…</button></div>` +
+        note('Saved on her waifu card. A 3D model is drawn with MMD shading, outlines and physics, and plays her emotions with its face morphs; if it can\'t load, her Live2D costume stands in. The model stays on this computer and is never put in an exported card.'),
+      'wide',
+    )}
+    ${card(
       'Costume',
       `<div class="set-seg costumes" data-test="set-appearance.costume" data-seg="appearance.costume"></div>
       <p class="set-empty" data-costume-empty>No costumes found. Point the models folder below at your Live2D models.</p>`,
       'wide',
+      'data-when="appearance.model=live2d"',
     )}
     ${card(
       'Models folder',
@@ -579,6 +601,7 @@ function appearancePane() {
       <p class="set-found" data-test="models-found"></p>` +
         note('A folder of costume folders, each holding a <code>.model3.json</code>. Live2D models aren\'t bundled: bring your own.'),
       'wide',
+      'data-when="appearance.model=live2d"',
     )}
   </div>`
 }
@@ -805,6 +828,26 @@ function phonePane() {
   </div>`
 }
 
+function cardsPane() {
+  return `<div class="set-cols">
+    ${card(
+      'Your waifu cards',
+      `<div class="set-cards" data-test="cards-list"><p class="set-empty">Loading cards…</p></div>` +
+        note('Swapping loads her persona, research presets, model, voice and love meter for the next session. Your own profile and app settings stay. What she remembers about you stays with each card on this computer and is never exported.'),
+      'wide',
+    )}
+    ${card(
+      'Add a card',
+      `<div class="set-actions">
+        <button class="btn" type="button" data-act="card-new" data-test="card-new">New card</button>
+        <button class="btn" type="button" data-act="card-copy" data-test="card-copy">Duplicate current</button>
+        <button class="btn" type="button" data-act="card-import" data-test="card-import">Import…</button>
+      </div>` + note('A new card starts as the default character with an empty love meter: change her on the Waifu, Appearance and Voice tabs. Import reads a <code>.waifu.json</code> file.'),
+      'wide',
+    )}
+  </div>`
+}
+
 function aboutPane() {
   return `<div class="set-cols">
     ${card(
@@ -821,10 +864,10 @@ function aboutPane() {
       'Credits & licensing',
       `<ul class="set-credits">
         <li>A fan-made visual novel skin for <b>Claude Code</b>, built on the Claude Agent SDK. Claude and Claude Code belong to Anthropic.</li>
-        <li><b>Live2D models are third-party</b> and are not bundled. Bring your own and respect their licenses; the default character
+        <li><b>Live2D and MMD models are third-party</b> and are not bundled. Bring your own and respect their licenses; the default character
           belongs to her creators and publishers.</li>
         <li>Live2D Cubism Core © Live2D Inc., under the Live2D Proprietary Software License.</li>
-        <li>Rendering: PixiJS and untitled-pixi-live2d-engine. Desktop shell: Tauri.</li>
+        <li>Rendering: PixiJS and untitled-pixi-live2d-engine; 3D (MMD) cards: Babylon.js and babylon-mmd, with Bullet physics. Desktop shell: Tauri.</li>
         <li>Fonts: Zen Maru Gothic, Shippori Mincho and JetBrains Mono, under the SIL Open Font License.</li>
       </ul>`,
       'wide',
@@ -833,7 +876,7 @@ function aboutPane() {
 }
 
 const PANES: Record<TabId, () => string> = {
-  you: youPane, waifu: waifuPane, roleplay: roleplayPane, appearance: appearancePane, motion: motionPane, claude: claudePane,
+  cards: cardsPane, you: youPane, waifu: waifuPane, roleplay: roleplayPane, appearance: appearancePane, motion: motionPane, claude: claudePane,
   casual: casualPane, voice: voicePane, slack: slackPane, phone: phonePane, about: aboutPane,
 }
 
@@ -844,6 +887,10 @@ export function settingsScreen(): Screen {
   let root: HTMLElement
   let visible = false
   let tab: TabId = 'you'
+  /** The waifu cards as the link last listed them; undefined until it has. */
+  let deck: { list: CardSummary[]; active: string } | undefined
+  /** When a card request last went out, so a refusal (an app_error) right after it is shown. */
+  let cardAskAt = 0
   let costumes: Costume[] = []
   let models: { dir: string; found: boolean } | undefined
   /**
@@ -1176,6 +1223,25 @@ export function settingsScreen(): Screen {
         models = { dir: m.dir, found: m.found }
         return void (visible && renderCostumes())
       }
+      case 'cards': {
+        const was = deck?.active
+        deck = { list: m.list, active: m.active }
+        const now = m.list.find((c) => c.id === m.active)
+        if (was && was !== m.active && now && visible) {
+          ctx.toast(`${now.name}'s card is in. She takes over from the next session.`)
+          say('Nice to meet you, {you}.', 'shy')
+        }
+        return void (root && renderCards())
+      }
+      case 'app_error':
+        // A card request the link refused (a session still running, a card gone) comes back only as this.
+        if (Date.now() - cardAskAt < CARD_REPLY_MS) ctx.toast(m.message)
+        return
+      case 'card_file':
+        if (m.error) return ctx.toast(`${m.op === 'export' ? 'Export' : 'Import'} failed: ${m.error}`)
+        if (m.op === 'export') return ctx.toast(`Card saved to ${m.path}. Your memories with her stay here.`)
+        ctx.toast('Card imported. Switch to it from the list.')
+        return react('surprised')
       case 'hello':
         about = { version: m.version, dataDir: m.dataDir }
         return void (visible && renderAbout())
@@ -1240,6 +1306,7 @@ export function settingsScreen(): Screen {
       requestCostumes(dir, dir ? 0 : SAVE_SETTLE_MS)
     }
     if (id === 'about' && !about) ctx.link.send({ t: 'hello' })
+    if (id === 'cards') ctx.link.send({ t: 'cards' })
     if (id === 'roleplay') {
       const s = ctx.store.get()
       const name = q<HTMLInputElement>('[data-research="name"]')
@@ -1302,6 +1369,39 @@ export function settingsScreen(): Screen {
         ? `✓ ${list.length} costume${list.length === 1 ? '' : 's'} found in ${where}`
         : `✕ No Live2D models found${models.dir ? ` in ${where}` : ''}. Choose the folder that holds your costume folders.`
     paintSeg(grid, s)
+  }
+
+  function renderCards() {
+    const el = q('[data-test="cards-list"]')
+    if (!deck) return
+    if (!deck.list.length) return paint(el, '<p class="set-empty">No cards yet.</p>')
+    const active = deck.active
+    // The card in use shows her live settings: the list the link sent may predate an edit, and repainting it when the
+    // fresh one comes would swallow a click on it.
+    const s = ctx.store.get()
+    const live = (c: CardSummary): CardSummary =>
+      c.id !== active ? c : { ...c, name: s.waifu.name.trim() || 'Unnamed', series: s.waifu.series.trim(), model: s.appearance.model, voiced: !!s.voice.voiceId.trim() }
+    const hearts = (n: number) => `<span class="set-hearts" title="Love meter ${n}/${AFFECTION_LEVELS}">${'♥'.repeat(n)}<i>${'♥'.repeat(AFFECTION_LEVELS - n)}</i></span>`
+    paint(
+      el,
+      deck.list
+        .map(live)
+        // Sorted here, after her live name: rows that swap places when the link's list comes would misdirect a click.
+        .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+        .map((c) => {
+          const on = c.id === active
+          const tags = [c.model === 'mmd' ? '3D (MMD)' : 'Live2D', c.voiced ? 'Voiced' : 'No voice'].map((t) => `<em>${t}</em>`).join('')
+          return `<div class="set-wcard${on ? ' on' : ''}" data-test="card-row" data-wcard="${esc(c.id)}">
+            <div class="set-wcard-main"><b>${esc(c.name)}</b>${on ? '<span class="set-wcard-active">In use</span>' : ''}
+              <small>${esc(c.series || '—')}</small><div class="set-wcard-tags">${hearts(c.hearts)}${tags}</div></div>
+            <div class="set-wcard-acts">
+              ${on ? '' : `<button class="btn" type="button" data-act="card-switch" data-id="${esc(c.id)}" data-test="card-switch">Switch</button>`}
+              <button class="btn" type="button" data-act="card-export" data-id="${esc(c.id)}" data-test="card-export">Export…</button>
+              ${on ? '' : `<button class="btn" type="button" data-act="card-delete" data-id="${esc(c.id)}" data-test="card-delete">Delete</button>`}
+            </div></div>`
+        })
+        .join(''),
+    )
   }
 
   function renderAbout() {
@@ -1669,6 +1769,56 @@ export function settingsScreen(): Screen {
       }
       case 'models-default':
         return useDefaultModels()
+      case 'mmd-browse': {
+        if (ctx.link.remote) return ctx.toast('Pick her model on the computer itself.')
+        const file = await ctx.pickFile('Where is her 3D model?', 'MMD model', ['pmx'], ctx.store.get().appearance.mmdFile)
+        if (file) write('appearance.mmdFile', file)
+        return
+      }
+      case 'card-switch': {
+        const c = deck?.list.find((x) => x.id === id)
+        if (!c) return
+        commitFocused()
+        ctx.store.flush()
+        cardAskAt = Date.now()
+        return ctx.link.send({ t: 'card_switch', id })
+      }
+      case 'card-new':
+      case 'card-copy':
+        commitFocused()
+        ctx.store.flush()
+        cardAskAt = Date.now()
+        return ctx.link.send({ t: 'card_new', ...(el.dataset.act === 'card-copy' ? { from: ctx.store.get().card } : {}) })
+      case 'card-delete': {
+        const c = deck?.list.find((x) => x.id === id)
+        if (!c) return
+        const yes = await ctx.confirm(
+          `Delete ${c.name}'s card?`,
+          'Her persona, model choice, voice and love meter go. What she remembers about you stays in the data folder.',
+          'Delete',
+          'Keep',
+        )
+        if (yes) {
+          cardAskAt = Date.now()
+          ctx.link.send({ t: 'card_delete', id })
+        }
+        return
+      }
+      case 'card-export': {
+        if (ctx.link.remote) return ctx.toast('Export cards on the computer itself.')
+        const c = deck?.list.find((x) => x.id === id)
+        if (!c) return
+        const file = `${c.name.replace(/[\\/:*?"<>|]+/g, '').trim() || 'waifu'}.waifu.json`
+        const path = await ctx.pickSavePath(`Export ${c.name}'s card`, file, 'Waifu card', ['json'])
+        if (path) ctx.link.send({ t: 'card_export', id, path })
+        return
+      }
+      case 'card-import': {
+        if (ctx.link.remote) return ctx.toast('Import cards on the computer itself.')
+        const path = await ctx.pickFile('Import a waifu card', 'Waifu card', ['json'])
+        if (path) ctx.link.send({ t: 'card_import', path })
+        return
+      }
       case 'dir-browse': {
         const s = ctx.store.get()
         const dir = await ctx.pickFolder('Where should she work by default?', s.claude.defaultDir || s.lastDir)
@@ -1903,6 +2053,7 @@ export function settingsScreen(): Screen {
         if (!visible) return
         sync(s)
         if (tab === 'waifu') schedulePreview()
+        if (tab === 'cards') renderCards()
       })
     },
     show(params) {

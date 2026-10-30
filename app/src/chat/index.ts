@@ -138,7 +138,8 @@ const PHASE_VERBS: Record<Phase, string> = {
 /** `close` is Esc (a menu steps back first); `dismiss`, when set, closes it outright (a new session, closing all). */
 type Layer = { el: HTMLElement; close(): void; dismiss?(): void; key?(e: KeyboardEvent): boolean }
 /** `shell`: a `!` command, queued like the CLI queues one typed while a turn runs. */
-type Queued = { id: string; text: string; images: Image[]; shell?: boolean }
+/** `sent`: already with her (Enter while she works), read at her next step; shown until then. Else held by the app. */
+type Queued = { id: string; text: string; images: Image[]; shell?: boolean; sent?: boolean }
 type ModalOptions = {
   test: string
   title: string
@@ -288,9 +289,9 @@ export function chatScreen(): Screen {
   }
   // A phone's composer is narrow and has no Esc: the short version.
   const placeholder = () => (ctx.link.remote
-    ? running ? `${charName()} is working… (sending queues)` : `Speak to ${charName()}…`
+    ? running ? `${charName()} is working… (she reads it at her next step)` : `Speak to ${charName()}…`
     : running
-      ? `${charName()} is working… (Enter queues · Esc interrupts)`
+      ? `${charName()} is working… (Enter: her next step · Ctrl+Enter: now · Esc interrupts)`
       : chatMode === 'casual' ? `Chat with ${charName()}…  ♡` : `Speak to ${charName()}…  ( / commands · @ files · ! shell )`)
   const nextEpoch = () => (epoch = Math.max(epoch + 1, Date.now()))
 
@@ -619,7 +620,8 @@ export function chatScreen(): Screen {
 
   function openHelp() {
     const keys: [string, string][] = [
-      ['Enter', 'Send (queues while she works)'], ['Ctrl+Enter', 'Send now, into her running turn'],
+      ['Enter', 'Send · while she works, she reads it at her next step'], ['Ctrl+Enter · Ctrl+X Ctrl+S', 'Send now, with anything queued'],
+      ['Ctrl+X Enter', 'Queue until her turn ends'], ['Ctrl+S', 'Stash the draft · bring it back'], ['↑ (queued)', 'Take queued messages back'],
       ['Shift+Enter · Ctrl+J · \\+Enter', 'New line'], ['↑ / ↓', 'Input history'], ['Ctrl+R', 'Search history'],
       ['/', 'Commands'], ['@', 'Mention a file'], ['!', 'Run a shell command'], ['Ctrl+V · Alt+V', 'Paste an image'],
       ['Esc', 'Close a menu · interrupt'], ['Esc Esc', 'Rewind to an earlier message'], ['Shift+Tab', 'Cycle permission mode'],
@@ -736,10 +738,26 @@ export function chatScreen(): Screen {
   // ---------------------------------------------------------------- sending, queue, interrupt (R11, R12)
 
   function renderQueue() {
-    input.setQueued(queued.map(({ id, text, shell }) => ({ id, text: shell ? `!${text}` : text })), (id) => {
-      queued = queued.filter((q) => q.id !== id)
+    input.setQueued(queued.map(({ id, text, shell, sent }) => ({ id, text: shell ? `!${text}` : text, sent: !!sent })), (id) => {
+      // Only a held message can be taken off: one already with her is hers.
+      queued = queued.filter((q) => q.id !== id || q.sent)
       renderQueue()
     })
+  }
+
+  /** Her next step came (a tool call finished, or the turn ended): what was sent for it has reached her. */
+  function delivered() {
+    if (!queued.some((q) => q.sent)) return
+    queued = queued.filter((q) => !q.sent)
+    renderQueue()
+  }
+
+  /** Enter while she works, as in the CLI: with her at once, read when the tool call running now finishes. */
+  function sendAtNextStep(text: string, images: Image[]) {
+    ctx.link.send({ t: 'say', text, images: images.length ? images : undefined, mood: mood() })
+    addLog({ who: 'user', text: text + images.map((_, i) => ` [Image #${i + 1}]`).join('') })
+    queued.push({ id: String(++queueSeq), text, images, sent: true })
+    renderQueue()
   }
 
   function userPage(text: string): DisplayPage {
@@ -797,7 +815,8 @@ export function chatScreen(): Screen {
   }
 
   function sendNext() {
-    const next = queued.shift()
+    const i = queued.findIndex((q) => !q.sent)
+    const next = i < 0 ? undefined : queued.splice(i, 1)[0]
     renderQueue()
     if (next?.shell) runShell(next.text)
     else if (next) say(next.text, next.images, true)
@@ -812,19 +831,20 @@ export function chatScreen(): Screen {
     dialogue.push({ kind: 'narration', text: `Running \`${oneLine(command, SHELL_NARRATION_CHARS)}\`… (Esc stops it)` })
   }
 
+  /** ↑ on the composer's first line, as in the CLI: held messages come back to the input. Sent ones are hers. */
   function restoreQueue() {
-    if (!queued.length) return false
-    input.restore(queued.map((q) => (q.shell ? `!${q.text}` : q.text)).join('\n'))
-    queued = []
+    const held = queued.filter((q) => !q.sent)
+    if (!held.length) return false
+    input.restore(held.map((q) => (q.shell ? `!${q.text}` : q.text)).join('\n'))
+    queued = queued.filter((q) => q.sent)
     renderQueue()
     return true
   }
 
   function interrupt() {
     if (!running && !shellsRunning) return false
+    // Like the CLI, what you queued goes out next: the interrupted turn's end sends it.
     ctx.link.send({ t: 'interrupt' })
-    // Like the CLI, messages typed during the turn come back to the input instead of running.
-    restoreQueue()
     return true
   }
 
@@ -1135,8 +1155,9 @@ export function chatScreen(): Screen {
   function onStarted(m: Extract<SessionEvent, { t: 'started' }>) {
     cwd = m.cwd
     title = m.save?.title || title
-    // A save from before points carries only its hearts: it starts at the first point of that level.
-    affection = clampPoints(m.save?.affectionPts ?? levelStart(m.save?.affection ?? 0))
+    // The love meter is the waifu card's. A link from before cards sends none: then the save's points, and a save
+    // from before points carries only its hearts, so it starts at the first point of that level.
+    affection = clampPoints(m.love ?? m.save?.affectionPts ?? levelStart(m.save?.affection ?? 0))
     basePlayMs = m.save?.playMs ?? 0
     startedAt = Date.now()
     panels.reset({ title: title || `A new day with ${charName()}`, cwd: m.cwd, cwdShort: m.cwdShort })
@@ -1192,8 +1213,6 @@ export function chatScreen(): Screen {
       gesture('interrupt')
       dialogue.show({ kind: 'narration', text: `Interrupted · What should ${charName()} do instead?` })
       addLog({ who: 'system', text: 'Interrupted by you' })
-      // However the turn was stopped (Esc, STOP, or No on a permission), queued messages come back to the input.
-      restoreQueue()
     } else if (m.ok) {
       // The CLI's completion line: "Baked for 1m 3s".
       if (m.seconds >= 1) addLog({ who: 'system', text: `✻ ${doneVerb(turnStart)} for ${duration(m.seconds * 1000)}` })
@@ -1211,9 +1230,11 @@ export function chatScreen(): Screen {
     if (replaying) return
     // The computer owns the save: a phone writing its own play time and thumbnail would undo the desktop's.
     if (!ctx.link.remote) saveAfterStats()
-    if (m.interrupted) return
+    // What was sent for her next step reached her in this turn, or runs next on its own; a held message goes now. However
+    // the turn was stopped (Esc, STOP, or No on a permission), as in the CLI, queued messages go out next.
+    delivered()
     // She is waiting for you now, unless a queued message goes out next.
-    if (!queued.length) callForAttention()
+    if (!m.interrupted && !queued.length) callForAttention()
     sendNext()
   }
 
@@ -1264,6 +1285,8 @@ export function chatScreen(): Screen {
   }
 
   function onToolDone(m: Extract<SessionEvent, { t: 'tool_done' }>) {
+    // A tool call finished: the CLI hands her what was sent for her next step now.
+    if (!replaying) delivered()
     const t = tools.get(m.id)
     if (!t) return
     t.state = m.ok ? 'ok' : 'err'
@@ -1765,11 +1788,26 @@ export function chatScreen(): Screen {
         busy: () => running,
         submitNow(text, images) {
           compose(false)
-          if (!live || ended || !ready || !running) return say(text, images)
-          ctx.link.send({ t: 'say', text, images, now: true, mood: mood() })
-          addLog({ who: 'user', text })
-          ctx.toast(`Sent now · ${charName()} reads it at her next step`)
+          // As the CLI's send-now: what you queued goes with the draft, as one message.
+          const held = queued.filter((q) => !q.sent && !q.shell)
+          const all = [...held.map((q) => q.text), text].filter((t) => t.trim()).join('\n\n')
+          const pics = [...held.flatMap((q) => q.images), ...images]
+          if (!all && !pics.length) return
+          queued = queued.filter((q) => q.sent || q.shell)
+          renderQueue()
+          if (!live || ended || !ready || !running) return say(all, pics)
+          // 'now': work that can go to the background goes there and she reads it at once; else her turn stops for it.
+          ctx.link.send({ t: 'say', text: all, images: pics, now: true, mood: mood() })
+          addLog({ who: 'user', text: all })
+          ctx.toast(`Sent now · ${charName()} reads it right away`)
         },
+        submitLater(text, images) {
+          compose(false)
+          if (!live || ended || !ready || !(running || shellsRunning)) return this.submit(text, images)
+          queued.push({ id: String(++queueSeq), text, images })
+          renderQueue()
+        },
+        takeBack: () => restoreQueue(),
         submit(text, images) {
           compose(false)
           if (!live || ended) {
@@ -1777,7 +1815,9 @@ export function chatScreen(): Screen {
             const pics = images.length ? ` · attach your image${images.length > 1 ? 's' : ''} again after` : ''
             return ctx.toast(`The session has ended · restart it first${pics}`)
           }
-          // Like the CLI, a message typed while she works (or before she is ready) waits for the next turn.
+          // Like the CLI, a message typed while she works reaches her at her next step. Before she is ready, or while a `!`
+          // command runs, it waits for the turn to end.
+          if (running && ready && !shellsRunning) return sendAtNextStep(text, images)
           if (running || !ready || shellsRunning) {
             queued.push({ id: String(++queueSeq), text, images })
             return renderQueue()
