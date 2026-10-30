@@ -6,6 +6,8 @@ import './pair.css'
 export type Pairing = { hosts: string[]; port: number; token: string }
 
 const KEY = 'wc-pairing'
+/** The pairing link this phone was paired with (its code, not its own token): the way back in without the computer. */
+const CODE_KEY = 'wc-pair-code'
 
 /** `waifufy-code://pair?h=192.168.1.5,100.64.0.2&p=47920&t=…` → a pairing, or undefined if it isn't one. */
 export function parsePairing(text: string): Pairing | undefined {
@@ -27,13 +29,32 @@ export function savedPairing(): Pairing | undefined {
   }
 }
 
+/** A pairing link (scanned, pasted) is also kept as the emergency key; a pairing object is the phone's own. */
 export function savePairing(p: Pairing | string) {
   const v = typeof p === 'string' ? parsePairing(p) : p
   if (!v) return
   try {
     localStorage.setItem(KEY, JSON.stringify(v))
+    if (typeof p === 'string') localStorage.setItem(CODE_KEY, JSON.stringify(v))
   } catch {
     // Private storage off: pairing again next launch is the only cost.
+  }
+}
+
+export function savedCode(): Pairing | undefined {
+  try {
+    const p = JSON.parse(localStorage.getItem(CODE_KEY) ?? 'null') as Pairing | null
+    return p?.hosts?.length && p.port && p.token ? p : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function clearCode() {
+  try {
+    localStorage.removeItem(CODE_KEY)
+  } catch {
+    // Nothing stored, then.
   }
 }
 
@@ -129,7 +150,8 @@ export function pair(error?: string): Promise<Pairing> {
       <textarea class="field" rows="3" spellcheck="false" placeholder="waifufy-code://pair?…" data-test="pair-link"></textarea>
       <button class="btn" type="button" data-act="connect" data-test="pair-connect">Connect</button>
       <p class="pair-error" data-test="pair-error"></p>
-      <p class="pair-note">Your phone talks to your computer directly, over your Wi-Fi or Tailscale. Claude Code keeps running on the computer.</p>
+      <p class="pair-note">Your phone talks to your computer directly, over your Wi-Fi or Tailscale. Claude Code keeps running on the computer.
+        Saved the pairing link somewhere (notes, a password manager)? Pasting it here works without your computer's screen.</p>
     </div>
     <div class="pair-scan" aria-live="polite">
       <p>Point the camera at the QR code on your computer</p>
@@ -151,7 +173,7 @@ export function pair(error?: string): Promise<Pairing> {
     const done = (text: string) => {
       const p = parsePairing(text)
       if (!p) return say('That isn\'t a Waifufy Code pairing link. It starts with waifufy-code://pair')
-      savePairing(p)
+      savePairing(text)
       el.remove()
       void back.then((l) => l?.unregister())
       resolve(p)

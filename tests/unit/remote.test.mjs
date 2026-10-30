@@ -116,7 +116,7 @@ try {
     await desk.next((m) => m.t === 'trust' && m.trusted)
     desk.send({ t: 'start', epoch: 1, cwd: project })
     await desk.next((m) => m.t === 'ready' && m.epoch === 1, 10_000)
-    phone = await client(`ws://127.0.0.1:47934/?token=${encodeURIComponent(t())}`)
+    phone = await client(`ws://127.0.0.1:47934/?token=${encodeURIComponent(t())}&device`)
     // Paired with the code: it gets a token of its own at once.
     device = (await phone.next((m) => m.t === 'paired')).token
     ok(device && device !== t(), 'a device token of its own')
@@ -164,11 +164,28 @@ try {
     ok(att.epoch === undefined, 'no epoch')
   })
 
+  await test('the computer says whether it takes a token (/paired); an app without device tokens gets none', async () => {
+    const paired = (tok) => fetch(`http://127.0.0.1:47934/paired?token=${encodeURIComponent(tok)}`).then((r) => r.status)
+    ok((await paired(device)) === 200, 'the device token is taken')
+    ok((await paired('nope')) === 401, 'an unknown token is refused')
+    desk.clear()
+    desk.send({ t: 'remote_status' })
+    const before = (await desk.next((m) => m.t === 'remote_status')).status.devices.length
+    const old = await client(`ws://127.0.0.1:47934/?token=${encodeURIComponent(t())}`)
+    await sleep(300)
+    ok(!old.got.some((m) => m.t === 'paired'), 'no device token for an older app')
+    old.ws.close()
+    desk.clear()
+    desk.send({ t: 'remote_status' })
+    ok((await desk.next((m) => m.t === 'remote_status')).status.devices.length === before, 'no device added')
+  })
+
   await test('a new pairing code keeps paired phones: the old code is refused, the device token still works', async () => {
     const oldCode = t()
     desk.clear()
     desk.send({ t: 'remote_reset' })
-    const st = await desk.next((m) => m.t === 'remote_status')
+    // A late status from an earlier connection can come first: wait for the one with the new code.
+    const st = await desk.next((m) => m.t === 'remote_status' && new URL(m.status.pairUrl).searchParams.get('t') !== oldCode)
     pair = new URL(st.status.pairUrl)
     ok(t() !== oldCode, 'a new code')
     await sleep(300)
@@ -184,9 +201,12 @@ try {
 
   await test('removing a device disconnects it as unpaired and refuses its token', async () => {
     const id = (await (desk.clear(), desk.send({ t: 'remote_status' }), desk.next((m) => m.t === 'remote_status'))).status.devices[0].id
+    const codeBefore = t()
     const closed = new Promise((r) => phone.ws.on('close', (code) => r(code)))
     desk.send({ t: 'remote_forget', id })
     ok((await closed) === 4001, 'closed as unpaired')
+    const paired = (tok) => fetch(`http://127.0.0.1:47934/paired?token=${encodeURIComponent(tok)}`).then((r) => r.status)
+    ok((await paired(codeBefore)) === 401, 'the code changed too: a link saved on the removed phone is refused')
     let err
     await client(`ws://127.0.0.1:47934/?token=${encodeURIComponent(device)}`).catch((e) => (err = e))
     ok(err?.message.includes('401'), 'its token is refused')

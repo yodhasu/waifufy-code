@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { ClientMsg, ServerMsg } from '../../link/src/protocol.ts'
 import type { Link } from './contracts'
-import { clearPairing, pair, savedPairing, savePairing, waitForComputer, type Pairing } from './pair'
+import { clearCode, clearPairing, pair, savedCode, savedPairing, savePairing, waitForComputer, type Pairing } from './pair'
 
 const RETRY_MS = 400
 /** A phone's pause between rounds of trying every address, longer each time it finds none, up to the last. */
@@ -10,8 +10,6 @@ const BACKOFF_MS = [400, 1000, 2000, 3000, 5000]
 const REVIVE_MS = 3000
 /** A phone gives the desktop's addresses this long to answer, all at once, in each round. */
 const REMOTE_TRY_MS = 3500
-/** Rounds in which the computer answered but refused the pairing before the phone asks to pair again. */
-const REFUSED_ROUNDS = 2
 /** Addresses a phone remembers for its computer: the ones that worked, then what the computer last reported. */
 const MAX_HOSTS = 8
 /** The desktop closes a phone's connection with this code when it was unpaired (a new pairing code). */
@@ -38,12 +36,12 @@ export async function connect(): Promise<Link> {
   let ws: WebSocket | undefined
   let host = target.hosts[0]!
   let failed = 0
-  let refused = 0
 
   const setStatus = (s: 'up' | 'down') => {
     for (const h of statusHandlers) h(s)
   }
-  const url = (h: string) => `ws://${h}:${target.port}/?token=${encodeURIComponent(target.token)}`
+  // `device`: this phone keeps a device token of its own when it pairs with the code (the computer sends one).
+  const url = (h: string) => `ws://${h}:${target.port}/?token=${encodeURIComponent(target.token)}${target.remote ? '&device' : ''}`
 
   /** Remembers what worked first, then the rest, for the next time (and the next launch). */
   function remember(first: string, more: string[] = []) {
@@ -51,8 +49,17 @@ export async function connect(): Promise<Link> {
     if (target.remote) savePairing({ hosts: target.hosts, port: target.port, token: target.token })
   }
 
-  /** A phone whose computer answers but won't take its pairing (a new code was made): pair again. */
+  /**
+   * A phone whose computer won't take its token any more. With the pairing link it was paired with saved (and not
+   * the token it just lost), it pairs again with that on its own: no trip to the computer. Otherwise it asks.
+   */
   function unpaired(reason: string) {
+    const code = savedCode()
+    if (code && code.token !== target.token) {
+      savePairing({ ...code, hosts: [...new Set([...target.hosts, ...code.hosts])].slice(0, MAX_HOSTS) })
+      return location.reload()
+    }
+    clearCode()
     clearPairing()
     try {
       sessionStorage.setItem(PAIR_REASON, reason)
@@ -68,7 +75,7 @@ export async function connect(): Promise<Link> {
     let isFirst = true
     const adopt = (s: WebSocket, h: string) => {
       host = h
-      failed = refused = 0
+      failed = 0
       ws = s
       if (target.remote) remember(h)
       waiting?.close()
@@ -109,10 +116,8 @@ export async function connect(): Promise<Link> {
       const won = await openAny(target.hosts.map((h) => ({ host: h, url: url(h) })), REMOTE_TRY_MS)
       if (won) return adopt(won.socket, won.host)
       failed++
-      // Answering at an address but refusing the socket means the pairing is stale, not that the computer is away.
-      if (await answersAny(target.hosts, target.port)) {
-        if (++refused >= REFUSED_ROUNDS) return unpaired('Your computer is there but no longer takes this pairing. Scan its code again.')
-      } else refused = 0
+      // Only the computer saying no (it was removed there) unpairs: a slow or missing network just means trying again.
+      if (await refusedBy(target.hosts, target.port, target.token)) return unpaired('Your computer no longer takes this pairing. Scan its code again.')
       if (isFirst && !waiting) waiting = waitForComputer(target.hosts, () => unpaired(''))
       waiting?.update(failed)
       setTimeout(open, BACKOFF_MS[Math.min(failed, BACKOFF_MS.length) - 1])
@@ -223,9 +228,11 @@ function openAny(tries: { host: string; url: string }[], ms: number) {
   })
 }
 
-/** Whether any address answers the link's health check: the computer is there (whether or not it takes the pairing). */
-async function answersAny(hosts: string[], port: number) {
+/** Whether the computer answers, at any address, that it doesn't take this token (401). No answer is not a no. */
+async function refusedBy(hosts: string[], port: number, token: string) {
   const one = (h: string) =>
-    fetch(`http://${h}:${port}/health`, { signal: AbortSignal.timeout(REMOTE_TRY_MS) }).then((r) => (r.ok ? true : Promise.reject()))
+    fetch(`http://${h}:${port}/paired?token=${encodeURIComponent(token)}`, { signal: AbortSignal.timeout(REMOTE_TRY_MS) }).then((r) =>
+      r.status === 401 ? true : Promise.reject(),
+    )
   return Promise.any(hosts.map(one)).then(() => true, () => false)
 }

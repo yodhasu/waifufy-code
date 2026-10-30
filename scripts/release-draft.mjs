@@ -45,6 +45,7 @@ writeFileSync(
 - After a drop it tries every address it knows at once (home Wi-Fi, Tailscale…), over and over, and gets back in on its own
 - If the computer isn't there when you open the app, it waits for it instead of asking you to scan the code again
 - Each phone is paired for good with its own key: a new pairing code no longer unpairs anyone, and Settings → Phone lists your phones with Remove
+- An emergency key: keep a copy of the pairing link; pasting it on the phone brings it back without your computer's screen (the phone also keeps it, and uses it by itself)
 - With phone access on, closing the window keeps Waifufy Code in the tray, so your phone can always reach it (Quit is in the tray menu)
 
 **Reine on the phone**

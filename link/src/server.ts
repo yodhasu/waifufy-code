@@ -147,6 +147,8 @@ async function route(req: IncomingMessage, res: ServerResponse, phone = false) {
   }
   if (req.method !== 'GET' && req.method !== 'HEAD') return text(res, 405, 'method not allowed')
   if (pathname === '/health') return text(res, 200, JSON.stringify({ ok: true, version: VERSION, mock: MOCK }), 'application/json')
+  // A phone asking whether the computer still takes its token: only a 401 makes it pair again, never a slow network.
+  if (phone && pathname === '/paired') return text(res, phoneAuth(tokenOf(req)) ? 200 : 401, '')
   // Model files and thumbnails are served without the token: the page loads them by URL.
   if (pathname.startsWith('/models/')) return serveModel(pathname, res)
   if (pathname.startsWith('/thumbs/')) return serveThumb(pathname, res)
@@ -249,7 +251,7 @@ async function syncPhones() {
       const auth = phoneAuth(tokenOf(req))
       if (auth && auth !== 'pair') (deviceOf.set(ws, auth.device.id), sawDevice(auth.device.id))
       // Paired with the code: it gets a token of its own, so a new code later never unpairs it.
-      if (auth === 'pair') {
+      if (auth === 'pair' && new URL(req.url ?? '/', 'http://link').searchParams.has('device')) {
         void addDevice(deviceName(req.headers['user-agent'])).then((d) => {
           deviceOf.set(ws, d.id)
           sendTo(ws, { t: 'paired', token: d.token })
@@ -951,6 +953,8 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       if (m.t === 'remote_forget') {
         need(isStr(m.id), 'id')
         await removeDevice(m.id)
+        // A removed phone keeps its pairing link as an emergency key: a new code makes sure that can't bring it back.
+        await resetRemoteToken()
         for (const p of phones?.wss.clients ?? []) if (deviceOf.get(p) === m.id) p.close(4001, 'unpaired')
         return broadcastLocal({ t: 'remote_status', status: phoneStatus() })
       }

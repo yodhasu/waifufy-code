@@ -827,7 +827,7 @@ function phonePane() {
             </div>
           </div>
         </div>` +
-        note('The code lets a phone in: only show it to your own. Each phone that scans it gets a key of its own and stays paired for good, so it reconnects by itself and never needs this screen again; a new pairing code only changes what new phones scan. The first time, Windows may ask whether Waifufy Code may use the network: allow private networks. Away from home, Tailscale on both devices keeps it working.') +
+        note('The code lets a phone in: only show it to your own. Each phone that scans it gets a key of its own and stays paired for good, so it reconnects by itself and never needs this screen again; a new pairing code only changes what new phones scan. <b>Keep a copy of the pairing link</b> (Copy pairing link, into your notes or a password manager): if a phone ever loses its pairing (reinstalled, its data cleared), pasting it there brings it back without this screen. It works until you make a new pairing code or remove a phone; then copy the new one. The first time, Windows may ask whether Waifufy Code may use the network: allow private networks. Away from home, Tailscale on both devices keeps it working.') +
         `<div class="set-devices" data-phone-devices hidden>
           <h5>Paired phones</h5>
           <div data-test="phone-devices"></div>
@@ -1946,7 +1946,7 @@ export function settingsScreen(): Screen {
         const d = phone?.devices.find((x) => x.id === el.dataset.id)
         if (!d) return
         return void ctx
-          .confirm(`Remove ${d.name}?`, 'It is disconnected now, and can only connect again by scanning the pairing code.', 'Remove', 'Keep')
+          .confirm(`Remove ${d.name}?`, 'It is disconnected now, and the pairing code changes, so the link saved on it can\'t bring it back. Other phones stay paired. If you keep a copy of the pairing link, copy the new one.', 'Remove', 'Keep')
           .then((yes) => yes && ctx.link.send({ t: 'remote_forget', id: d.id }))
       }
       case 'phone-unpair':

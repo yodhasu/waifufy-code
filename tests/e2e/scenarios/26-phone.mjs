@@ -281,6 +281,29 @@ export default {
     },
     {
       r: 'R77',
+      name: 'a phone that lost its own token pairs again by itself with the link it saved (no computer screen)',
+      timeout: 60_000,
+      async run({ app }) {
+        const pair = await enablePhone(app)
+        const phone = await openPhone(pair)
+        try {
+          await phone.waitFor(() => !!localStorage.getItem('wc-pair-code') && JSON.parse(localStorage.getItem('wc-pairing')).token !== JSON.parse(localStorage.getItem('wc-pair-code')).token, { label: 'paired, with the link kept' })
+          // Its own token gone bad (as after the computer forgot it), and no pairing link in the page address this time.
+          await phone.eval(() => {
+            const p = JSON.parse(localStorage.getItem('wc-pairing'))
+            localStorage.setItem('wc-pairing', JSON.stringify({ ...p, token: 'lost' }))
+            location.href = location.origin + '/'
+          })
+          await phone.waitFor(() => window.__wc?.router.current() === 'title' && !document.querySelector('[data-test="pair"]'), { timeout: 40_000, label: 'back in, without the pairing screen' })
+          const token = await phone.eval(() => JSON.parse(localStorage.getItem('wc-pairing')).token)
+          assert(token !== 'lost' && token.length > 20, 'a new token of its own')
+        } finally {
+          await phone.close()
+        }
+      },
+    },
+    {
+      r: 'R77',
       name: 'a phone keeps its own pairing through a new code; removing it on the desktop drops it to the pairing screen',
       async run({ app }) {
         const pair = await enablePhone(app)
