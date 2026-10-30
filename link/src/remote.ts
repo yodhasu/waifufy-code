@@ -11,7 +11,8 @@ import { DATA_DIR } from './settings.ts'
 // desktop page's), which the pairing QR code carries. The token lives in its own file, like the other secrets.
 
 /** Fixed, so a paired phone finds the desktop again after a restart. */
-export const REMOTE_PORT = 47920
+/** WC_REMOTE_PORT moves it, so a test link can pair a phone while the installed app holds the usual port. */
+export const REMOTE_PORT = Number(process.env.WC_REMOTE_PORT) || 47920
 const FILE = join(DATA_DIR, 'remote.json')
 const TOKEN_BYTES = 24
 

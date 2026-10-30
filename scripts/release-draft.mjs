@@ -39,23 +39,14 @@ run(`git push origin ${branch}`)
 const notes = join(tmpdir(), `waifufy-${tag}-notes.md`)
 writeFileSync(
   notes,
-  `Waifufy Code ${version}: her in 3D, closer to life
+  `Waifufy Code ${version}: her in 3D on the phone
 
-A patch for 0.8.0's 3D cards, her voice and the preset library.
+A patch for 0.8.1: 3D cards now load in the Android app.
 
-**Her in 3D**
-- She turns the right way toward the cursor, follows it across the whole screen, and moves from the waist up, not just her head
-- She breathes, leans into a headpat (with the Live2D headpat and tap reactions and their hearts), and stands taller beside Settings
-- **Zoom** with the wheel over her (Live2D too); on a 3D card a **right-drag** turns the camera round her, a middle-drag moves it up and down, a right double-click puts it back
-- Her face fits what she says: lip sync isn't fighting a laughing mouth any more, and a question doesn't come with a smile
-
-**Her voice**
-- **Pronunciation**: tell the voice how to say words it gets wrong (\`Pavolia Reine = Pah-VOH-lee-ah RAY-neh\`); the text keeps the real spelling
-- Roleplay research now writes how she speaks in your voice's language and those respellings, and Apply fills them in
-
-**Waifu cards**
-- The preset library is shared by every card, so swapping cards no longer swaps it away
-- A swap, or settings edited by an older version, never loses an edit
+**On the phone**
+- The phone gets her model with textures scaled to 1024 pixels (Reine's: 68 MB → 12 MB, and about a tenth of the GPU memory), converted once on the computer and cached. The computer keeps the full textures
+- The phone draws her lighter: no self-shadows, no antialiasing, a capped pixel density
+- If the phone still can't hold her, she falls back to her Live2D costume, a toast says why, and the reason is written to the computer's \`link.log\`
 
 Install: \`Waifufy-Code-${version}-setup.exe\` on Windows, the \`.apk\` on Android (arm64).
 `,

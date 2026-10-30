@@ -61,7 +61,8 @@ const samePath = (a: string, b: string) => {
   return norm(a) === norm(b)
 }
 
-export function createCharacter(root: HTMLElement, link: Link, store: Store): Character {
+/** `notify`: a short line for the user (main.ts's toast), for what they should know about her model. */
+export function createCharacter(root: HTMLElement, link: Link, store: Store, notify?: (text: string) => void): Character {
   root.innerHTML = TEMPLATE
   const box = root.querySelector<HTMLElement>('.chara-box')!
   const fxLayer = root.querySelector<HTMLElement>('.chara-fx')!
@@ -344,10 +345,13 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
 
   // ---------------------------------------------------------------- a 3D card
 
+  /** Models whose canvas the GPU dropped: not tried again this run, so she doesn't flicker between the two. */
+  const mmdBroken = new Set<string>()
   /** The .pmx the card asks for, or undefined for Live2D. */
   const wantedMmd = () => {
     const a = store.get().appearance
-    return a.model === 'mmd' && a.mmdFile.trim() ? a.mmdFile.trim() : undefined
+    const file = a.model === 'mmd' && a.mmdFile.trim() ? a.mmdFile.trim() : undefined
+    return file && !mmdBroken.has(file) ? file : undefined
   }
 
   /** Loads the card's 3D model and puts it in the Live2D rig's place. False when it couldn't (she keeps her look). */
@@ -358,7 +362,12 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
       // The link serves the folder of the active card's .pmx; textures load from it by their relative paths.
       const name = file.split(/[\\/]/).pop()!
       const { loadMmd } = await import('./mmd.ts')
-      const next = await loadMmd(box, fxLayer, `${link.base}/mmd/${encodeURIComponent(name)}`, file, store.get().appearance.zoom, resolution())
+      const next = await loadMmd(box, fxLayer, `${link.base}/mmd/${encodeURIComponent(name)}`, file, {
+        zoom: store.get().appearance.zoom,
+        resolution: resolution(),
+        light: link.remote,
+        onLost: () => lost(file),
+      })
       if (mmdLoading !== file) return next.destroy(), false
       mmdLoading = undefined
       const prev = mmd
@@ -379,8 +388,24 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store): Ch
     } catch (e) {
       if (mmdLoading === file) mmdLoading = undefined
       console.warn(`[waifufy-code] her 3D model (${file}) failed to load; showing her Live2D costume`, e)
+      report(`her 3D model (${file.split(/[\\/]/).pop()}) failed to load: ${e instanceof Error ? e.stack || e.message : String(e)}`)
+      notify?.(`Her 3D model couldn't load here, so she's in her Live2D costume. (${e instanceof Error ? e.message : e})`)
       return false
     }
+  }
+
+  /** A phone's console is out of reach: what went wrong goes to the desktop's link.log too. */
+  function report(text: string) {
+    link.send({ t: 'client_log', text: `${link.remote ? '[phone] ' : ''}${text} · ${navigator.userAgent}` })
+  }
+
+  /** The GPU dropped her canvas (out of memory, most likely on a phone): back to the Live2D costume for this run. */
+  function lost(file: string) {
+    if (mmd?.file !== file) return
+    report(`her 3D model's WebGL context was lost (${file.split(/[\\/]/).pop()}); falling back to Live2D`)
+    notify?.('Her 3D model was too heavy for this device just now, so she\'s in her Live2D costume.')
+    mmdBroken.add(file)
+    dropMmd()
   }
 
   /** Back to the Live2D costume (or the placeholder until it loads). */

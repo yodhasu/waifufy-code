@@ -1,7 +1,7 @@
 // A phone that joins (or re-joins) the desktop's running session gets all of it: what was said on either side, every
 // tool she ran, the prompts still open (and not the ones already answered), and a dead phone socket is dropped so its
 // next connection starts clean. Against a real link process in mock mode.
-// Run: node tests/unit/continuity.test.mjs (no app, no Claude). Needs port 47920 free.
+// Run: node tests/unit/continuity.test.mjs (no app, no Claude). Uses phone port 47933, so it runs beside the installed app.
 import { spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -20,7 +20,7 @@ const PORT = 47991
 const TOKEN = 'desktop-token'
 const link = spawn(process.execPath, ['link/src/server.ts'], {
   cwd: new URL('../..', import.meta.url),
-  env: { ...process.env, WC_PORT: String(PORT), WC_TOKEN: TOKEN, WC_DATA_DIR: dir, WC_MOCK: '1', WC_MOCK_TICK_MS: '2', WC_PING_MS: '300', WC_TRUST_FOLDERS: dir },
+  env: { ...process.env, WC_PORT: String(PORT), WC_TOKEN: TOKEN, WC_DATA_DIR: dir, WC_REMOTE_PORT: '47933', WC_MOCK: '1', WC_MOCK_TICK_MS: '2', WC_PING_MS: '300', WC_TRUST_FOLDERS: dir },
   stdio: ['pipe', 'pipe', 'pipe'],
 })
 let linkLog = ''
@@ -84,7 +84,7 @@ async function waitUp() {
   throw new Error(`the link never came up:\n${linkLog}`)
 }
 
-const phoneUrl = `ws://127.0.0.1:47920/?token=${encodeURIComponent(PHONE_TOKEN)}`
+const phoneUrl = `ws://127.0.0.1:47933/?token=${encodeURIComponent(PHONE_TOKEN)}`
 
 /** A phone that joins: hello, attach, and the whole replay. */
 async function join_() {
@@ -99,7 +99,7 @@ async function join_() {
 try {
   await waitUp()
   for (let i = 0; i < 50; i++) {
-    if (await fetch('http://127.0.0.1:47920/health').then((r) => r.ok, () => false)) break
+    if (await fetch('http://127.0.0.1:47933/health').then((r) => r.ok, () => false)) break
     await sleep(100)
   }
   const desk = await client(`ws://127.0.0.1:${PORT}/?token=${TOKEN}`)

@@ -414,6 +414,8 @@ export type RemoteStatus = {
 
 export type ClientMsg =
   | { t: 'hello' }
+  /** Something the page wants in link.log (a 3D model that failed on a phone, say): the only way to read a phone's errors. */
+  | { t: 'client_log'; text: string }
   /** Synthesizes one voice line; answered by a `tts` with the same id. */
   | { t: 'tts'; id: string; text: string }
   /** Stores the Fish Audio API key in the link (never in settings); an empty key removes it. */

@@ -133,16 +133,30 @@ function sharedPhysics() {
  * Loads her model from `url` (the link's /mmd/ route, which serves the folder of the card's .pmx) into a new canvas
  * inserted in `box` before `before`.
  */
-export async function loadMmd(box: HTMLElement, before: Node, url: string, file: string, zoom: number, resolution: number): Promise<MmdActor> {
+/** A phone draws her lighter: no self-shadows, and at most this pixel density. */
+const PHONE_MAX_RESOLUTION = 1.5
+
+export type MmdOptions = {
+  zoom: number
+  resolution: number
+  /** A phone: lighter drawing (the link already sends it smaller textures). */
+  light: boolean
+  /** The GPU dropped her canvas (out of memory, a driver reset); she can't be drawn until loaded again. */
+  onLost(): void
+}
+
+export async function loadMmd(box: HTMLElement, before: Node, url: string, file: string, o: MmdOptions): Promise<MmdActor> {
+  const cap = (r: number) => (o.light ? Math.min(r, PHONE_MAX_RESOLUTION) : r)
   const canvas = document.createElement('canvas')
   canvas.className = 'chara-mmd'
   canvas.style.cssText = `position:absolute;left:0;top:0;width:${BOX_W}px;height:${BOX_H}px;pointer-events:none`
   box.insertBefore(canvas, before)
-  const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true, antialias: true, alpha: true, premultipliedAlpha: false }, false)
-  engine.setHardwareScalingLevel(1 / resolution)
+  const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true, antialias: !o.light, alpha: true, premultipliedAlpha: false }, false)
+  engine.setHardwareScalingLevel(1 / cap(o.resolution))
+  engine.onContextLostObservable.add(() => o.onLost())
   const scene = new Scene(engine)
   try {
-    return await build(engine, scene, canvas, url, file, zoom)
+    return await build(engine, scene, canvas, url, file, o.zoom, o.light, cap)
   } catch (e) {
     scene.dispose()
     engine.dispose()
@@ -151,7 +165,9 @@ export async function loadMmd(box: HTMLElement, before: Node, url: string, file:
   }
 }
 
-async function build(engine: Engine, scene: Scene, canvas: HTMLCanvasElement, url: string, file: string, zoom: number): Promise<MmdActor> {
+async function build(
+  engine: Engine, scene: Scene, canvas: HTMLCanvasElement, url: string, file: string, zoom: number, light: boolean, cap: (r: number) => number,
+): Promise<MmdActor> {
   scene.clearColor = new Color4(0, 0, 0, 0)
   scene.ambientColor = new Color3(0.5, 0.5, 0.5)
   const camera = new ArcRotateCamera('camera', -Math.PI / 2, Math.PI / 2, RADIUS, new Vector3(0, TARGET_Y, 0), scene)
@@ -175,12 +191,15 @@ async function build(engine: Engine, scene: Scene, canvas: HTMLCanvasElement, ur
   const key = new DirectionalLight('key', new Vector3(0.5, -1, 1), scene)
   key.intensity = 0.7
   key.autoCalcShadowZBounds = true
-  const shadows = new ShadowGenerator(1024, key, true)
-  shadows.transparencyShadow = true
-  shadows.usePercentageCloserFiltering = true
-  shadows.forceBackFacesOnly = true
-  shadows.filteringQuality = ShadowGenerator.QUALITY_MEDIUM
-  shadows.frustumEdgeFalloff = 0.1
+  // Self-shadows cost a second render of her every frame and a shadow map: not on a phone.
+  const shadows = light ? undefined : new ShadowGenerator(1024, key, true)
+  if (shadows) {
+    shadows.transparencyShadow = true
+    shadows.usePercentageCloserFiltering = true
+    shadows.forceBackFacesOnly = true
+    shadows.filteringQuality = ShadowGenerator.QUALITY_MEDIUM
+    shadows.frustumEdgeFalloff = 0.1
+  }
 
   const physics = await sharedPhysics()
   // Stepped by this scene, after its animations, the way MultiPhysicsRuntime.register does it; register() binds one
@@ -194,8 +213,10 @@ async function build(engine: Engine, scene: Scene, canvas: HTMLCanvasElement, ur
   })
   container.addAllToScene()
   const mesh = container.rootNodes[0] as MmdMesh
-  for (const m of mesh.metadata.meshes as Mesh[]) m.receiveShadows = true
-  shadows.addShadowCaster(mesh)
+  if (shadows) {
+    for (const m of mesh.metadata.meshes as Mesh[]) m.receiveShadows = true
+    shadows.addShadowCaster(mesh)
+  }
   const model = runtime.createMmdModel(mesh)
   for (const b of model.runtimeBones) if (STILL.test(b.name)) for (const i of b.rigidBodyIndices) model.rigidBodyStates[i] = 0
 
@@ -338,7 +359,7 @@ async function build(engine: Engine, scene: Scene, canvas: HTMLCanvasElement, ur
     },
     setFps: (f) => void (fps = f),
     setResolution(r) {
-      engine.setHardwareScalingLevel(1 / r)
+      engine.setHardwareScalingLevel(1 / cap(r))
       engine.resize()
     },
     render: () => scene.render(),

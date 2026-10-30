@@ -29,6 +29,8 @@ const EXE = process.env.WC_E2E_EXE || join(APP_DIR, 'src-tauri', 'target', 'debu
 const VITE_PORT = 1430
 const VITE_URL = `http://localhost:${VITE_PORT}/`
 export const CDP_PORT = Number(process.env.WC_CDP_PORT) || 9333
+/** The phone listener of the app under test, away from the installed app's 47920. */
+const TEST_REMOTE_PORT = process.env.WC_REMOTE_PORT || '47930'
 const TAURI_CONF = join(APP_DIR, 'src-tauri', 'tauri.conf.json')
 const BROWSERS = [
   process.env.WC_E2E_BROWSER,
@@ -857,7 +859,8 @@ export async function launch(options = {}) {
     writeFileSync(join(dataDir, 'settings.json'), JSON.stringify(seed, null, 2))
   }
   // Test projects (lib.mjs makeProject) count as trusted, as a folder you already trusted in the terminal would.
-  const env = { ...process.env, WC_TRUST_FOLDERS: PROJECTS_ROOT, ...extra, WC_DATA_DIR: dataDir, WC_CDP_PORT: String(CDP_PORT) }
+  // Its own phone port (the pairing link carries it), so the suite runs beside an installed app holding 47920.
+  const env = { ...process.env, WC_TRUST_FOLDERS: PROJECTS_ROOT, WC_REMOTE_PORT: TEST_REMOTE_PORT, ...extra, WC_DATA_DIR: dataDir, WC_CDP_PORT: String(CDP_PORT) }
   if (mock) env.WC_MOCK = '1'
   else delete env.WC_MOCK
   await ensureVite()

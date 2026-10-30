@@ -1,10 +1,12 @@
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { readdir, readFile, stat } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import type { ServerResponse } from 'node:http'
 import { basename, extname, join, resolve, sep } from 'node:path'
 import type { Costume } from './protocol.ts'
 import { THUMBS_DIR } from './saves.ts'
-import { defaultModelsDir, loadSettings, modelDirCandidates } from './settings.ts'
+import { DATA_DIR, defaultModelsDir, loadSettings, modelDirCandidates } from './settings.ts'
+import { decodeTga, encodeTga, shrink } from './tga.ts'
 
 // Costume models (each a folder with a .model3.json) and save thumbnails, served over plain HTTP:
 // the page loads them by URL, so these routes carry no token.
@@ -183,7 +185,41 @@ const MMD_FILES = new Set(['.pmx', '.png', '.jpg', '.jpeg', '.tga', '.bmp', '.sp
  * Serves `/mmd/<path>` from the folder of the active card's .pmx (a 3D card), for the 3D stage: the model by its
  * file name, its textures by their relative paths. Nothing outside that folder, and nothing while the card is Live2D.
  */
-export async function serveMmd(pathname: string, res: ServerResponse) {
+/** A phone gets textures at most this many pixels on a side: its WebView can't hold 4096-pixel ones. */
+const PHONE_TEXTURE_MAX = 1024
+const SMALL_DIR = join(DATA_DIR, 'mmd-small')
+/** Conversions in flight, so the phone's parallel requests for one texture share the work. */
+const shrinking = new Map<string, Promise<string>>()
+
+/**
+ * The texture scaled down for a phone, from the cache in the data folder (keyed by the file, its size and its time,
+ * so an edited texture is converted again). Undefined when it is small enough already or isn't a TGA this reads.
+ */
+async function smallTexture(file: string): Promise<string | undefined> {
+  const info = await stat(file).catch(() => undefined)
+  if (!info?.isFile()) return undefined
+  const key = createHash('sha1').update(`${file}|${info.size}|${info.mtimeMs}|${PHONE_TEXTURE_MAX}`).digest('hex')
+  const out = join(SMALL_DIR, `${key}.tga`)
+  if (existsSync(out)) return out
+  let job = shrinking.get(key)
+  if (!job) {
+    job = (async () => {
+      const img = decodeTga(await readFile(file))
+      // Already small, or a kind this doesn't read: the original goes.
+      if (!img || Math.max(img.width, img.height) <= PHONE_TEXTURE_MAX) return file
+      await mkdir(SMALL_DIR, { recursive: true })
+      const tmp = `${out}.${process.pid}.tmp`
+      await writeFile(tmp, encodeTga(shrink(img, PHONE_TEXTURE_MAX)))
+      await rename(tmp, out)
+      return out
+    })().finally(() => shrinking.delete(key))
+    shrinking.set(key, job)
+  }
+  const done = await job
+  return done === file ? undefined : done
+}
+
+export async function serveMmd(pathname: string, res: ServerResponse, phone = false) {
   const parts = segments(pathname.slice('/mmd/'.length))
   if (!parts) return reply(res, 400, 'bad request')
   if (!parts.length || parts.some((p) => BAD_SEGMENT.test(p))) return reply(res, 403, 'forbidden')
@@ -194,6 +230,10 @@ export async function serveMmd(pathname: string, res: ServerResponse) {
   if (!file.startsWith(folder + sep)) return reply(res, 403, 'forbidden')
   // The phone listener serves these too, without the token: the model and its textures only, never the folder's other files.
   if (!MMD_FILES.has(extname(file).toLowerCase())) return reply(res, 403, 'forbidden')
+  if (phone && extname(file).toLowerCase() === '.tga') {
+    const small = await smallTexture(file).catch((e) => void console.warn(`[mmd] could not scale ${basename(file)} for the phone:`, e))
+    if (small) return sendFile(res, small)
+  }
   await sendFile(res, file)
 }
 

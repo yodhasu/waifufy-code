@@ -136,7 +136,8 @@ function text(res: ServerResponse, status: number, body: string, type = 'text/pl
   res.end(body)
 }
 
-async function route(req: IncomingMessage, res: ServerResponse) {
+/** `phone`: the request came in on the phone listener (a phone's WebView, which gets lighter 3D textures). */
+async function route(req: IncomingMessage, res: ServerResponse, phone = false) {
   const { pathname } = new URL(req.url ?? '/', 'http://link')
   if (req.method === 'OPTIONS') {
     res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET', 'Access-Control-Allow-Headers': '*' })
@@ -147,7 +148,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   // Model files and thumbnails are served without the token: the page loads them by URL.
   if (pathname.startsWith('/models/')) return serveModel(pathname, res)
   if (pathname.startsWith('/thumbs/')) return serveThumb(pathname, res)
-  if (pathname.startsWith('/mmd/')) return serveMmd(pathname, res)
+  if (pathname.startsWith('/mmd/')) return serveMmd(pathname, res, phone)
   text(res, 404, 'not found')
 }
 
@@ -225,7 +226,7 @@ const phoneStatus = () => remoteStatus(!!phones, phones?.wss.clients.size ?? 0, 
 async function syncPhones() {
   if (remoteEnabled() && !phones) {
     const server = createServer((req, res) => {
-      route(req, res).catch((e) => {
+      route(req, res, true).catch((e) => {
         console.error(`[http] ${req.url}:`, e)
         text(res, 500, 'internal error')
       })
@@ -593,6 +594,9 @@ async function runResearch(m: Extract<ClientMsg, { t: 'research' }>) {
 
 class BadRequest extends Error {}
 
+/** A page's log line is cut to this, so a runaway one can't flood link.log. */
+const CLIENT_LOG_MAX = 4000
+
 function need(ok: unknown, what: string): asserts ok {
   if (!ok) throw new BadRequest(`Bad request: ${what}`)
 }
@@ -659,6 +663,9 @@ async function agentHits(query: string): Promise<FileHit[]> {
 
 async function handle(ws: WebSocket, m: ClientMsg) {
   switch (m.t) {
+    case 'client_log':
+      need(isStr(m.text), 'text')
+      return console.warn(`[page${remoteSockets.has(ws) ? ' · phone' : ''}] ${m.text.slice(0, CLIENT_LOG_MAX)}`)
     case 'hello':
       // The first hello on a connection means the page booted (first launch, F5, a renderer crash). It starts at the
       // title screen and can't attach to a running session, which may be blocked on a prompt nobody can see now: close

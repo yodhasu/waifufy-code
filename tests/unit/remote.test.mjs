@@ -1,7 +1,7 @@
 // Phone access, end to end against a real link process in mock mode: off by default, the desktop turns it on and
 // gets the pairing link, a phone needs that token, a phone's hello leaves the desktop's session running, `attach`
 // replays the session, an answer from one window closes the prompt in the other, and the desktop can unpair.
-// Run: node tests/unit/remote.test.mjs (no app, no Claude). Needs port 47920 free.
+// Run: node tests/unit/remote.test.mjs (no app, no Claude). Uses phone port 47934, so it runs beside the installed app.
 import { spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -18,7 +18,7 @@ const PORT = 47990
 const TOKEN = 'desktop-token'
 const link = spawn(process.execPath, ['link/src/server.ts'], {
   cwd: new URL('../..', import.meta.url),
-  env: { ...process.env, WC_PORT: String(PORT), WC_TOKEN: TOKEN, WC_DATA_DIR: dir, WC_MOCK: '1' },
+  env: { ...process.env, WC_PORT: String(PORT), WC_TOKEN: TOKEN, WC_DATA_DIR: dir, WC_REMOTE_PORT: '47934', WC_MOCK: '1' },
   stdio: ['pipe', 'pipe', 'pipe'],
 })
 let linkLog = ''
@@ -99,12 +99,12 @@ try {
     const on = await desk.next((m) => m.t === 'remote_status' && m.status.listening)
     ok(on.status.pairUrl?.startsWith('waifufy-code://pair?'), 'pair url')
     pair = new URL(on.status.pairUrl)
-    ok(pair.searchParams.get('p') === '47920' && pair.searchParams.get('t').length > 20, 'port and token')
+    ok(pair.searchParams.get('p') === '47934' && pair.searchParams.get('t').length > 20, 'port and token')
   })
 
   await test('a phone without the pairing token is refused; the desktop token is not enough', async () => {
     let err
-    await client(`ws://127.0.0.1:47920/?token=${TOKEN}`).catch((e) => (err = e))
+    await client(`ws://127.0.0.1:47934/?token=${TOKEN}`).catch((e) => (err = e))
     ok(err?.message.includes('401'), `refused: ${err?.message}`)
   })
 
@@ -115,7 +115,7 @@ try {
     await desk.next((m) => m.t === 'trust' && m.trusted)
     desk.send({ t: 'start', epoch: 1, cwd: project })
     await desk.next((m) => m.t === 'ready' && m.epoch === 1, 10_000)
-    phone = await client(`ws://127.0.0.1:47920/?token=${encodeURIComponent(t())}`)
+    phone = await client(`ws://127.0.0.1:47934/?token=${encodeURIComponent(t())}`)
     phone.send({ t: 'hello' })
     const hello = await phone.next((m) => m.t === 'hello')
     ok(hello.remote === true, 'the phone is told it is remote')
@@ -164,7 +164,7 @@ try {
     desk.send({ t: 'remote_reset' })
     ok((await closed) === 4001, 'closed as unpaired')
     let err
-    await client(`ws://127.0.0.1:47920/?token=${encodeURIComponent(t())}`).catch((e) => (err = e))
+    await client(`ws://127.0.0.1:47934/?token=${encodeURIComponent(t())}`).catch((e) => (err = e))
     ok(err?.message.includes('401'), 'the old token is refused')
   })
 
@@ -173,7 +173,7 @@ try {
     desk.send({ t: 'remote_set', enabled: false })
     await desk.next((m) => m.t === 'remote_status' && !m.status.listening)
     let err
-    await fetch('http://127.0.0.1:47920/health').catch((e) => (err = e))
+    await fetch('http://127.0.0.1:47934/health').catch((e) => (err = e))
     ok(err, 'nothing listens')
   })
 } finally {
