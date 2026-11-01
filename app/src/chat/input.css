@@ -180,3 +180,6 @@
 
 /* A box grown over the quick bar (chips, a code block) is solid, so the row under it doesn't read through. */
 .wci-box:is([data-fmt='code'], :has(.wci-files.show, .wci-images.show)) { background: var(--panel-solid); }
+
+/* A phone's composer is narrow: a long placeholder (a reason it is off) stays on its one line, cut with an ellipsis. */
+#stage[data-device='phone'] .wci-box textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

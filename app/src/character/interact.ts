@@ -32,6 +32,10 @@ const FOND_TIERS = 2
 const SCREEN_POLL_MS = 120
 /** Two right presses this close together reset the camera. */
 const RESET_CLICK_MS = 400
+/** A pinch zooms her one wheel step each time the fingers' spread changes by this share. */
+const PINCH_STEP = 0.12
+/** A click this soon after a pinch ends comes from its fingers lifting. */
+const PINCH_CLICK_MS = 500
 
 type Zone = 'head' | 'face' | 'body'
 
@@ -83,6 +87,15 @@ export function createInteract(o: {
   let lastPoint: { x: number; y: number } | undefined
   /** A right- or middle-drag moving a 3D camera: its pointer and where it was last. */
   let camDrag: { pointerId: number; target: Element; last: { x: number; y: number }; pan: boolean } | undefined
+  /** Fingers pressed on her (a phone), and a pinch under way: two of them, at this spread when it last zoomed. */
+  const fingers = new Map<number, { x: number; y: number }>()
+  let pinch: { spread: number } | undefined
+  /** When the last pinch ended: the click its fingers make on lifting isn't a tap on the page under them. */
+  let pinchEnded = -Infinity
+  const spread = () => {
+    const [a, b] = [...fingers.values()]
+    return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0
+  }
   let lastRightDown = 0
   let screenTimer: number | undefined
 
@@ -255,7 +268,23 @@ export function createInteract(o: {
     camDrag = undefined
   }
 
+  /** A pinch: the fingers spread apart zoom her in, closer together out (a phone's wheel). */
+  function onPinch(e: PointerEvent) {
+    if (!fingers.has(e.pointerId)) return false
+    fingers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (!pinch) return false
+    const now = spread()
+    if (Math.abs(now / pinch.spread - 1) >= PINCH_STEP) o.onZoom(now > pinch.spread ? -1 : 1), (pinch.spread = now)
+    return true
+  }
+
+  function endFinger(e: PointerEvent) {
+    fingers.delete(e.pointerId)
+    if (pinch && fingers.size < 2) (pinch = undefined), (pinchEnded = performance.now())
+  }
+
   function onMove(e: PointerEvent) {
+    if (onPinch(e)) return
     lastPoint = { x: e.clientX, y: e.clientY }
     unwatchScreen()
     const a = o.actor()
@@ -277,9 +306,21 @@ export function createInteract(o: {
   function onDown(e: PointerEvent) {
     const a = o.actor()
     if (!a) return
+    if (pinch) return
+    // A second finger while one is on her: a pinch, which takes over from the stroke the first one began.
+    if (e.pointerType === 'touch' && fingers.size === 1 && !fingers.has(e.pointerId)) {
+      e.preventDefault()
+      e.stopPropagation()
+      ;(e.target as Element).setPointerCapture(e.pointerId)
+      fingers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      endStroke()
+      pinch = { spread: spread() }
+      return
+    }
     const p = toBox(e.clientX, e.clientY)
     const z = zoneAt(a.geometry(), p)
     if (!z) return
+    if (e.pointerType === 'touch') fingers.set(e.pointerId, { x: e.clientX, y: e.clientY })
     // Right or middle button on a model with a camera: move the camera; a right double-click puts it back.
     if ((e.button === 2 || e.button === 1) && a.orbit && !stroke && !camDrag) {
       e.preventDefault()
@@ -306,6 +347,7 @@ export function createInteract(o: {
   }
 
   function onUp(e: PointerEvent) {
+    endFinger(e)
     if (camDrag && e.pointerId === camDrag.pointerId) return endCam()
     const s = stroke
     if (!s || e.pointerId !== s.pointerId) return
@@ -316,6 +358,7 @@ export function createInteract(o: {
 
   // Losing the pointer mid-press (another window took it, or the OS cancelled it) ends the stroke without a tap.
   const onCancel = (e: PointerEvent) => {
+    endFinger(e)
     if (e.pointerId === camDrag?.pointerId) endCam()
     if (e.pointerId === stroke?.pointerId) endStroke()
   }
@@ -346,6 +389,8 @@ export function createInteract(o: {
   }
 
   function reset() {
+    fingers.clear()
+    pinch = undefined
     endCam()
     endStroke()
     clearTimeout(focusTimer)
@@ -354,6 +399,11 @@ export function createInteract(o: {
 
   addEventListener('pointermove', onMove)
   box.addEventListener('pointerdown', onDown)
+  addEventListener('click', (e) => {
+    if (performance.now() - pinchEnded < PINCH_CLICK_MS) e.stopPropagation(), e.preventDefault()
+  }, true)
+  // The pinch's second finger may land anywhere (the dialogue, the bar): it is caught before the page sees it.
+  addEventListener('pointerdown', (e) => void (e.pointerType === 'touch' && fingers.size === 1 && !fingers.has(e.pointerId) && onDown(e)), true)
   addEventListener('wheel', onWheel, { passive: false })
   // A right-drag on her moves the camera, so no menu opens there.
   box.addEventListener('contextmenu', (e) => o.actor()?.orbit && e.preventDefault())

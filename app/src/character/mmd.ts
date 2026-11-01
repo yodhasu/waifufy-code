@@ -28,11 +28,14 @@ import { RigidBody } from 'babylon-mmd/esm/Runtime/Optimized/Physics/Bind/rigidB
 import { RigidBodyConstructionInfo } from 'babylon-mmd/esm/Runtime/Optimized/Physics/Bind/rigidBodyConstructionInfo'
 import { MmdBulletPhysics } from 'babylon-mmd/esm/Runtime/Optimized/Physics/mmdBulletPhysics'
 import { MmdRuntime } from 'babylon-mmd/esm/Runtime/mmdRuntime'
-import type { Emotion } from '../../../link/src/protocol.ts'
+import { Quaternion as Q3, Vector3 as V3 } from 'three'
+import type { CustomMotion, Emotion, JointPose, JointTurn, Motions } from '../../../link/src/protocol.ts'
 import type { Gesture } from '../contracts'
 import type { Actor, Geometry } from './director.ts'
 import { BOX_H, BOX_W } from './layout.ts'
-import { createEngine, standIn } from './mmd-engine.ts'
+import { createEngine, JOINTS, LEG, standIn, turnOf } from './mmd-engine.ts'
+import { apply, bodyOf, limit, reach, type RigidBodyInfo, type Side } from './poser.ts'
+import type { Rings } from './mmd-rings.ts'
 
 RegisterPmxLoader()
 RegisterMmdOutlineRenderer()
@@ -85,6 +88,20 @@ const STROKE_MS = 450
  */
 const MOUTH_SHAPES = ['にこり口', '笑い口', '大笑い', 'お', '口角上げ', '口角下げ', '結ぶ', 'くいしばる', 'ムッ', '左口角上げ', 'はぅ']
 const MOUTH_WHILE_TALKING = 0.3
+/** Of those, the ones that open her lips: gone while lip sync moves her mouth, so each syllable starts from closed lips. */
+const OPEN_MOUTH = new Set(['大笑い', '笑い口', 'お', 'はぅ', 'くいしばる', '▲', '▲_2'])
+/**
+ * A frame comes when at least this share of her frame time has passed. At 60 fps that is every frame of a 60 Hz screen
+ * however its clock jitters, and every second frame of a 90, 120 or 144 Hz one (45, 60, 72 fps); at 30, every second
+ * frame of a 60 Hz screen.
+ */
+const CAP_SLACK = 0.75
+/** The phone's overload guard (watchLoad): a window this long getting under this share of her frame rate drops her
+ * to OVERLOAD_FPS for OVERLOAD_MS. */
+const LOAD_WINDOW_MS = 2000
+const LOAD_KEPT = 0.85
+const OVERLOAD_FPS = 30
+const OVERLOAD_MS = 20_000
 /** How far the camera moves round her: a right-drag turns it (radians per box pixel), up to these limits. */
 const ORBIT_PER_PX = 0.006
 const ORBIT_YAW_MAX = 1.2
@@ -104,6 +121,9 @@ export type MmdActor = Actor & {
   stroke(): void
   /** Moves the camera round her (a right-drag) or up and down her (a middle-drag), in box pixels; reset puts it back. */
   orbit(dx: number, dy: number): void
+  /** The camera's turn round her (radians, 0 is her front; a right-drag lowers it); the studio's go all the way round. */
+  turn(yaw: number): void
+  yaw(): number
   pan(dy: number): void
   resetView(): void
   /** Her whole body, or from the waist up (a phone's chat). */
@@ -113,6 +133,58 @@ export type MmdActor = Actor & {
   setResolution(r: number): void
   /** Draws one frame now, so the canvas can be copied in the same task (a snapshot). */
   render(): void
+  /** The card's custom motions (the motion editor's). */
+  setMotions(m: Motions): void
+  /** The studio: holds a pose over her emotions (undefined lets go), or plays a motion once. */
+  hold(pose: JointPose | undefined): void
+  play(m: CustomMotion): void
+  /** The joints of this model the studio can turn, in the model's bone order. */
+  joints(): string[]
+  studio: MmdStudio
+}
+
+/** The studio's posing on her model, in box pixels as the stage's overlay has them. */
+export type MmdStudio = {
+  /** Starts posing from `pose`: she holds still in it, and `onEdit` hears each change (`done` when a drag ends). */
+  begin(pose: JointPose, onEdit: (pose: JointPose, done: boolean) => void): void
+  /** The pose she holds, set from outside (undo, a hand shape, a key picked). */
+  set(pose: JointPose): void
+  end(): void
+  /** Where her handles are: the joints a drag moves. */
+  handles(): { joint: string; x: number; y: number }[]
+  /** A handle dragged: a hand reaches, an elbow swings its arm, the rest turn with the drag (`tilt`: Shift held). */
+  drag(joint: string, x: number, y: number, phase: 'start' | 'move' | 'end', tilt: boolean): void
+  /** Rotation rings on a joint, for turning it exactly; undefined takes them away. */
+  rings(joint: string | undefined): void
+}
+
+/** The joints the studio shows a handle on: hands and elbows reach, the rest turn when dragged. */
+const HANDLES = ['頭', '首', '上半身2', '上半身', '左肩', '右肩', '左ひじ', '右ひじ', '左手首', '右手首']
+/** Where a handle shows when its own bone sits elsewhere: a shoulder's starts by the neck, so its dot is on the arm's top. */
+const HANDLE_AT: Record<string, string> = { 左肩: '左腕', 右肩: '右腕' }
+/** The rotation rings' size (Babylon's scale ratio: 1 is a third of the view across). */
+const RINGS_SCALE = 0.4
+/** Degrees a turn takes per box pixel of drag. */
+const TURN_PER_PX = 0.35
+
+/**
+ * Babylon reads the pointer in screen pixels from the canvas's corner, but the stage is scaled to fit the window (and
+ * her box with it): the studio's rings would be picked off by that scale. This puts the pointer back in the canvas's
+ * own pixels.
+ * shortcut: patches Babylon's private input manager (pinned @babylonjs/core 9.33.0); recheck on a Babylon upgrade.
+ */
+function fitPointer(scene: Scene, canvas: HTMLCanvasElement) {
+  type Input = { _updatePointerPosition(e: PointerEvent): void; _pointerX: number; _pointerY: number; _unTranslatedPointerX: number; _unTranslatedPointerY: number }
+  const input = (scene as unknown as { _inputManager?: Input })._inputManager
+  if (!input?._updatePointerPosition) return
+  const read = input._updatePointerPosition.bind(input)
+  input._updatePointerPosition = (e) => {
+    read(e)
+    const r = canvas.getBoundingClientRect()
+    const kx = canvas.clientWidth / (r.width || 1), ky = canvas.clientHeight / (r.height || 1)
+    input._pointerX = input._unTranslatedPointerX = input._pointerX * kx
+    input._pointerY = input._unTranslatedPointerY = input._pointerY * ky
+  }
 }
 
 /**
@@ -138,10 +210,16 @@ function sharedPhysics() {
  * Loads her model from `url` (the link's /mmd/ route, which serves the folder of the card's .pmx) into a new canvas
  * inserted in `box` before `before`.
  */
-/** A phone draws her lighter: no self-shadows or outlines, physics at 30 steps a second, and at most this density. */
+/** A phone draws her lighter: no self-shadows or outlines, physics steps of up to 1/60 s (a frame the phone runs late takes two even steps, not one long one: a step that changed length frame to frame shook her chest), and at most this density. */
 const PHONE_MAX_RESOLUTION = 1
-const PHONE_PHYSICS_STEP = 1 / 30
-const PHONE_PHYSICS_SUBSTEPS = 2
+const PHONE_PHYSICS_STEP = 1 / 60
+/** Her physics' longest step on a desktop (s). */
+const PHYSICS_STEP = 1 / 120
+/**
+ * Each step a hair short of an even share of the frame, so float error never leaves a frame one step short (and the
+ * next one over); what it leaves over adds up to one step in minutes.
+ */
+const STEP_SHORT = 1e-4
 
 export type MmdOptions = {
   zoom: number
@@ -156,9 +234,12 @@ export async function loadMmd(box: HTMLElement, before: Node, url: string, file:
   const cap = (r: number) => (o.light ? Math.min(r, PHONE_MAX_RESOLUTION) : r)
   const canvas = document.createElement('canvas')
   canvas.className = 'chara-mmd'
-  canvas.style.cssText = `position:absolute;left:0;top:0;width:${BOX_W}px;height:${BOX_H}px;pointer-events:none`
+  // Whether it takes the pointer is character.css's call (her body, a phone's touches), so not set here.
+  canvas.style.cssText = `position:absolute;left:0;top:0;width:${BOX_W}px;height:${BOX_H}px`
   box.insertBefore(canvas, before)
-  const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true, antialias: !o.light, alpha: true, premultipliedAlpha: false }, false)
+  // A phone: no MSAA (Babylon's second argument decides it, over the options) and no kept buffer, which a tiled mobile
+  // GPU pays for every frame (a snapshot renders and copies in one task, so it doesn't need it).
+  const engine = new Engine(canvas, !o.light, { preserveDrawingBuffer: !o.light, stencil: true, alpha: true, premultipliedAlpha: false }, false)
   engine.setHardwareScalingLevel(1 / cap(o.resolution))
   engine.onContextLostObservable.add(() => o.onLost())
   const scene = new Scene(engine)
@@ -215,13 +296,23 @@ async function build(
   }
 
   const physics = await sharedPhysics()
-  if (light) {
-    physics.fixedTimeStep = PHONE_PHYSICS_STEP
-    physics.maxSubSteps = PHONE_PHYSICS_SUBSTEPS
-  }
   // Stepped by this scene, after its animations, the way MultiPhysicsRuntime.register does it; register() binds one
   // scene only, and while cards swap two scenes are briefly alive.
-  const stepPhysics = scene.onAfterAnimationsObservable.add(() => physics.afterAnimations(engine.getDeltaTime()))
+  // It steps by the time since her last drawn frame, not the engine's (a screen frame: with frames skipped for the cap,
+  // a 144 Hz screen draws her every third). Babylon-mmd draws the last step as it is, not between steps, so a frame
+  // that took two fixed steps where the others took one jumps (her chest and hair jittered): each frame is cut into
+  // equal steps of at most PHYSICS_STEP instead, the same number every frame.
+  const maxStep = light ? PHONE_PHYSICS_STEP : PHYSICS_STEP
+  let stepMs = 0
+  const stepPhysics = scene.onAfterAnimationsObservable.add(() => {
+    // A frame drawn out of turn (a snapshot) moves no time on.
+    if (!stepMs) return
+    const n = Math.ceil(stepMs / 1000 / maxStep - STEP_SHORT)
+    physics.fixedTimeStep = (stepMs / 1000 / n) * (1 - STEP_SHORT)
+    physics.maxSubSteps = n + 1
+    physics.afterAnimations(stepMs)
+  })
+  fitPointer(scene, canvas)
   const runtime = new MmdRuntime(scene, new MmdBulletPhysics(physics))
   runtime.register(scene)
 
@@ -236,6 +327,8 @@ async function build(
   }
   // MMD's ink outline draws her a second time; on a phone that is frame time she can't spare.
   if (light) for (const m of mesh.metadata.materials as readonly { renderOutline?: boolean }[]) if ('renderOutline' in m) m.renderOutline = false
+  // The model's bones and rigid bodies as loaded, kept before createMmdModel, which trims them off the mesh.
+  const meta = { ...(mesh.metadata as { bones: readonly { name: string }[]; rigidBodies?: readonly { boneIndex: number; physicsMode: number; shapeType: number; shapeSize: ArrayLike<number>; shapePosition: ArrayLike<number>; shapeRotation: ArrayLike<number> }[] }) }
   const model = runtime.createMmdModel(mesh)
   for (const b of model.runtimeBones) if (STILL.test(b.name)) for (const i of b.rigidBodyIndices) model.rigidBodyStates[i] = 0
 
@@ -247,6 +340,25 @@ async function build(
     return { name: b.name, parent: b.parentBone ? index.get(b.parentBone)! : -1, rest: [m[12]!, m[13]!, -m[14]!] }
   }))
   const byName = new Map(bones.map((b) => [b.name, b]))
+  // Her body for the studio's arms to keep out of: the model's rigid bodies on her torso and head.
+  const v3 = (a: ArrayLike<number>): [number, number, number] => [a[0]!, a[1]!, a[2]!]
+  const colliders = bodyOf(rig.bone, (meta.rigidBodies ?? []).map((r): RigidBodyInfo => ({
+    bone: meta.bones[r.boneIndex]?.name ?? '', shapeType: r.shapeType, size: v3(r.shapeSize), position: v3(r.shapePosition), rotation: v3(r.shapeRotation),
+  })))
+  // Physics chains hanging from her lower body (下半身, where MMD models hang a skirt): the waist-up shot doesn't show
+  // them (the dialogue box covers her there), so they rest while it is on. On Reine that is 80 of her 155 bodies, and
+  // half her physics time on a phone.
+  const dynamic = new Set((meta.rigidBodies ?? []).flatMap((r, i) => (r.physicsMode !== 0 ? [i] : [])))
+  const moves = (b: (typeof bones)[number]) => b.rigidBodyIndices.some((i) => dynamic.has(i))
+  const belowWaist = bones.filter((b) => {
+    if (!moves(b)) return false
+    let root = b
+    while (root.parentBone && moves(root.parentBone)) root = root.parentBone
+    return root.parentBone?.name === '下半身'
+  }).flatMap((b) => b.rigidBodyIndices.filter((i) => dynamic.has(i)))
+  const restBelowWaist = (on: boolean) => {
+    for (const i of belowWaist) model.rigidBodyStates[i] = on ? 0 : 1
+  }
   // Her head's center, for zoom to close in on (the 頭 bone sits at its base).
   const headBone = byName.get('頭')
   if (headBone) {
@@ -254,7 +366,15 @@ async function build(
     headBone.getWorldTranslationToRef(at)
     if (at.y > 1) (view.head = at.y + HEAD_HALF), frame()
   }
-  const eng = createEngine(rig)
+  // A posed leg can't keep its foot planted: its IK (the leg's and its toe's) is off while a motion turns it.
+  const legIk = (side: string) => bones.filter((b) => b.name === `${side}足ＩＫ` || b.name === `${side}つま先ＩＫ`).map((b) => b.ikSolverIndex).filter((i) => i >= 0)
+  const ik = { 左: legIk('左'), 右: legIk('右') }
+  const eng = createEngine(rig, (joints) => {
+    for (const side of ['左', '右'] as const) {
+      const on = ![...joints].some((n) => LEG.exec(n)?.[1] === side) ? 1 : 0
+      for (const i of ik[side]) model.ikSolverStates[i] = on
+    }
+  })
   let held: Emotion = 'normal'
   eng.emote(held, true)
 
@@ -281,25 +401,50 @@ async function build(
   let lastFrame = 0
   let warmed = false
   let running = false
+  /**
+   * A phone that can't keep her frame rate (a slow one, or one hot and throttled) gets her at OVERLOAD_FPS for a while:
+   * half the frames, twice the time for each one's bones and physics, and the phone cools down. Then 60 is tried again.
+   */
+  const load = { cap: Infinity, since: 0, frames: 0, until: 0 }
+
+  /** Counts a drawn frame; past each window, decides the phone's cap. */
+  function watchLoad(now: number) {
+    if (!light) return
+    if (!load.since) return void ((load.since = now), (load.frames = 0))
+    load.frames++
+    const span = now - load.since
+    if (span < LOAD_WINDOW_MS) return
+    const got = (load.frames * 1000) / span
+    if (load.cap > OVERLOAD_FPS && fps > OVERLOAD_FPS && got < fps * LOAD_KEPT) (load.cap = OVERLOAD_FPS), (load.until = now + OVERLOAD_MS)
+    else if (load.cap === OVERLOAD_FPS && now > load.until) load.cap = Infinity
+    // The page's own animations (petals) would keep the WebView drawing 60 a second anyway: they rest too (base.css).
+    canvas.closest<HTMLElement>('#stage')?.toggleAttribute('data-overload', load.cap !== Infinity)
+    load.since = now
+    load.frames = 0
+  }
 
   function tick() {
     const now = performance.now()
-    // A frame-rate cap: skip frames that come too early (a phone, or a window in the back).
-    if (now - lastFrame < 1000 / fps - 2) return
+    // A frame-rate cap: skip screen frames that come well before hers is due (a window in the back, a fast screen). Only
+    // well before: a phone's frame clock jitters by a few ms, and a tight cap dropped every few frames at 60 fps there.
+    if (now - lastFrame < (1000 / Math.min(fps, load.cap)) * CAP_SLACK) return
     const dt = Math.min((now - (lastFrame || now)) / 1000, 0.1)
     lastFrame = now
+    watchLoad(now)
+    stepMs = dt * 1000 || 1000 / fps
     eng.update(dt)
     for (const { b, lb } of writes) lb!.setRotationQuaternion(bq.set(-b.quaternion.x, -b.quaternion.y, b.quaternion.z, b.quaternion.w), Space.LOCAL)
     const open = voice ? Math.min(1, voice() * VOICE_GAIN) : talking ? FLAP_OPEN * Math.max(0, Math.sin((now / 1000) * Math.PI * 2 * FLAP_HZ)) : 0
     mouth += (open - mouth) * Math.min(1, dt * 18)
     const weights: Record<string, number> = { ...eng.face, あ: Math.max(eng.face['あ'] ?? 0, mouth) }
-    if (talking || voice) for (const m of MOUTH_SHAPES) if (weights[m]) weights[m] *= MOUTH_WHILE_TALKING
+    if (talking || voice) for (const m of [...MOUTH_SHAPES, ...OPEN_MOUTH]) if (weights[m]) weights[m] = OPEN_MOUTH.has(m) ? 0 : weights[m]! * MOUTH_WHILE_TALKING
     if (blush) weights['照れ'] = Math.max(weights['照れ'] ?? 0, 0.6)
     for (const [name, w] of Object.entries(weights)) {
       if (Math.abs((written.get(name) ?? -1) - w) < 0.002) continue
       written.set(name, w)
       for (const i of morphIndices(name)) model.morph.setMorphWeightFromIndex(i, w)
     }
+    if (ring && !ring.dragging) ring.follow()
     scene.render()
     // Physics starts from her first real pose, not from the T-pose she loads in.
     if (!warmed) (warmed = true), model.initializePhysics()
@@ -322,6 +467,107 @@ async function build(
     const p = Vector3.Project(world, Matrix.IdentityReadOnly, scene.getTransformMatrix(), viewport())
     const depth = Vector3.Distance(camera.position, world)
     return { x: p.x, y: p.y, unit: BOX_H / (2 * depth * Math.tan(FOV / 2)) }
+  }
+
+  // ---------------------------------------------------------------- the studio
+
+  let posing: { pose: JointPose; onEdit: (pose: JointPose, done: boolean) => void } | undefined
+  let dragging: { joint: string; x: number; y: number; base: JointPose; depth: Vector3 } | undefined
+  let ring: Rings | undefined
+  /** The joint the rings were last asked for: they load on first use, and the ask may change meanwhile. */
+  let ringsFor: string | undefined
+
+  const show = (pose: JointPose, done: boolean) => {
+    if (!posing) return
+    posing.pose = pose
+    eng.hold(pose, true)
+    posing.onEdit(pose, done)
+  }
+
+  /** The point under box pixel (x, y) on the plane facing the camera through `through`, in three's axes. */
+  function pointAt(x: number, y: number, through: Vector3) {
+    const view = scene.getViewMatrix(), proj = scene.getProjectionMatrix()
+    const near = Vector3.Unproject(new Vector3(x, y, 0), BOX_W, BOX_H, Matrix.IdentityReadOnly, view, proj)
+    const far = Vector3.Unproject(new Vector3(x, y, 1), BOX_W, BOX_H, Matrix.IdentityReadOnly, view, proj)
+    const dir = far.subtract(near).normalize()
+    const n = camera.getTarget().subtract(camera.position).normalize()
+    const p = near.add(dir.scale(Vector3.Dot(through.subtract(near), n) / (Vector3.Dot(dir, n) || 1e-6)))
+    return new V3(p.x, p.y, -p.z)
+  }
+
+  const studio: MmdStudio = {
+    begin(pose, onEdit) {
+      posing = { pose, onEdit }
+      eng.setStill(true)
+      eng.hold(pose, true)
+      // The rings are picked on her canvas.
+      canvas.style.pointerEvents = 'auto'
+    },
+    set(pose) {
+      if (posing) (posing.pose = pose), eng.hold(pose, true)
+    },
+    end() {
+      studio.rings(undefined)
+      // Only the studio turns all the way round her: elsewhere the camera comes back within its usual reach.
+      if (Math.abs(view.yaw) > ORBIT_YAW_MAX) (view.yaw = 0), frame(), faceCamera()
+      posing = dragging = undefined
+      eng.setStill(false)
+      eng.hold(undefined)
+      canvas.style.pointerEvents = ''
+    },
+    handles: () => HANDLES.flatMap((joint) => {
+      const p = project(HANDLE_AT[joint] ?? joint)
+      return p ? [{ joint, x: p.x, y: p.y }] : []
+    }),
+    drag(joint, x, y, phase, tilt) {
+      if (!posing) return
+      if (phase === 'start') {
+        const depth = new Vector3()
+        byName.get(joint)?.getWorldTranslationToRef(depth)
+        dragging = { joint, x, y, base: structuredClone(posing.pose), depth }
+        return
+      }
+      const d = dragging
+      if (!d || d.joint !== joint) return
+      if (phase === 'end') {
+        dragging = undefined
+        return show(posing.pose, true)
+      }
+      const hand = /^([左右])手首$/.exec(joint), elbow = /^([左右])ひじ$/.exec(joint)
+      if (hand || elbow) {
+        const side = (hand ?? elbow)![1] as Side
+        let target = pointAt(x, y, d.depth)
+        let pole: V3 | undefined
+        if (elbow) {
+          // The wrist stays where it is; the elbow swings toward the pointer.
+          pole = target
+          apply(rig.bone, posing.pose)
+          target = new V3().setFromMatrixPosition(rig.bone[`${side}手首`]!.matrixWorld)
+        }
+        return show({ ...posing.pose, ...reach(rig.bone, colliders, posing.pose, side, target, pole) }, false)
+      }
+      // A turn with the drag: across turns her (screen right is her left), down bends her forward; Shift tilts instead
+      // of turning. A shoulder shrugs.
+      const dx = (x - d.x) * TURN_PER_PX, dy = (y - d.y) * TURN_PER_PX
+      const b = d.base[joint] ?? [0, 0, 0]
+      const turn: JointTurn = /肩$/.test(joint) ? [b[0], b[1], b[2] - dy] : tilt ? [b[0] + dy, b[1], b[2] + dx] : [b[0] + dy, b[1] + dx, b[2]]
+      show({ ...posing.pose, [joint]: limit(joint, turn) }, false)
+    },
+    rings(joint) {
+      ringsFor = joint
+      ring?.dispose()
+      ring = undefined
+      const b = joint ? byName.get(joint) : undefined
+      // A phone build has no studio, so no rings (their module isn't in it).
+      if (!joint || !b || !posing || import.meta.env.TAURI_ENV_PLATFORM === 'android') return
+      void import('./mmd-rings.ts').then(({ attachRings }) => {
+        if (ringsFor !== joint || !posing || ring) return
+        ring = attachRings(scene, b, RINGS_SCALE, (local) => {
+          // The joint's local turn into three's axes.
+          if (posing) show({ ...posing.pose, [joint]: limit(joint, turnOf(joint, new Q3(-local.x, -local.y, local.z, local.w))) }, false)
+        }, () => void (posing && show(posing.pose, true)))
+      })
+    },
   }
 
   const actor: MmdActor = {
@@ -350,11 +596,17 @@ async function build(
     },
     stroke: () => eng.stroked(STROKE_MS),
     orbit(dx, dy) {
-      view.yaw = Math.max(-ORBIT_YAW_MAX, Math.min(ORBIT_YAW_MAX, view.yaw - dx * ORBIT_PER_PX))
+      actor.turn(view.yaw - dx * ORBIT_PER_PX)
       view.pitch = Math.max(-ORBIT_PITCH_MAX, Math.min(ORBIT_PITCH_MAX, view.pitch - dy * ORBIT_PER_PX))
       frame()
-      faceCamera()
     },
+    turn(yaw) {
+      // While she is posed the camera goes all the way round her (she holds still, so her look needn't follow it).
+      if (posing) view.yaw = Math.atan2(Math.sin(yaw), Math.cos(yaw))
+      else (view.yaw = Math.max(-ORBIT_YAW_MAX, Math.min(ORBIT_YAW_MAX, yaw))), faceCamera()
+      frame()
+    },
+    yaw: () => view.yaw,
     pan(dy) {
       view.rise = Math.max(-PAN_MAX, Math.min(PAN_MAX, view.rise + dy * PAN_PER_PX))
       frame()
@@ -386,12 +638,13 @@ async function build(
     setShot(shot) {
       if (shot === view.shot) return
       view.shot = shot
+      restBelowWaist(shot === 'bust')
       frame()
     },
     setRunning(on) {
       if (on === running) return
       running = on
-      if (on) (lastFrame = 0), engine.runRenderLoop(tick)
+      if (on) (lastFrame = 0), (load.since = 0), engine.runRenderLoop(tick)
       else engine.stopRenderLoop(tick)
     },
     setFps: (f) => void (fps = f),
@@ -399,9 +652,15 @@ async function build(
       engine.setHardwareScalingLevel(1 / cap(r))
       engine.resize()
     },
-    render: () => scene.render(),
+    render: () => ((stepMs = 0), scene.render()),
+    setMotions: (m) => eng.setMotions(m),
+    hold: (pose) => eng.hold(pose),
+    play: (m) => eng.play(m),
+    joints: () => bones.map((b) => b.name).filter((n) => JOINTS.test(n)),
+    studio,
     destroy() {
       clearTimeout(back)
+      studio.rings(undefined)
       engine.stopRenderLoop()
       // Her model leaves the shared physics world with the runtime; the world itself stays. A step that fails doesn't
       // stop the rest.

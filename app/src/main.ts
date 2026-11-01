@@ -10,6 +10,7 @@ import { savesScreen } from './screens/saves'
 import { settingsScreen } from './screens/settings'
 import { titleScreen } from './screens/title'
 import { wizardScreen } from './screens/wizard'
+import { studioScreen } from './screens/studio'
 import { applyAppearance, createStore } from './state'
 import { lowSpec } from './lowspec'
 import { installBackButton } from './back'
@@ -152,12 +153,20 @@ link.onStatus((s) => document.getElementById('offline')!.classList.toggle('show'
 if (lowSpec()) document.documentElement.dataset.lowspec = '1'
 const character = createCharacter(document.getElementById('chara')!, link, store, (text) => toast(text, 6000), lowSpec())
 
+/** A screen a build leaves out: going there goes straight back. */
+function noScreen(): Screen {
+  return { mount() {}, show: () => router.back(), hide() {} }
+}
+
 const screens: Record<ScreenName, Screen> = {
   title: titleScreen(),
   saves: savesScreen(),
   settings: settingsScreen(),
   chat: chatScreen(),
   wizard: wizardScreen(),
+  // The phone app has no pose studio (posing is done on the computer, and her motions come with the card): its build
+  // leaves the screen out.
+  studio: import.meta.env.TAURI_ENV_PLATFORM === 'android' ? noScreen() : studioScreen(),
 }
 const history: ScreenName[] = []
 let current: ScreenName | undefined

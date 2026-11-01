@@ -109,6 +109,26 @@ await test('import without the model falls back to Live2D; junk is refused; wron
   eq(threw, true, 'refused')
 })
 
+await test('custom motions travel on the card; an imported one is cleaned', async () => {
+  const t = structuredClone(s)
+  t.appearance.motions = { happy: { pose: { 頭: [10, 0, 5] }, keys: [{ t: 0.3, pose: { 右腕: [0, 0, 90] } }] } }
+  const card = C.cardOf(t)
+  eq(card.look.motions, t.appearance.motions, 'on the card')
+  const u = structuredClone(s)
+  C.applyCard(u, card)
+  eq(u.appearance.motions, t.appearance.motions, 'back in settings')
+  const { cleanMotions } = await import('../../link/src/motions.ts')
+  const keys = Array.from({ length: 40 }, (_, i) => ({ t: (40 - i) / 3, pose: {} }))
+  const dirty = { happy: { pose: { 頭: [999, 'x', 1.4], '<b>': [1, 2, 3], 首: [1, 2] }, keys: [...keys, { t: 'soon' }] }, bogus: { pose: {}, keys: [] }, sad: 7 }
+  const clean = cleanMotions(dirty)
+  eq(Object.keys(clean), ['happy'], 'only real emotions')
+  eq(clean.happy.pose, { 頭: [180, 0, 1.4] }, 'clamped to a tenth of a degree, bad joints dropped')
+  const ts = clean.happy.keys.map((k) => k.t)
+  eq(ts.length, 30, 'thirty keys at most')
+  eq(ts, [...ts].sort((a, b) => a - b), 'in time order')
+  eq([ts[0], ts.at(-1)], [3.67, 10], 'to a hundredth of a second, within 10 s')
+})
+
 await test('list and delete', async () => {
   const before = await C.listCards()
   const rem = before.find((c) => c.id === 'rem')

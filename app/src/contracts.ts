@@ -1,7 +1,7 @@
 // Interfaces between the app's modules. Each module is implemented in its own folder and only
 // talks to the others through these types (plus link/src/protocol.ts for the wire format).
 
-import type { ClientMsg, Costume, Emotion, ServerMsg, Settings } from '../../link/src/protocol.ts'
+import type { ClientMsg, Costume, CustomMotion, Emotion, JointPose, ServerMsg, Settings } from '../../link/src/protocol.ts'
 import type { Slack } from './slack'
 import type { Voice } from './voice'
 
@@ -45,7 +45,7 @@ export type Gesture =
   | 'greet' // a session starts / the title screen appears
   | 'costume' // right after a costume change
 
-export type Placement = 'title' | 'chat' | 'side' | 'hidden'
+export type Placement = 'title' | 'chat' | 'side' | 'studio' | 'hidden'
 
 export type Character = {
   /** Resolves when the first model is loaded (or the placeholder is shown). Never rejects. */
@@ -69,11 +69,33 @@ export type Character = {
   setVoiceLevel(level: (() => number) | undefined): void
   /** Calls `fn` when a headpat begins while she is free; returns the unsubscribe. */
   onHeadpat(fn: () => void): () => void
+  /** The joints her 3D model has ([] when she isn't 3D), for the pose studio. */
+  joints(): string[]
+  /** The pose studio's hold on her (a 3D card); undefined when she isn't 3D. */
+  studio(): CharacterStudio | undefined
+}
+
+/** Posing her in the pose studio: handles on her joints, rotation rings, her pose kept as she is posed. */
+export type CharacterStudio = {
+  /**
+   * Starts posing from `pose`: she holds still in it, with handles on her joints. `onEdit` hears each change (`done`
+   * when a drag ends: one step to undo); `onSelect` a joint picked for its rings (a click on its handle).
+   */
+  begin(pose: JointPose, onEdit: (pose: JointPose, done: boolean) => void, onSelect: (joint: string | undefined) => void): void
+  /** The pose she holds, set by the studio (undo, a hand shape, a key picked). */
+  set(pose: JointPose): void
+  /** Rotation rings on `joint`; undefined takes them away. */
+  select(joint: string | undefined): void
+  /** Plays `m` once, then holds its pose. */
+  play(m: CustomMotion): void
+  /** Turns the camera round her to `yaw` radians (0 her front), or by `yaw` from where it is. */
+  turn(yaw: number, by?: boolean): void
+  end(): void
 }
 
 // ---------------------------------------------------------------- screens (app/src/screens/, app/src/chat/)
 
-export type ScreenName = 'title' | 'saves' | 'settings' | 'chat' | 'wizard'
+export type ScreenName = 'title' | 'saves' | 'settings' | 'chat' | 'wizard' | 'studio'
 
 export type Router = {
   go(screen: ScreenName, params?: Record<string, unknown>): void

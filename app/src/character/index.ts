@@ -10,6 +10,7 @@ import {
 // The engine is imported on first use (see startStage): it throws at import when the Cubism core is missing.
 import type { Rig, Stage } from './live2d.ts'
 import type { MmdActor } from './mmd.ts'
+import { createStudioLayer } from './studio.ts'
 import type { Mark } from './motions.ts'
 import { createPlaceholder, type Placeholder } from './placeholder.ts'
 
@@ -44,7 +45,7 @@ const FLOOR_H = 260
 
 /** Where she stands on each screen unless the screen says otherwise with setPlacement. */
 const SCREEN_PLACEMENT: Record<ScreenName, Placement> = {
-  title: 'title', chat: 'chat', settings: 'side', wizard: 'side', saves: 'hidden',
+  title: 'title', chat: 'chat', settings: 'side', wizard: 'side', saves: 'hidden', studio: 'studio',
 }
 
 const TEMPLATE = `
@@ -103,6 +104,8 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store, not
     if (a && placement !== 'hidden') fx.spawn(mark, a.geometry().head)
   }
   const motion = () => store.get().motion
+  /** Her voice's loudness for her mouth to follow: none when lip sync is off. */
+  const heard = () => (motion().lipSync ? voiceLevel : undefined)
   const director = createDirector({
     motion,
     onEmotion: (e) => (ds.emotion = e),
@@ -122,12 +125,25 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store, not
           return { x: (c.x - inner.x) / k, y: (c.y - inner.y) / k }
         }
       : undefined
+  const zoomBy = (steps: number) => {
+    const z = store.get().appearance.zoom
+    const next = Math.round(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z - steps * ZOOM_STEP * 2)) * 100) / 100
+    if (next !== z) store.update((s) => void (s.appearance.zoom = next))
+  }
+  /** While she is posed in the studio, its handles take the pointer: no headpats, taps or looking at the cursor. */
+  let posing = false
   const interact = createInteract({
-    root, box, actor, director, motion, fx: spawnFx, onPat: () => patListeners.forEach((f) => f()), screenCursor,
-    onZoom(steps) {
-      const z = store.get().appearance.zoom
-      const next = Math.round(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z - steps * ZOOM_STEP * 2)) * 100) / 100
-      if (next !== z) store.update((s) => void (s.appearance.zoom = next))
+    root, box, actor: () => (posing ? undefined : actor()), director, motion, fx: spawnFx, onPat: () => patListeners.forEach((f) => f()), screenCursor,
+    onZoom: zoomBy,
+  })
+  const studio = createStudioLayer({
+    box,
+    mmd: () => mmd,
+    onZoom: zoomBy,
+    onActive(on) {
+      posing = on
+      interact.reset()
+      interact.refresh()
     },
   })
 
@@ -159,10 +175,10 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store, not
     if (document.hidden) interact.reset()
     updateRunning()
   })
-  // Full motion only where it is watched: 60 fps in the focused desktop window, 30 on a phone (battery) or while
-  // another window is in front. Her breathing and blinks look the same at 30.
+  // Full motion where it is watched: 60 fps in the focused desktop window and on a phone (its app is only drawn while
+  // it is open; it asks for a 60 Hz screen, MainActivity.kt), 30 while another desktop window is in front.
   const updateFps = () => {
-    const fps = stageEl.dataset.device !== 'phone' && document.hasFocus() ? FPS_FRONT : FPS_BACK
+    const fps = stageEl.dataset.device === 'phone' || document.hasFocus() ? FPS_FRONT : FPS_BACK
     stage?.setFps(fps)
     mmd?.setFps(fps)
   }
@@ -174,6 +190,9 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store, not
     const drop = placement === 'hidden' ? HIDDEN_DROP : 0
     box.style.transform = `translate(${x}px, ${y + drop}px) scale(${scale})`
     ds.placement = placement
+    // A phone's WebView pays for every frame it draws, whatever is on it: with her hidden, the petals alone would keep
+    // it drawing 60 a second (base.css pauses them).
+    stageEl.dataset.chara = placement
     clearTimeout(hideTimer)
     if (placement === 'hidden') fx.clear(), (hideTimer = window.setTimeout(updateRunning, HIDE_MS))
     else updateRunning()
@@ -186,8 +205,8 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store, not
 
   function setPlacement(asked: Placement) {
     requested = asked
-    // The settings preview has no room on a phone.
-    const p = asked === 'side' && portrait() ? 'hidden' : asked
+    // The settings preview has no room on a phone, upright or sideways (its settings take the whole stage).
+    const p = asked === 'side' && (portrait() || stageEl.dataset.device === 'phone') ? 'hidden' : asked
     placement = p
     if (p !== 'hidden') lastVisible = p
     if (p === 'hidden') interact.reset()
@@ -226,7 +245,7 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store, not
   function showPlaceholder() {
     if (sprite || rig || mmd) return
     sprite = createPlaceholder(box, store.get().appearance.zoom)
-    sprite.setVoice(voiceLevel)
+    sprite.setVoice(heard())
     box.insertBefore(sprite.el, fxLayer)
     director.setActor(sprite)
     interact.refresh()
@@ -304,7 +323,7 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store, not
       loading = undefined
       const prev = rig
       rig = next
-      next.setVoice(voiceLevel)
+      next.setVoice(heard())
       updateRunning()
       fx.clear()
       director.setActor(next)
@@ -374,9 +393,12 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store, not
       if (mmdLoading !== file) return next.destroy(), false
       mmdLoading = undefined
       const prev = mmd
+      // A new model can't take over the old one's pose half made: the studio lets go (its screen keeps what was saved).
+      studio.end()
       mmd = next
       prev?.destroy()
-      next.setVoice(voiceLevel)
+      next.setVoice(heard())
+      next.setMotions(store.get().appearance.motions)
       if (stage) stage.app.canvas.style.display = 'none'
       updateRunning()
       updateFps()
@@ -416,6 +438,7 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store, not
     mmdLoading = undefined
     const old = mmd
     if (!old) return
+    studio.end()
     mmd = undefined
     old.destroy()
     if (stage) stage.app.canvas.style.display = ''
@@ -464,6 +487,9 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store, not
     const was = lastSettings
     lastSettings = s
     if (s.appearance.zoom !== was.appearance.zoom) actor()?.setZoom(s.appearance.zoom)
+    if (s.motion.lipSync !== was.motion.lipSync) actor()?.setVoice(heard())
+    // Every store update clones the settings: only a real change of her motions replays the one she shows.
+    if (JSON.stringify(s.appearance.motions) !== JSON.stringify(was.appearance.motions)) mmd?.setMotions(s.appearance.motions)
     if (none) {
       // Nothing to draw: the settings that would change her look have nothing to change.
     } else if (s.appearance.model !== was.appearance.model || s.appearance.mmdFile !== was.appearance.mmdFile) {
@@ -583,11 +609,13 @@ export function createCharacter(root: HTMLElement, link: Link, store: Store, not
     setVoiceLevel(level) {
       voiceLevel = level
       ds.voice = level ? '1' : '0'
-      actor()?.setVoice(level)
+      actor()?.setVoice(heard())
     },
     onHeadpat(fn) {
       patListeners.add(fn)
       return () => patListeners.delete(fn)
     },
+    joints: () => mmd?.joints() ?? [],
+    studio: () => (mmd ? studio : undefined),
   }
 }

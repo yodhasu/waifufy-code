@@ -265,6 +265,17 @@
 #stage[data-orient='portrait'] .ttl-item[data-id='continue'] .ttl-label::after { display: none; }
 #stage[data-orient='portrait'] #screen-title .ttl-foot { left: calc(24px / 2.1); right: calc(24px / 2.1); justify-content: center; }
 
+/* Theater title (a phone sideways): the menu at touch size left of her, all six rows (Join too) above the bottom edge;
+   the rows' hints and the key hints are left out (no room, and no keys). */
+#stage[data-device='phone'][data-orient='landscape'] #screen-title .ttl-menu { zoom: 2; top: auto; bottom: calc(24px / 2); left: calc(64px / 2);
+  width: 330px; gap: 6px; }
+#stage[data-device='phone'][data-orient='landscape'] .ttl-item { padding: 7px 16px 8px 40px; border-radius: 12px; }
+#stage[data-device='phone'][data-orient='landscape'] .ttl-item::before { left: 16px; top: 12px; font-size: 11px; }
+#stage[data-device='phone'][data-orient='landscape'] .ttl-item.on::before { left: 14px; top: 9px; }
+#stage[data-device='phone'][data-orient='landscape'] .ttl-item.on { transform: none; }
+#stage[data-device='phone'][data-orient='landscape'] .ttl-label { font-size: 16px; }
+#stage[data-device='phone'][data-orient='landscape'] :is(.ttl-hint, #screen-title .ttl-foot) { display: none; }
+
 /* Save/Load: two slots a row, four rows a page; the slot actions always show (there is no hover on a phone). */
 #stage[data-orient='portrait'] #screen-saves .sv-page { zoom: 2.1; padding: 14px 12px 12px; }
 #stage[data-orient='portrait'] .sv-head { height: auto; flex-wrap: wrap; gap: 8px; }
@@ -281,3 +292,12 @@
 #stage[data-orient='portrait'] #screen-wizard .wz-panel { left: 90px; top: 120px; }
 /* Keyboard hints mean nothing on a touch screen. */
 #stage[data-orient='portrait'] #screen-title .ttl-foot span:first-child { display: none; }
+
+/* Theater Save/Load (a phone sideways): zoomed to phone size like the chat; each thumbnail takes what is left of its
+   slot, so the slot's text never runs under the next row; the actions always show (no hover), the key hints don't. */
+#stage[data-device='phone'][data-orient='landscape'] #screen-saves .sv-page { zoom: 1.6; padding: 14px 24px 12px; gap: 8px; }
+#stage[data-device='phone'][data-orient='landscape'] .sv-grid { gap: 8px 10px; }
+#stage[data-device='phone'][data-orient='landscape'] .sv-slot { gap: 6px; padding: 6px 6px 8px; }
+#stage[data-device='phone'][data-orient='landscape'] .sv-thumb { flex: 1 1 0; aspect-ratio: auto; min-height: 0; }
+#stage[data-device='phone'][data-orient='landscape'] .sv-actions { opacity: 1; transform: none; }
+#stage[data-device='phone'][data-orient='landscape'] .sv-keys { display: none; }

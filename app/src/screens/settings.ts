@@ -3,6 +3,7 @@
 // Every field is bound by its dotted settings path (`data-bind`), so one handler writes all of them through
 // the store, and sync() paints the whole screen back from the store after each change.
 
+import { EMOTIONS } from '../../../link/src/protocol.ts'
 import type {
   Appearance, CardSummary, ClaudeSettings, Costume, Emotion, MotionSettings, PersonaPreset, Profile, RemoteStatus, ResearchProfile, ServerMsg, Settings, Waifu,
 } from '../../../link/src/protocol.ts'
@@ -73,7 +74,7 @@ const DEFAULTS: {
   },
   appearance: {
     theme: 'system', accent: '#5b8de0', fontSize: 21, boxOpacity: 0.94, background: 'auto', petals: true, costume: 'ac_base_rem01', zoom: 1,
-    model: 'live2d', mmdFile: '',
+    model: 'live2d', mmdFile: '', motions: {},
   },
   motion: {
     textCps: 14, punctuationPauses: true, autoDelayMs: 1200, lipSync: true, idle: true, cursor: true, headpats: true, taps: true, gestures: true,
@@ -93,7 +94,7 @@ const DEFAULTS: {
 const RESET: Partial<Record<TabId, (s: Settings) => void>> = {
   you: (s) => void (s.profile = structuredClone(DEFAULTS.profile)),
   waifu: (s) => void (s.waifu = structuredClone(DEFAULTS.waifu)),
-  appearance: (s) => void (s.appearance = { ...structuredClone(DEFAULTS.appearance), modelsDir: s.appearance.modelsDir, mmdFile: s.appearance.mmdFile }),
+  appearance: (s) => void (s.appearance = { ...structuredClone(DEFAULTS.appearance), modelsDir: s.appearance.modelsDir, mmdFile: s.appearance.mmdFile, motions: s.appearance.motions }),
   voice: (s) => void (s.voice = structuredClone(DEFAULTS.voice)),
   casual: (s) => void (s.casual = structuredClone(DEFAULTS.casual)),
   motion: (s) => void (s.motion = structuredClone(DEFAULTS.motion)),
@@ -588,6 +589,17 @@ function appearancePane() {
           <button class="btn" type="button" data-act="mmd-browse" data-test="set-appearance.mmdFile-browse">Browse…</button></div>` +
         note('Saved on her waifu card. A 3D model is drawn with MMD shading, outlines and physics, and plays her emotions with its face morphs; if it can\'t load, her Live2D costume stands in. The model stays on this computer and is never put in an exported card.'),
       'wide',
+    )}
+    ${card(
+      'Motions',
+      `<div class="set-row"><div class="set-label">Emotion<small>Her own pose for it, or the built-in one</small></div><div class="set-control mo-line">
+        <select class="field" data-mo="emotion" data-test="mo-emotion">${EMOTIONS.map((e) => `<option value="${e}">${e}</option>`).join('')}</select>
+        <em data-mo-state data-test="mo-state"></em>
+        <button class="btn primary" type="button" data-act="studio" data-test="mo-studio">Pose her</button>
+      </div></div>` +
+        note('The pose studio: drag her hands, head and body into the pose she holds for an emotion, or add keys for the way into it. From there it opens in Blender too (with MMD Tools), for a full animation. Saved on her waifu card.'),
+      'wide',
+      'data-when="appearance.model=mmd" data-motions-card',
     )}
     ${card(
       'Costume',
@@ -1316,7 +1328,11 @@ export function settingsScreen(): Screen {
   function setTab(id: TabId, greet = true) {
     if (id !== tab) commitFocused()
     tab = id
+    if (id === 'appearance') motionState()
     for (const b of qa('[data-test="settings-tab"]')) b.classList.toggle('on', b.dataset.tab === id)
+    // A phone's tabs are a strip wider than the screen: the open one is scrolled to its middle.
+    const nav = q('.set-nav'), on = q(`[data-test="settings-tab"][data-tab="${id}"]`)
+    if (nav.scrollWidth > nav.clientWidth) nav.scrollLeft = on.offsetLeft - (nav.clientWidth - on.offsetWidth) / 2
     for (const p of qa('[data-pane]')) p.hidden = p.dataset.pane !== id
     const info = TABS.find((t) => t.id === id)!
     q('[data-pane-title]').textContent = info.label
@@ -1764,9 +1780,17 @@ export function settingsScreen(): Screen {
     else ctx.router.back()
   }
 
+  /** Whether the emotion picked in the Motions card has her own motion. */
+  function motionState() {
+    const e = q<HTMLSelectElement>('[data-mo="emotion"]').value as Emotion
+    q('[data-mo-state]').textContent = ctx.store.get().appearance.motions[e] ? 'Her own' : 'Built-in'
+  }
+
   async function act(el: HTMLElement) {
     const id = el.dataset.id ?? ''
     switch (el.dataset.act) {
+      case 'studio':
+        return ctx.router.go('studio', { emotion: q<HTMLSelectElement>('[data-mo="emotion"]').value })
       case 'tab':
         return setTab(el.dataset.tab as TabId)
       case 'return':
@@ -2060,6 +2084,7 @@ export function settingsScreen(): Screen {
       // Phone access isn't a setting (its state and token live in the link): the switch asks the link directly.
       root.addEventListener('change', (e) => {
         const t = e.target as HTMLInputElement
+        if (t.dataset.mo === 'emotion') return motionState()
         // Low-spec mode is this phone's own: it reloads the app into the other mode.
         if (t.dataset.lowspec !== undefined) return setLowSpec(t.checked)
         if (t.dataset.phoneEnabled === undefined) return
@@ -2101,6 +2126,7 @@ export function settingsScreen(): Screen {
         sync(s)
         if (tab === 'waifu') schedulePreview()
         if (tab === 'cards') renderCards()
+        if (tab === 'appearance') motionState()
       })
     },
     show(params) {

@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { timingSafeEqual } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { join, resolve } from 'node:path'
 import { format } from 'node:util'
@@ -9,10 +10,11 @@ import { listCostumes, serveMmd, serveModel, serveThumb } from './assets.ts'
 import { asMood } from './affection.ts'
 import { putAttachment } from './attachments.ts'
 import { createAuth } from './auth.ts'
+import { findBlender, openInBlender } from './blender.ts'
 import { hasVoiceKey, setVoiceKey, synthesize } from './tts.ts'
 import { searchFiles } from './files.ts'
 import { buildPersona } from './persona.ts'
-import { CTL_OPS, type ClientMsg, type FileHit, type PermissionModeName, type ServerMsg, type SessionEvent, type Settings } from './protocol.ts'
+import { CTL_OPS, EMOTIONS, type ClientMsg, type FileHit, type PermissionModeName, type ServerMsg, type SessionEvent, type Settings } from './protocol.ts'
 import { research } from './research.ts'
 import { deleteSave, errorText, getSave, isSaveId, latestLove, listSaves, loadHistory, remember, renameSave, saveMeta, shortPath, unhide } from './saves.ts'
 import { applyCard, cardLove, keepCard, deleteCard, ensureCard, exportCard, importCard, isCardId, listCards, newCard, readCard, setCardLove, syncCard } from './cards.ts'
@@ -616,11 +618,42 @@ class BadRequest extends Error {}
 /** A page's log line is cut to this, so a runaway one can't flood link.log. */
 const CLIENT_LOG_MAX = 4000
 
+/**
+ * Opens the active card's model in Blender with the emotion's motion. What happens there goes to the desktop
+ * windows, for the card it was opened for: a save made after a card switch is the old card's.
+ */
+async function openBlender(m: Extract<ClientMsg, { t: 'blender_open' }>) {
+  const s = await loadSettings()
+  const tell = (x: { state: 'open' | 'saved' | 'missing' | 'error'; vmd?: string; error?: string }) => broadcastLocal({ t: 'blender', emotion: m.emotion, card: s.card, ...x })
+  const pmx = s.appearance.model === 'mmd' ? s.appearance.mmdFile : ''
+  if (!pmx.toLowerCase().endsWith('.pmx') || !existsSync(pmx)) return tell({ state: 'error', error: 'this card has no 3D model on this computer.' })
+  const vmd = Buffer.from(m.vmd, 'base64')
+  if (vmd.subarray(0, VMD_MAGIC.length).toString('latin1') !== VMD_MAGIC) return tell({ state: 'error', error: "the motion to start from isn't a VMD." })
+  const exe = await findBlender(m.exe)
+  if (!exe) return tell(m.exe ? { state: 'error', error: "that file isn't blender.exe." } : { state: 'missing' })
+  try {
+    await openInBlender({
+      exe, pmx, vmd, name: `${s.card}-${m.emotion}`,
+      onSaved: (b) => tell(b.length < VMD_B64_MAX * 0.75 ? { state: 'saved', vmd: b.toString('base64') } : { state: 'error', error: 'the saved motion is too large.' }),
+      onError: (error) => tell({ state: 'error', error }),
+    })
+    tell({ state: 'open' })
+  } catch (e) {
+    tell({ state: 'error', error: `Blender didn't start: ${errorText(e)}` })
+  }
+}
+
 function need(ok: unknown, what: string): asserts ok {
   if (!ok) throw new BadRequest(`Bad request: ${what}`)
 }
 
 const isStr = (v: unknown): v is string => typeof v === 'string'
+/** A motion for Blender or back: a VMD, base64, no larger than a long motion is. */
+const VMD_B64_MAX = 12 * 1024 * 1024
+const VMD_MAGIC = 'Vocaloid Motion Data 0002'
+/** A photo of her: a JPEG data URL. */
+const JPEG_PREFIX = 'data:image/jpeg;base64,'
+const PHOTO_MAX = 40 * 1024 * 1024
 const optStr = (v: unknown) => v === undefined || isStr(v)
 const isAnswers = (v: unknown) => !!v && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every(isStr)
 
@@ -798,6 +831,17 @@ async function handle(ws: WebSocket, m: ClientMsg) {
           await sendCards()
         },
         (e) => sendTo(ws, { t: 'card_file', op: 'import', path: m.path, error: errorText(e) }),
+      )
+    case 'blender_open':
+      need(!remoteSockets.has(ws), 'Blender opens on the desktop')
+      need((EMOTIONS as readonly string[]).includes(m.emotion) && isStr(m.vmd) && m.vmd.length < VMD_B64_MAX && optStr(m.exe), 'emotion, vmd, exe')
+      return openBlender(m)
+    case 'photo_save':
+      need(!remoteSockets.has(ws), 'photos are saved on the desktop')
+      need(isStr(m.path) && /\.jpe?g$/i.test(m.path) && isStr(m.data) && m.data.startsWith(JPEG_PREFIX) && m.data.length < PHOTO_MAX, 'path, data')
+      return writeFile(m.path, Buffer.from(m.data.slice(JPEG_PREFIX.length), 'base64')).then(
+        () => sendTo(ws, { t: 'photo_saved', path: m.path }),
+        (e) => sendTo(ws, { t: 'photo_saved', path: m.path, error: errorText(e) }),
       )
     case 'costumes': {
       const r = await listCostumes(isStr(m.dir) ? m.dir : undefined)

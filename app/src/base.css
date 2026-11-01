@@ -30,6 +30,10 @@ input, textarea, select { font: inherit; color: var(--text); }
 .petal { position: absolute; top: -20px; width: 12px; height: 9px; border-radius: 60% 0 60% 0; background: var(--petal);
   animation: fall linear infinite; opacity: .75; }
 #stage[data-petals='off'] .petal { display: none; }
+/* A phone redraws the whole page for each petal frame: with her hidden (Settings), or her frame rate down for a hot or
+   slow phone (mmd.ts data-overload), the page's endless animations rest. */
+#stage[data-device='phone'][data-chara='hidden'] .petal,
+#stage[data-overload] :is(.petal, .advance) { animation-play-state: paused; }
 @keyframes fall { 100% { transform: translate(-160px, 960px) rotate(540deg); } }
 
 /* ---------- Character layer (owned by the character module) ---------- */

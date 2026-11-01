@@ -108,7 +108,17 @@ export type Appearance = {
   model: ModelKind
   /** Absolute path of her .pmx when `model` is 'mmd'; '' otherwise. Never leaves this machine. */
   mmdFile: string
+  /** A 3D card's own motions, made in the motion editor: they replace the built-in pose and beat of their emotion. */
+  motions: Motions
 }
+
+/** One joint's turn in degrees, [bend, turn, tilt], on top of her relaxed pose. */
+export type JointTurn = [number, number, number]
+/** Joint name (the model's MMD bone name) → its turn. A joint left out stays as it is in the pose under it. */
+export type JointPose = Record<string, JointTurn>
+/** An emotion's motion: the pose she holds, and keys on the way into it (seconds from the start, played once). */
+export type CustomMotion = { pose: JointPose; keys: { t: number; pose: JointPose }[] }
+export type Motions = Partial<Record<Emotion, CustomMotion>>
 
 export const MODEL_KINDS = ['live2d', 'mmd'] as const
 export type ModelKind = (typeof MODEL_KINDS)[number]
@@ -235,7 +245,7 @@ export type WaifuCard = {
   waifu: Waifu
   /** The preset she plays (waifu.activePreset), if any; the library itself is shared by every card. */
   presets: PersonaPreset[]
-  look: Pick<Appearance, 'model' | 'modelsDir' | 'costume' | 'zoom' | 'mmdFile'>
+  look: Pick<Appearance, 'model' | 'modelsDir' | 'costume' | 'zoom' | 'mmdFile' | 'motions'>
   voice: Pick<VoiceSettings, 'voiceId' | 'language' | 'speed' | 'styleNotes' | 'pronunciations'>
   /** The love meter: affection points (affection.ts), carried from session to session with the card. */
   love: { points: number }
@@ -437,6 +447,13 @@ export type ClientMsg =
   | { t: 'card_delete'; id: string }
   /** Writes the card to `path` as a .waifu.json file, without any personal save. Answered by `card_file`. */
   | { t: 'card_export'; id: string; path: string }
+  /**
+   * The desktop only: opens the active card's 3D model in Blender with `vmd` (base64, the emotion's motion now) on it.
+   * Each save there comes back as a `blender` 'saved'. `exe`: blender.exe, picked by the user when it wasn't found.
+   */
+  | { t: 'blender_open'; emotion: Emotion; vmd: string; exe?: string }
+  /** The desktop only: writes a photo of her (a JPEG data URL) to `path`. Answered by `photo_saved`. */
+  | { t: 'photo_save'; path: string; data: string }
   /** Reads a .waifu.json file into a new card (not made active). Answered by `card_file` and `cards`. */
   | { t: 'card_import'; path: string }
   | { t: 'save_rename'; id: string; title: string }
@@ -621,6 +638,12 @@ export type ServerMsg =
   | { t: 'cards'; list: CardSummary[]; active: string }
   /** How an export or import went: the card it was, or why it failed. */
   | { t: 'card_file'; op: 'export' | 'import'; id?: string; path: string; error?: string }
+  /**
+   * Blender and a card's motion: 'open' (it is starting), 'saved' (a save there: `vmd`, base64, for `card`'s
+   * `emotion`), 'missing' (no blender.exe found: the app asks for it), 'error' (why it didn't open or export).
+   */
+  | { t: 'blender'; state: 'open' | 'saved' | 'missing' | 'error'; emotion: Emotion; card: string; vmd?: string; error?: string }
+  | { t: 'photo_saved'; path: string; error?: string }
   | { t: 'costumes'; list: Costume[]; dir: string; found: boolean }
   | { t: 'files'; query: string; hits: FileHit[] }
   /** `concerns`: what the folder's own settings would apply without asking (hooks, MCP servers, pre-approved rules). */

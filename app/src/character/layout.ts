@@ -26,6 +26,8 @@ export const PLACEMENTS: Record<Exclude<Placement, 'hidden'>, Spot> = {
   title: { x: 340, y: 0, scale: 1 },
   // Beside the settings pages, as a live preview.
   side: { x: 560, y: 0, scale: 0.74 },
+  // The pose studio: large at the left, its panel at the right.
+  studio: { x: -300, y: 0, scale: 1 },
 }
 
 /** A phone held sideways (Theater): she stands at the left, the dialogue and the composer take the right. */
@@ -33,6 +35,7 @@ export const PHONE_LANDSCAPE: Record<Exclude<Placement, 'hidden'>, Spot> = {
   chat: { x: -330, y: 30, scale: 1.05 },
   title: { x: 340, y: 0, scale: 1 },
   side: { x: 560, y: 0, scale: 0.74 },
+  studio: { x: -300, y: 0, scale: 1 },
 }
 
 /** The box centered on the 900-wide portrait stage. */
@@ -60,7 +63,7 @@ export function portraitPlacements(stageH: number, compact = false): Record<Excl
   // Compact (the keyboard is up): her head and shoulders, the top of her head just under the stage's top edge.
   // The box scales about its bottom, so its top sits at y + BOX_H × (1 − scale).
   const chat = compact ? { x: PORTRAIT_X, y: COMPACT_TOP - BOX_H * (1 - COMPACT_SCALE), scale: COMPACT_SCALE } : at('chat')
-  return { chat, title: at('title'), side: chat }
+  return { chat, title: at('title'), side: chat, studio: chat }
 }
 /** Compact portrait: her scale, and where the box's top goes (above the stage: her hair starts a little below it). */
 const COMPACT_SCALE = 1.3

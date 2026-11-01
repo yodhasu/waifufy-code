@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promise
 import { randomBytes } from 'node:crypto'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { clampPoints, levelOf } from './affection.ts'
+import { cleanMotions } from './motions.ts'
 import { MODEL_KINDS, type CardSummary, type Settings, type WaifuCard } from './protocol.ts'
 import { slugify } from './research.ts'
 import { DATA_DIR, defaultSettings } from './settings.ts'
@@ -43,7 +44,7 @@ export function cardOf(s: Settings, prev?: WaifuCard): WaifuCard {
     waifu: structuredClone(s.waifu),
     // The library is shared by every card; a card keeps only the preset she plays, so an export carries it.
     presets: structuredClone(s.presets.filter((p) => p.id === s.waifu.activePreset)),
-    look: { model: a.model, modelsDir: a.modelsDir, costume: a.costume, zoom: a.zoom, mmdFile: a.mmdFile },
+    look: { model: a.model, modelsDir: a.modelsDir, costume: a.costume, zoom: a.zoom, mmdFile: a.mmdFile, motions: structuredClone(a.motions) },
     voice: { voiceId: v.voiceId, language: v.language, speed: v.speed, styleNotes: v.styleNotes, pronunciations: v.pronunciations },
     love: { points: prev?.love.points ?? 0 },
     createdAt: prev?.createdAt ?? now,
@@ -88,6 +89,7 @@ function normalize(raw: unknown, id: string): WaifuCard {
   waifu.catchphrases = waifu.catchphrases.filter((p) => typeof p === 'string')
   const look = sameShape(base.look, r.look)
   if (!MODEL_KINDS.includes(look.model)) look.model = 'live2d'
+  look.motions = cleanMotions(look.motions)
   const voice = sameShape(base.voice, r.voice)
   if (voice.language !== 'en') voice.language = 'ja'
   const presets = (Array.isArray(r.presets) ? r.presets : []).filter(

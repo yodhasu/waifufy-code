@@ -3,10 +3,14 @@
 // MMD model's bones every frame, before babylon-mmd runs her IK and physics, and writes `face` into her morphs.
 
 import { Bone, Euler, Group, Quaternion, Vector3 } from 'three'
-import type { Emotion } from '../../../link/src/protocol.ts'
+import type { CustomMotion, Emotion, JointPose, JointTurn, Motions } from '../../../link/src/protocol.ts'
 
 /** The bones the engine drives: her upper body, arms and fingers. Her legs stay MMD's (IK keeps her feet planted). */
 const WAIST_UP = /^(上半身|上半身2|首|頭|両目|[左右]目|[左右](肩|腕|腕捩|ひじ|手捩|手首)|[左右](親指|人指|中指|薬指|小指)[０-３])$/
+/** Every joint the motion editor can turn: the waist up, the lower body and the legs (a posed leg drops its IK). */
+export const JOINTS = /^(上半身|上半身2|首|頭|両目|[左右]目|下半身|[左右](肩|腕|腕捩|ひじ|手捩|手首|足|ひざ|足首)|[左右](親指|人指|中指|薬指|小指)[０-３])$/
+/** Her legs' joints, which the IK holding her feet would otherwise override. */
+export const LEG = /^([左右])(足|ひざ|足首)$/
 
 type Rig = { bone: Record<string, Bone> }
 /** A bone's rotation as [x, y, z] radians in three's axes, in the bone's parent space: x +down / forward, y turn, z tilt. */
@@ -28,7 +32,8 @@ export function standIn(bones: { name: string; parent: number; rest: [number, nu
 
 // Each waist-up bone chases its target with a critically damped spring; the chest leads, fingers come last.
 function feel(name: string): [number, number] {
-  if (/^上半身/.test(name)) return [5.0, 0]
+  if (/^上半身|^下半身/.test(name)) return [5.0, 0]
+  if (LEG.test(name)) return [4.4, 40]
   if (/首|肩$/.test(name)) return [4.6, 40]
   if (/頭|腕$/.test(name)) return [4.2, 80]
   if (/ひじ|腕捩/.test(name)) return [3.8, 140]
@@ -187,24 +192,79 @@ const LOOK = { 上半身: [0.02, 0.06], 上半身2: [0.03, 0.09], 首: [0.05, 0.
 const PAT_DIP = 0.12
 const PAT_SWAY = 0.05
 
+/** After the last key of a custom motion, how long until she settles into its held pose (seconds). */
+export const KEY_SETTLE_S = 0.35
+const RAD = Math.PI / 180
+const RELAXED = relaxedPose()
+
+/** A custom pose (degrees) over the relaxed arms. Her right side is mirrored, so a turn means the same on both sides. */
+export function posed(p: JointPose) {
+  const target = new Map(RELAXED)
+  for (const [n, v] of Object.entries(p)) {
+    const q = target.get(n)?.clone() ?? new Quaternion()
+    const m = n.startsWith('右') ? -1 : 1
+    target.set(n, q.multiply(new Quaternion().setFromEuler(new Euler(v[0] * RAD, m * v[1] * RAD, m * v[2] * RAD, 'YXZ'))))
+  }
+  return target
+}
+
+/** The other way: a joint's rotation (three's axes, in its parent's space) as its turn over the relaxed pose. */
+export function turnOf(name: string, q: Quaternion): JointTurn {
+  const rel = (RELAXED.get(name)?.clone().invert() ?? new Quaternion()).multiply(q)
+  const e = new Euler().setFromQuaternion(rel, 'YXZ')
+  const m = name.startsWith('右') ? -1 : 1
+  const d = (v: number) => Math.round((v / RAD) * 10) / 10 + 0
+  return [d(e.x), d(m * e.y), d(m * e.z)]
+}
+
+/** A pose's rotations back as turns, leaving out the joints that sit in their relaxed pose. */
+export function poseOf(target: Map<string, Quaternion>): JointPose {
+  const out: JointPose = {}
+  for (const [n, q] of target) {
+    const v = turnOf(n, q)
+    if (v.some((x) => x)) out[n] = v
+  }
+  return out
+}
+
+/** A built-in emotion's held stance (without its beat), as rotations over the relaxed arms. */
+function stanceOf(name: Emotion) {
+  const target = new Map(RELAXED)
+  for (const [n, v] of Object.entries(carried(EMOTES[name].stance as Record<string, number[]>))) {
+    const q = target.get(n)?.clone() ?? new Quaternion()
+    target.set(n, q.multiply(new Quaternion().setFromEuler(new Euler(v![0], v![1], v![2], 'YXZ'))))
+  }
+  return target
+}
+
+/** A built-in emotion's stance as a pose, where the studio starts when she has no motion of her own for it. */
+export const emotionPose = (name: Emotion) => poseOf(stanceOf(name))
+
 /**
  * The engine on a stand-in rig. `update(dt)` moves the stand-in; read `controlled` (the bones it drives) and `face`
- * (morph name → weight) after it.
+ * (morph name → weight) after it. `onPosed` hears which joints a custom motion turns, each time that changes.
  */
-export function createEngine(rig: Rig) {
+export function createEngine(rig: Rig, onPosed?: (joints: Set<string>) => void) {
   const { bone } = rig
-  // Waist up, plus the lower body for the idle weight shift (nothing poses it, so it springs to rest).
+  // Waist up, plus the lower body and legs for custom motions and the idle weight shift (they spring to rest).
   const springs: Spring[] = Object.keys(bone)
-    .filter((n) => WAIST_UP.test(n) || n === '下半身')
+    .filter((n) => JOINTS.test(n))
     .map((n) => {
       const [w, delay] = feel(n)
       return { name: n, b: bone[n]!, q: new Quaternion(), vel: new Vector3(), target: new Quaternion(), next: null, w, delay }
     })
-  const relaxed = relaxedPose()
   const face: Face = {}
   let faceTarget: Face = {}
   let faceLater: { at: number; face: Face } | null = null
   let beat: { d: number; f: (u: number) => Record<string, number[]>; t: number } | null = null
+  let motions: Motions = {}
+  let current: Emotion = 'normal'
+  /** The studio's pose, held over any emotion until it lets go. */
+  let preview: JointPose | undefined
+  /** In the studio: no breathing, sway, looking about or beats, so the pose shows exactly as it is made. */
+  let still = false
+  /** A custom motion's keys still to come: at `at` (engine time) she heads for `pose`. */
+  let keys: { at: number; pose: Map<string, Quaternion> }[] = []
   // Eyelids closed by the face (まばたき in a face), apart from blinking: the more closed of the two shows.
   let t = 0, nextBlink = 2, blinkT = -1, lids = 0
   const look = { x: 0, y: 0, tx: 0, ty: 0, bx: 0, by: 0 }
@@ -221,18 +281,31 @@ export function createEngine(rig: Rig) {
     }
   }
 
-  /** An emotion: its stance over the relaxed arms, its face, and its beat. */
+  /** Plays a custom motion: toward each key in turn (reaching it about at its time), then into the held pose. */
+  function run(m: CustomMotion, instant: boolean) {
+    beat = null
+    const hold = posed(m.pose)
+    const steps = instant ? [] : m.keys.map((k) => posed({ ...m.pose, ...k.pose }))
+    setPose(steps[0] ?? hold, instant)
+    keys = [...steps.slice(1).map((pose, i) => ({ at: t + m.keys[i]!.t, pose })), ...(steps.length ? [{ at: t + m.keys.at(-1)!.t + KEY_SETTLE_S, pose: hold }] : [])]
+    const joints = new Set<string>()
+    for (const p of [m.pose, ...m.keys.map((k) => k.pose)]) for (const [n, v] of Object.entries(p)) if (v.some((x) => x)) joints.add(n)
+    onPosed?.(joints)
+  }
+
+  /** An emotion: its stance over the relaxed arms, its face, and its beat; or the card's own motion for it. */
   function emote(name: Emotion, instant = false) {
+    current = name
     const e = EMOTES[name]
-    const target = new Map(relaxed)
-    for (const [n, v] of Object.entries(carried(e.stance as Record<string, number[]>))) {
-      const q = target.get(n)?.clone() ?? new Quaternion()
-      target.set(n, q.multiply(new Quaternion().setFromEuler(new Euler(v![0], v![1], v![2], 'YXZ'))))
-    }
-    setPose(target, instant)
     faceTarget = e.face
-    beat = e.beat && !instant ? { ...BEATS[e.beat], t: 0 } : null
     faceLater = e.then ? { at: t + e.then.after, face: e.then.face } : null
+    if (preview) return
+    const custom = motions[name]
+    if (custom) return run(custom, instant)
+    keys = []
+    onPosed?.(new Set())
+    setPose(stanceOf(name), instant)
+    beat = e.beat && !instant && !still ? { ...BEATS[e.beat], t: 0 } : null
   }
 
   function blink(dt: number) {
@@ -249,6 +322,7 @@ export function createEngine(rig: Rig) {
   function update(dt: number) {
     t += dt
     const now = performance.now()
+    while (keys[0] && t >= keys[0].at) setPose(keys.shift()!.pose, false)
     for (const r of springs) {
       if (r.next && now >= r.next.at) r.target.copy(r.next.q), (r.next = null)
       for (let k = 0, n = Math.max(4, Math.ceil(dt / 0.008)); k < n; k++) stepSpring(r, dt / n)
@@ -260,7 +334,7 @@ export function createEngine(rig: Rig) {
       if (u >= 1) beat = null
       else for (const [n, v] of Object.entries(carried(beat.f(u)))) turn(bone[n], v)
     }
-    for (const name of IDLE_BONES) {
+    if (!still) for (const name of IDLE_BONES) {
       const v = idle(name, t)
       if (v) turn(bone[name], v)
     }
@@ -271,8 +345,8 @@ export function createEngine(rig: Rig) {
     look.x += (tx - look.x) * k
     look.y += (ty - look.y) * k
     // Screen right (x > 0) is her left: in three's axes a turn about up toward +x is positive. y up lifts her chin.
-    for (const [n, [pitch, yaw]] of Object.entries(LOOK)) turn(bone[n], [-look.y * pitch, look.x * yaw, 0])
-    pat += ((performance.now() < patUntil ? 1 : 0) - pat) * Math.min(1, dt * 5)
+    if (!still) for (const [n, [pitch, yaw]] of Object.entries(LOOK)) turn(bone[n], [-look.y * pitch, look.x * yaw, 0])
+    pat += ((!still && performance.now() < patUntil ? 1 : 0) - pat) * Math.min(1, dt * 5)
     if (pat > 0.001) {
       turn(bone['頭'], [PAT_DIP * pat, 0, PAT_SWAY * pat * Math.sin(t * 5)])
       turn(bone['首'], [PAT_DIP * 0.4 * pat, 0, 0])
@@ -291,6 +365,27 @@ export function createEngine(rig: Rig) {
     face,
     emote,
     update,
+    /** The card's custom motions; the emotion she shows now takes its new one. */
+    setMotions(m: Motions) {
+      motions = m
+      if (!preview) emote(current)
+    },
+    /** The studio: holds `pose` over her emotions (`instant`: there now, while a joint is dragged); undefined lets go. */
+    hold(pose: JointPose | undefined, instant = false) {
+      preview = pose
+      if (pose) run({ pose, keys: [] }, instant)
+      else emote(current)
+    },
+    /** The studio's ▶: plays `m` once, then holds its pose (still the studio's until hold(undefined)). */
+    play(m: CustomMotion) {
+      preview = m.pose
+      run(m, false)
+    },
+    /** The studio: she holds still (no breathing, sway, looking about or beats) while on. */
+    setStill(on: boolean) {
+      still = on
+      if (on) beat = null
+    },
     /** Turns her toward a point: x right, y up, each in [-1, 1]. */
     look(x: number, y: number) {
       look.tx = Math.max(-1, Math.min(1, x))

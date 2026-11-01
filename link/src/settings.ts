@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { MODEL_KINDS, VOICE_MODELS, type Settings } from './protocol.ts'
+import { cleanMotions } from './motions.ts'
 import { DEFAULT_VOICE_ID, REM_VOICE_STYLE } from './voice-style.ts'
 
 /** Everything the app writes: settings, saves registry, thumbnails, logs. */
@@ -72,6 +73,7 @@ export function defaultSettings(): Settings {
       modelsDir: defaultModelsDir(),
       model: 'live2d',
       mmdFile: '',
+      motions: {},
     },
     motion: {
       textCps: 14,
@@ -154,6 +156,7 @@ export async function loadSettings(): Promise<Settings> {
   // plugged in yet) is kept; listing and serving costumes fall back to the default on their own meanwhile.
   if (!s.appearance.modelsDir) s.appearance.modelsDir = defaultModelsDir()
   if (!MODEL_KINDS.includes(s.appearance.model)) s.appearance.model = 'live2d'
+  s.appearance.motions = cleanMotions(s.appearance.motions)
   const c = s.casual
   if (c.provider !== 'claude') c.provider = 'openai'
   if (c.learnWith !== 'casual') c.learnWith = 'claude'
