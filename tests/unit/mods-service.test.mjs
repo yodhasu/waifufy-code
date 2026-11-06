@@ -51,7 +51,7 @@ function mod(id, manifest) {
 mod('alpha', {
   backend: { entry: 'backend.mjs' },
   panel: { entry: 'ui/index.html', slot: 'chat.left' },
-  permissions: ['events.emotion', 'chat.send', 'theme'],
+  permissions: ['events.emotion', 'chat.send', 'theme', 'notify'],
   settings: [
     { key: 'name', type: 'string', label: 'Name', default: 'x' },
     { key: 'limit', type: 'number', label: 'Limit', default: 3 },
@@ -160,6 +160,29 @@ try {
     clear()
     await mods.appCall('alpha', 'theme.set', { '--accent': 'red' })
     eq(clients[0].at(-1), { t: 'mod-event', id: '_app', type: 'theme.set', payload: { '--accent': 'red' } }, 'theme broadcast')
+  })
+
+  await test('notify is an _app toast event (no session involved); empty text is an error; needs its permission', async () => {
+    clear()
+    await mods.appCall('alpha', 'notify', { text: 'hello' })
+    eq(clients[0].at(-1), { t: 'mod-event', id: '_app', type: 'notify', payload: { modId: 'alpha', text: 'hello' } }, 'toast event')
+    eq(appCalls.length, 1, 'never handed to the app callback')
+    let msg = ''
+    await mods.appCall('alpha', 'notify', { text: '  ' }).catch((e) => (msg = e.message))
+    eq(msg, 'notify needs a non-empty text', 'empty text')
+    await mods.appCall('beta', 'notify', { text: 'x' }).catch((e) => (msg = e.message))
+    eq(msg, 'permission denied: notify', 'no permission')
+  })
+
+  await test('toggling off then on quickly leaves one new backend running', async () => {
+    const pid = host.pid('alpha')
+    const before = starts('alpha')
+    await Promise.all([mods.enable('alpha', false), mods.enable('alpha', true)])
+    eq(info('alpha').status, 'running', 'status')
+    eq(starts('alpha'), before + 1, 'started exactly once more')
+    await sleep(100)
+    ok(!alive(pid), 'previous process gone')
+    ok(alive(host.pid('alpha')), 'new process alive')
   })
 
   await test('panel emit is broadcast to every connected client', async () => {

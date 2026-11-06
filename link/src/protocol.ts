@@ -784,7 +784,7 @@ export type ServerMsg =
   | { t: 'replay'; epoch: number; events: SessionEvent[] }
   | { t: 'mods'; mods: ModInfo[] }
   | { t: 'mod-reply'; id: string; seq: number; ok: boolean; value?: unknown; error?: string }
-  /** A mod's backend push (`panel.emit`) or a permitted app event, for its panel; `id: '_app'` with `theme.set` is for the app itself. */
+  /** A mod's backend push (`panel.emit`) or a permitted app event, for its panel; `id: '_app'` is for the app itself: `theme.set` (payload: CSS variables) or `notify` (payload `{ modId, text }`, a toast). */
   | { t: 'mod-event'; id: string; type: string; payload: unknown }
   | { t: 'mod-install'; ok: boolean; id?: string; reason?: string }
   | { t: 'mod-remove'; id: string; ok: boolean; reason?: string }

@@ -3,7 +3,7 @@
 // replays the session, an answer from one window closes the prompt in the other, and the desktop can unpair.
 // Run: node tests/unit/remote.test.mjs (no app, no Claude). Uses phone port 47934, so it runs beside the installed app.
 import { spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,11 +14,15 @@ const { WebSocket } = require('ws')
 const dir = mkdtempSync(join(tmpdir(), 'wc-remote-'))
 const project = join(dir, 'project')
 mkdirSync(project)
+// One mod, on by default, allowed to notify.
+const modsDir = join(dir, 'test-mods')
+mkdirSync(join(modsDir, 'toaster'), { recursive: true })
+writeFileSync(join(modsDir, 'toaster', 'mod.json'), JSON.stringify({ id: 'toaster', name: 'toaster', version: '1.0.0', apiVersion: 1, defaultEnabled: true, permissions: ['notify'] }))
 const PORT = 47990
 const TOKEN = 'desktop-token'
 const link = spawn(process.execPath, ['link/src/server.ts'], {
   cwd: new URL('../..', import.meta.url),
-  env: { ...process.env, WC_PORT: String(PORT), WC_TOKEN: TOKEN, WC_DATA_DIR: dir, WC_REMOTE_PORT: '47934', WC_MOCK: '1' },
+  env: { ...process.env, WC_PORT: String(PORT), WC_TOKEN: TOKEN, WC_DATA_DIR: dir, WC_REMOTE_PORT: '47934', WC_MOCK: '1', WC_MODS_DIR: modsDir },
   stdio: ['pipe', 'pipe', 'pipe'],
 })
 let linkLog = ''
@@ -172,6 +176,20 @@ try {
     phone.clear()
     phone.send({ t: 'mods' })
     ok((await phone.next((m) => m.t === 'app_error')).message.includes('desktop'), 'refused on the phone')
+  })
+
+  await test("a mod's notify reaches the desktop with no session running, and never a phone", async () => {
+    desk.clear()
+    phone.clear()
+    desk.send({ t: 'mod-app', id: 'toaster', seq: 1, capability: 'notify', params: { text: 'hello' } })
+    const ev = await desk.next((m) => m.t === 'mod-event')
+    ok(JSON.stringify(ev) === JSON.stringify({ t: 'mod-event', id: '_app', type: 'notify', payload: { modId: 'toaster', text: 'hello' } }), JSON.stringify(ev))
+    ok((await desk.next((m) => m.t === 'mod-reply')).ok === true, 'replied ok')
+    desk.send({ t: 'mod-app', id: 'toaster', seq: 2, capability: 'notify', params: {} })
+    const bad = await desk.next((m) => m.t === 'mod-reply' && m.seq === 2)
+    ok(!bad.ok && bad.error.includes('non-empty text'), JSON.stringify(bad))
+    await sleep(300)
+    ok(!phone.got.some((m) => m.t === 'mod-event' || m.t === 'notify'), `phone got: ${phone.got.map((m) => m.t).join(', ')}`)
   })
 
   await test('the computer says whether it takes a token (/paired); an app without device tokens gets none', async () => {

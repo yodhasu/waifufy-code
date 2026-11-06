@@ -427,14 +427,10 @@ const mods = new Mods({
   app: modApp,
 })
 
-/** `chat.send` and `notify` for a mod, already permission-checked by Mods. */
-function modApp(id: string, capability: 'chat.send' | 'notify', params: unknown) {
+/** A mod's `chat.send`, already permission-checked by Mods (which handles notify and theme.set itself). */
+function modApp(_id: string, _capability: 'chat.send', params: unknown) {
   const text = (params as { text?: unknown } | null)?.text
   need(isStr(text) && text.trim(), 'text')
-  if (capability === 'notify') {
-    // The app's own toast. Session events are epoch-tagged, so it shows in the running session's chat.
-    return broadcast({ t: 'notify', key: `mod:${id}`, text, priority: 'medium', epoch: current?.epoch ?? 0 })
-  }
   // The same path as a typed message.
   const session = live()
   said(undefined, { t: 'said', text })

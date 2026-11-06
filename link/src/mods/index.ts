@@ -24,8 +24,8 @@ export type ModsOptions = {
   /** The stored `plugins` flags. */
   flags: () => Promise<Record<string, boolean>>
   setFlag: (id: string, on: boolean) => Promise<void>
-  /** Runs `chat.send` and `notify` for a mod (already permission-checked). */
-  app: (id: string, capability: 'chat.send' | 'notify', params: unknown) => unknown
+  /** Runs `chat.send` for a mod (already permission-checked). */
+  app: (id: string, capability: 'chat.send', params: unknown) => unknown
   discover?: () => DiscoveredMod[]
   host?: ModHost
 }
@@ -86,14 +86,17 @@ export class Mods extends EventEmitter {
 
   async enable(id: string, on: boolean): Promise<void> {
     if (!this.find(id)) throw new Error(`no mod ${id}`)
-    await this.o.setFlag(id, on)
-    this.flags[id] = on
-    await this.apply(id)
+    // The flag is written inside the queued step, so a quick off-then-on stops and restarts in order.
+    await this.apply(id, async () => {
+      await this.o.setFlag(id, on)
+      this.flags[id] = on
+    })
     this.changed()
   }
 
-  private apply(id: string): Promise<void> {
+  private apply(id: string, first?: () => Promise<void>): Promise<void> {
     const run = (this.queue.get(id) ?? Promise.resolve()).then(async () => {
+      await first?.()
       const m = this.find(id)!
       if (!this.isOn(m) || !m.manifest?.backend) return this.host.stop(id)
       if (this.host.status(id) === 'running') return
@@ -201,7 +204,13 @@ export class Mods extends EventEmitter {
     if (!perm) throw new Error(`unknown capability: ${capability}`)
     if (!m.manifest!.permissions.includes(perm)) throw new Error(`permission denied: ${capability}`)
     if (capability === 'theme.set') return void this.o.broadcast({ t: 'mod-event', id: '_app', type: 'theme.set', payload: params })
-    return this.o.app(id, capability as 'chat.send' | 'notify', params)
+    if (capability === 'notify') {
+      // An app toast, not a session event: it must show with no session running.
+      const text = (params as { text?: unknown } | null)?.text
+      if (typeof text !== 'string' || !text.trim()) throw new Error('notify needs a non-empty text')
+      return void this.o.broadcast({ t: 'mod-event', id: '_app', type: 'notify', payload: { modId: id, text } })
+    }
+    return this.o.app(id, 'chat.send', params)
   }
 
   async panelCall(id: string, method: string, params?: unknown): Promise<unknown> {
