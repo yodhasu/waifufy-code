@@ -10,6 +10,8 @@ import { listCostumes, serveMmd, serveModel, serveThumb } from './assets.ts'
 import { asMood } from './affection.ts'
 import { putAttachment } from './attachments.ts'
 import { createAuth } from './auth.ts'
+import { discoverMods } from './mods/discover.ts'
+import { serveMod } from './mods/http.ts'
 import { findBlender, openInBlender } from './blender.ts'
 import { hasVoiceKey, setVoiceKey, synthesize } from './tts.ts'
 import { searchFiles } from './files.ts'
@@ -149,6 +151,8 @@ async function route(req: IncomingMessage, res: ServerResponse, phone = false) {
     return void res.end()
   }
   if (req.method !== 'GET' && req.method !== 'HEAD') return text(res, 405, 'method not allowed')
+  // Panel files take no link token (an iframe can't send it); serveMod checks the per-mod pt token instead.
+  if (serveMod(req, res, discoverMods)) return
   if (pathname === '/health') return text(res, 200, JSON.stringify({ ok: true, version: VERSION, mock: MOCK }), 'application/json')
   // A phone asking whether the computer still takes its token: only a 401 makes it pair again, never a slow network.
   if (phone && pathname === '/paired') return text(res, phoneAuth(tokenOf(req)) ? 200 : 401, '')
