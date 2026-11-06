@@ -1,0 +1,9 @@
+{
+  "id": "boom",
+  "name": "Boom panel",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "E2E fixture: a chat.right panel whose backend dies after every start, so it ends crashed.",
+  "panel": { "entry": "ui/index.html", "slot": "chat.right" },
+  "backend": { "entry": "backend.mjs" }
+}

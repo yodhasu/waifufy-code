@@ -1,0 +1,9 @@
+{
+  "id": "probe",
+  "name": "Probe panel",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "E2E fixture: a chat.left panel that reports what it sees through the bridge.",
+  "panel": { "entry": "ui/index.html", "slot": "chat.left" },
+  "backend": { "entry": "backend.mjs" }
+}

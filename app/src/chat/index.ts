@@ -24,6 +24,7 @@ import { createInput, fromInput, type InputApi, type InputHost } from './input'
 import { phoneNotify } from '../phone-notify'
 import { pluginEnabled, UI_PLUGINS } from '../plugins'
 import { ticketsPlugin } from './tickets'
+import { createModSlots, listenAppEvents } from '../mods/slot'
 import {
   createPanels, doing, isShell, MODE_LABELS, oneLine, relPath, toolIcon, toolLabel, type Panels, type ToolRecord,
 } from './panels'
@@ -1600,6 +1601,21 @@ export function chatScreen(): Screen {
     plugins.clear()
   }
 
+  // ---------------------------------------------------------------- mod panels (app/src/mods)
+
+  /** Where each mod slot mounts: chat.left with the plugins (above the footer), chat.right under Quest and Party. */
+  function modHost(slot: string) {
+    if (slot === 'chat.left') {
+      const parent = root.querySelector<HTMLElement>('.chat-left')
+      return parent ? { parent, before: parent.querySelector('.left-foot') } : undefined
+    }
+    if (slot === 'chat.right') {
+      const parent = root.querySelector<HTMLElement>('.chat-right')
+      return parent ? { parent, before: parent.querySelector('.acts-title') } : undefined
+    }
+  }
+  let modSlots: ReturnType<typeof createModSlots>
+
   // ---------------------------------------------------------------- the screen
 
   return {
@@ -2040,6 +2056,11 @@ export function chatScreen(): Screen {
         if (ctx.link.remote) return attach()
         onEnded({ t: 'ended', reason: 'crashed' })
       })
+      // Mod panels: the link sends the list on request and on every change. Phones have no mod panels (desktop only).
+      modSlots = createModSlots(ctx.link, modHost)
+      listenAppEvents(ctx.link, (text) => ctx.toast(text, 5000))
+      ctx.link.on((m) => void (m.t === 'mods' && visible && modSlots.sync(m.mods)))
+      ctx.link.onStatus((s) => void (s === 'up' && visible && !ctx.link.remote && ctx.link.send({ t: 'mods' })))
       ctx.store.subscribe((s) => {
         panels.identity(s)
         updateRibbon()
@@ -2070,6 +2091,7 @@ export function chatScreen(): Screen {
       ctx.character.setPlacement('chat')
       // Enabled plugins mount here, so their data is fetched when the chat is actually looked at.
       syncPlugins()
+      if (!ctx.link.remote) ctx.link.send({ t: 'mods' })
       const p = params as ChatParams | undefined
       if (p && 'attach' in p) return attach()
       if (p?.cwd) return start({ cwd: p.cwd, resume: p.resume, title: p.title }, true)
@@ -2084,6 +2106,7 @@ export function chatScreen(): Screen {
       stopSkip()
       // Leaving the chat screen takes the plugin panels off with it; showing it again mounts them afresh.
       unmountPlugins()
+      modSlots.clear()
       // Pages that keep streaming while Settings is open land silently, so her face and mouth stay still there.
       dialogue.setMuted(true)
     },

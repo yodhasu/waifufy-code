@@ -1,0 +1,1 @@
+waifufy.ready()
