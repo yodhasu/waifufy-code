@@ -15,7 +15,7 @@
 - `apiVersion` supported: `1`. Mod `id`: `^[a-z0-9-]+$`.
 - Mods folder: `<DATA_DIR>/mods/<id>/`; mod data: `<DATA_DIR>/mod-data/<id>/`; adapter output: `<DATA_DIR>/adapters/claude/waifufy-mods/`. `DATA_DIR` is `link/src/settings.ts:10`.
 - Discovery order, first wins on duplicate id: `WC_MODS_DIR`, `<DATA_DIR>/mods`, repo `plugins/*/`.
-- Backend: sidecar Node (`process.execPath`), flags `--permission`, `--allow-fs-read=<mod dir>,<declared>`, `--allow-fs-write=<mod data>,<declared>`; env `WC_MOD_ID`, `WC_MOD_DATA`, built from `childEnv()` (no link credentials).
+- Backend: sidecar Node (`process.execPath`), flags `--permission`, `--allow-fs-read=<mod dir>,<mod data>,<declared>`, `--allow-fs-write=<mod data>,<declared>`; env `WC_MOD_ID`, `WC_MOD_DATA`, built from `childEnv()` (no link credentials).
 - Timeouts: tool call 10 s, panel call 5 s, panel `ready` 10 s. Restarts: at most 3 per 60 s, then status `crashed`.
 - Statuses: `running`, `off`, `crashed`, `invalid`, `incompatible`.
 - Panel iframe: `sandbox="allow-scripts"` (never `allow-same-origin`). Mod page CSP: `default-src 'self'; connect-src 'none'`. App Tauri CSP adds `frame-src http://127.0.0.1:*`.

@@ -78,7 +78,7 @@ Slots in v1: `chat.left`, `chat.right`, `settings` (the per-mod settings page). 
 
 - For each enabled mod with a backend, the link starts `<sidecar node.exe> backend.mjs` with cwd = mod folder.
 - Environment: `WC_MOD_ID`, `WC_MOD_DATA=<data dir>/mod-data/<id>/`. No app tokens or secrets.
-- Node permission model: `--permission`, `--allow-fs-read=<mod folder>,<declared fs.read paths>`,
+- Node permission model: `--permission`, `--allow-fs-read=<mod folder>,<mod data>,<declared fs.read paths>`,
   `--allow-fs-write=<mod data>,<declared fs.write paths>`; no `--allow-child-process` / `--allow-worker` unless
   declared. `%APPDATA%`-style variables in declared paths are expanded by the link.
 - Network is not restricted in v1 (Node cannot enforce it); `net` permissions are recorded only.
@@ -98,8 +98,7 @@ Capabilities in v1 (each needs its permission): `chat.send` (`chat.send`), `noti
 Failures: tool calls time out after 10 s, panel calls after 5 s. A crashed backend restarts at most 3 times per
 minute, then the mod is marked `crashed`; its panel and the Mods tab show it. The rest of the app keeps running.
 
-To verify in the build: `node:sqlite` under `--permission` with the Tickets database path. If it does not work,
-Tickets declares the wider path it needs and the finding is written into this spec.
+Verified (Node 24.15): node:sqlite works under --permission with the database in the mod data folder; no extra flags needed. Flags are passed once per path (repeated), not as a comma list, since paths may contain commas.
 
 ## 3. Panels (app: `ModSlot`)
 

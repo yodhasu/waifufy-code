@@ -1,5 +1,5 @@
 // Test fixture: answers every request; `read` tries to read a file, `emit`/`app` push to the host.
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 let initInfo = null
 const send = (o) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...o }) + '\n')
@@ -11,7 +11,10 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   if (m.method === 'tool.call') return send({ id: m.id, result: { tool: m.params.name, input: m.params.input } })
   if (m.method !== 'panel.call') return send({ id: m.id, error: { code: -32601, message: 'no method' } })
   const { method, params } = m.params
-  if (method === 'info') send({ id: m.id, result: initInfo })
+  if (method === 'rw') {
+    const f = process.env.WC_MOD_DATA + '/state.json'
+    try { writeFileSync(f, JSON.stringify(params)); send({ id: m.id, result: JSON.parse(readFileSync(f, 'utf8')) }) } catch (e) { send({ id: m.id, result: { code: e.code } }) }
+  } else if (method === 'info') send({ id: m.id, result: initInfo })
   else if (method === 'read') {
     try { send({ id: m.id, result: { ok: readFileSync(params.path, 'utf8') } }) } catch (e) { send({ id: m.id, result: { code: e.code } }) }
   } else if (method === 'emit') {

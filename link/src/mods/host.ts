@@ -1,5 +1,5 @@
 // Runs each mod's backend as a separate Node process under Node's permission model and talks JSON-RPC to it
-// over stdio. The child gets read access to its own folder, write access to its data folder and whatever
+// over stdio. The child gets read access to its own folder and data folder, write access to its data folder and whatever
 // fs.read:/fs.write: paths its manifest declares; it gets no child-process or worker rights unless declared.
 // A crashed backend is restarted at most 3 times per sliding minute, then marked `crashed`.
 
@@ -39,7 +39,7 @@ export function nodeArgs(mod: DiscoveredMod): string[] {
   const declared = (kind: 'fs.read:' | 'fs.write:') =>
     perms.filter((p) => p.startsWith(kind)).map((p) => expand(p.slice(kind.length).trim())).filter(Boolean)
   const args = ['--permission']
-  for (const p of [mod.dir, ...declared('fs.read:')]) args.push(`--allow-fs-read=${p}`)
+  for (const p of [mod.dir, modDataDir(mod.id), ...declared('fs.read:')]) args.push(`--allow-fs-read=${p}`)
   for (const p of [modDataDir(mod.id), ...declared('fs.write:')]) args.push(`--allow-fs-write=${p}`)
   if (perms.includes('process.spawn')) args.push('--allow-child-process')
   if (perms.includes('process.worker')) args.push('--allow-worker')
@@ -144,7 +144,7 @@ export class ModHost extends EventEmitter {
       if (!e.stopping && e.child === child) this.crashed(e)
     }
     e.exited = new Promise<void>((resolve) => {
-      child.once('exit', () => (onGone(), resolve()))
+      child.once('close', () => (onGone(), resolve()))
       child.once('error', () => (onGone(), resolve())) // spawn failure: 'exit' may never come
     })
     await peer.request('init', { apiVersion: 1, settings: e.settings, grantedPermissions: mod.manifest!.permissions }, this.o.initTimeoutMs)
@@ -153,6 +153,7 @@ export class ModHost extends EventEmitter {
 
   private crashed(e: Entry) {
     const now = this.o.now()
+    this.setStatus(e.mod.id, e, 'off') // not running during the gap before the restart
     e.crashes = [...e.crashes.filter((t) => now - t < this.o.restartWindowMs), now]
     if (e.crashes.length > this.o.maxRestarts) {
       this.setStatus(e.mod.id, e, 'crashed')
@@ -160,7 +161,8 @@ export class ModHost extends EventEmitter {
     }
     setTimeout(() => {
       if (e.stopping) return
-      this.launch(e).catch(() => {}) // a failed init ends in the child's exit, which counts as the next crash
+      // A failed init kills the child; its exit counts as the next crash.
+      this.launch(e).catch(() => e.child?.kill())
     }, this.o.restartDelayMs)
   }
 

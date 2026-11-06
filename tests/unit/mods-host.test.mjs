@@ -52,6 +52,7 @@ await test('nodeArgs: permission flags, declared paths expanded, spawn rights on
   const a = nodeArgs(withPerms(mods.echo, ['fs.read:%APPDATA%/xx', 'fs.write:~/yy', 'notify']))
   if (!a.includes('--permission')) throw new Error('no --permission')
   if (!a.includes(`--allow-fs-read=${mods.echo.dir}`)) throw new Error('mod dir not readable')
+  if (!a.includes(`--allow-fs-read=${modDataDir('echo')}`)) throw new Error('data dir not readable')
   if (!a.includes(`--allow-fs-write=${modDataDir('echo')}`)) throw new Error('data dir not writable')
   if (!a.some((x) => x.startsWith('--allow-fs-read=') && x.endsWith('xx') && !x.includes('%'))) throw new Error('APPDATA not expanded')
   if (!a.some((x) => x.startsWith('--allow-fs-write=') && x.endsWith('yy') && !x.includes('~'))) throw new Error('~ not expanded')
@@ -124,6 +125,7 @@ await test('crash: crashes older than the window do not count', async () => {
     const n = starts('crash')
     for (let j = 0; j < 100 && starts('crash') === n; j++) await sleep(30)
   }
+  for (let j = 0; j < 100 && h.status('crash') !== 'running'; j++) await sleep(30) // 'off' while a restart is in flight
   eq(h.status('crash'), 'running', 'status')
   await h.stopAll()
 })
@@ -178,6 +180,29 @@ await test('fs read outside allowed paths fails inside the child (ERR_ACCESS_DEN
   eq(await h.panelCall('echo', 'read', { path: file }), { ok: 'secret' }, 'declared')
   await h.stopAll()
   rmSync(outside, { recursive: true, force: true })
+})
+
+await test('a mod can write its data folder and read it back', async () => {
+  const h = new ModHost(fast)
+  await h.start(mods.echo, {})
+  eq(await h.panelCall('echo', 'rw', { a: [1] }), { a: [1] }, 'round trip')
+  await h.stopAll()
+})
+
+await test('restart whose init hangs: not running, calls reject, child killed, ends crashed', async () => {
+  const h = new ModHost({ ...fast, initTimeoutMs: 150 })
+  await h.start(mods.flaky, {})
+  let rejected = false
+  for (let i = 0; i < 100 && !rejected; i++) {
+    await sleep(10)
+    if (h.status('flaky') === 'running') continue
+    await h.panelCall('flaky', 'x', {}).catch(() => (rejected = true))
+  }
+  if (!rejected) throw new Error('panelCall never rejected')
+  for (let i = 0; i < 100 && h.status('flaky') !== 'crashed'; i++) await sleep(50)
+  eq(h.status('flaky'), 'crashed', 'status')
+  eq(starts('flaky'), 4, 'starts')
+  await h.stopAll()
 })
 
 rmSync(dataDir, { recursive: true, force: true })
