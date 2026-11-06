@@ -164,6 +164,16 @@ try {
     ok(att.epoch === undefined, 'no epoch')
   })
 
+  await test('mod panels are served by the desktop listener only; phones may not send mod messages', async () => {
+    ok((await fetch(`http://127.0.0.1:${PORT}/mods/_sdk/waifufy.js`)).status === 200, 'the desktop serves the bridge')
+    ok((await fetch('http://127.0.0.1:47934/mods/_sdk/waifufy.js')).status === 404, 'the phone listener does not')
+    desk.send({ t: 'mods' })
+    ok(Array.isArray((await desk.next((m) => m.t === 'mods')).mods), 'the desktop gets the list')
+    phone.clear()
+    phone.send({ t: 'mods' })
+    ok((await phone.next((m) => m.t === 'app_error')).message.includes('desktop'), 'refused on the phone')
+  })
+
   await test('the computer says whether it takes a token (/paired); an app without device tokens gets none', async () => {
     const paired = (tok) => fetch(`http://127.0.0.1:47934/paired?token=${encodeURIComponent(tok)}`).then((r) => r.status)
     ok((await paired(device)) === 200, 'the device token is taken')

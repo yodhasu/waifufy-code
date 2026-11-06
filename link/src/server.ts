@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { join, resolve } from 'node:path'
 import { format } from 'node:util'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -10,7 +11,7 @@ import { listCostumes, serveMmd, serveModel, serveThumb } from './assets.ts'
 import { asMood } from './affection.ts'
 import { putAttachment } from './attachments.ts'
 import { createAuth } from './auth.ts'
-import { discoverMods } from './mods/discover.ts'
+import { Mods } from './mods/index.ts'
 import { serveMod } from './mods/http.ts'
 import { findBlender, openInBlender } from './blender.ts'
 import { hasVoiceKey, setVoiceKey, synthesize } from './tts.ts'
@@ -152,7 +153,8 @@ async function route(req: IncomingMessage, res: ServerResponse, phone = false) {
   }
   if (req.method !== 'GET' && req.method !== 'HEAD') return text(res, 405, 'method not allowed')
   // Panel files take no link token (an iframe can't send it); serveMod checks the per-mod pt token instead.
-  if (serveMod(req, res, discoverMods)) return
+  // Desktop only: panels run in the desktop app, and the phone listener faces the network.
+  if (!phone && serveMod(req, res, () => mods.served())) return
   if (pathname === '/health') return text(res, 200, JSON.stringify({ ok: true, version: VERSION, mock: MOCK }), 'application/json')
   // A phone asking whether the computer still takes its token: only a 401 makes it pair again, never a slow network.
   if (phone && pathname === '/paired') return text(res, phoneAuth(tokenOf(req)) ? 200 : 401, '')
@@ -340,12 +342,16 @@ function answered(ws: WebSocket, id: string) {
   broadcast({ t: 'ask_cancel', id, epoch: live.epoch }, ws)
 }
 
-/** What a window sent her, to the other windows (and the journal), so a phone and the desktop read the same chat. */
-function said(ws: WebSocket, e: Extract<SessionEvent, { t: 'said' }>) {
+/**
+ * What a window sent her, to the other windows (and the journal), so a phone and the desktop read the same chat.
+ * Without `ws` (a mod's chat.send) every window gets it.
+ */
+function said(ws: WebSocket | undefined, e: Extract<SessionEvent, { t: 'said' }>) {
   const live = current
   if (!live?.session) return
   record(live, e)
   broadcast({ ...e, epoch: live.epoch }, ws)
+  if (!e.shell) mods.appEvent('message', { role: 'user', text: e.text })
 }
 
 /** Events a joining window doesn't need again: the moment's face and voice, the spinner, transient notes. */
@@ -410,6 +416,43 @@ function updateSettings(change: (s: Settings) => Settings | void | Promise<Setti
   return run
 }
 
+// ---------------------------------------------------------------- mods
+
+/** Mod messages and lists go to the desktop windows only: panels live there, and the list carries panel tokens. */
+const mods = new Mods({
+  broadcast: broadcastLocal,
+  port: () => (http.address() as AddressInfo | null)?.port ?? PORT,
+  flags: async () => (await loadSettings()).plugins ?? {},
+  setFlag: async (id, on) => broadcast({ t: 'settings', settings: await updateSettings((s) => void (s.plugins = { ...s.plugins, [id]: on })) }),
+  app: modApp,
+})
+
+/** `chat.send` and `notify` for a mod, already permission-checked by Mods. */
+function modApp(id: string, capability: 'chat.send' | 'notify', params: unknown) {
+  const text = (params as { text?: unknown } | null)?.text
+  need(isStr(text) && text.trim(), 'text')
+  if (capability === 'notify') {
+    // The app's own toast. Session events are epoch-tagged, so it shows in the running session's chat.
+    return broadcast({ t: 'notify', key: `mod:${id}`, text, priority: 'medium', epoch: current?.epoch ?? 0 })
+  }
+  // The same path as a typed message.
+  const session = live()
+  said(undefined, { t: 'said', text })
+  return session.say(text)
+}
+
+/** Session events the mods subscribe to (events.turn, events.emotion, events.affection, events.message). */
+function feedMods(live: Live, e: SessionEvent) {
+  if (e.t === 'turn_end') mods.appEvent('turn.end', { ok: e.ok, interrupted: e.interrupted, seconds: e.seconds })
+  else if (e.t === 'face') mods.appEvent('emotion', { emotion: e.emotion })
+  else if (e.t === 'affection') mods.appEvent('affection', { delta: e.delta })
+  else if (e.t === 'text') live.reply += e.delta
+  else if (e.t === 'text_end') {
+    if (live.reply.trim()) mods.appEvent('message', { role: 'assistant', text: live.reply })
+    live.reply = ''
+  }
+}
+
 // ---------------------------------------------------------------- waifu cards
 
 /** The active card exists on disk before anything reads settings: the first launch with cards makes it from them. */
@@ -457,6 +500,8 @@ type Live = {
   journalBytes: number
   /** The journal lost its oldest events to the cap: a joiner gets the fresh transcript plus the current turn. */
   trimmed: boolean
+  /** Her reply being written, for the mods' `message` event at its text_end. */
+  reply: string
 }
 
 /** Session events that each replace the one before; replayed to a window that attaches. */
@@ -486,8 +531,9 @@ function makeLive(epoch: number, cwd: string, card: string): Live {
     if (e.t === 'ask_cancel') live.asks.delete(e.id)
     record(live, e)
     broadcast({ ...e, epoch } as ServerMsg)
+    feedMods(live, e)
   }
-  const live: Live = { epoch, cwd, card, closing: false, ended, emit, latest: new Map(), asks: new Map(), journal: [], journalBytes: 0, trimmed: false }
+  const live: Live = { epoch, cwd, card, closing: false, ended, emit, latest: new Map(), asks: new Map(), journal: [], journalBytes: 0, trimmed: false, reply: '' }
   return live
 }
 
@@ -748,11 +794,15 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       // from a window that hasn't heard of a switch yet carry the old card's fields: those go to the old card, and
       // the new one keeps its own.
       const from = m.settings.card
+      let flagsChanged = false
       const saved = await updateSettings((s) => {
         const next = { ...m.settings, card: s.card }
         if (from !== s.card) keepCard(next, s)
+        flagsChanged = JSON.stringify(s.plugins ?? {}) !== JSON.stringify(next.plugins ?? {})
         return next
       })
+      // A mod turned on or off with the settings (its plugins flag): its backend follows.
+      if (flagsChanged) void mods.refresh().catch((e) => console.warn('[mods] refresh failed:', e))
       if (from !== saved.card) await syncCard(m.settings)
       await syncCard(saved)
       // The sender already has these settings; echoing them back could undo an edit typed meanwhile.
@@ -988,6 +1038,15 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       return sendTo(ws, { t: 'tickets', board: await ticketBoard(m.project) })
     case 'attach':
       return attach(ws)
+    case 'mods':
+    case 'mod-call':
+    case 'mod-app':
+    case 'mod-enable':
+    case 'mod-settings':
+    case 'mod-install':
+    case 'mod-remove':
+      need(!remoteSockets.has(ws), 'mods are managed on the desktop')
+      return modMessage(ws, m)
     case 'remote_set':
     case 'remote_reset':
     case 'remote_forget':
@@ -1015,6 +1074,39 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       return sendTo(ws, { t: 'remote_status', status: phoneStatus() })
     default:
       throw new BadRequest(`Unknown message type: ${String((m as { t?: unknown }).t)}`)
+  }
+}
+
+type ModMsg = Extract<ClientMsg, { t: 'mods' | 'mod-call' | 'mod-app' | 'mod-enable' | 'mod-settings' | 'mod-install' | 'mod-remove' }>
+
+async function modMessage(ws: WebSocket, m: ModMsg) {
+  switch (m.t) {
+    case 'mods':
+      return sendTo(ws, { t: 'mods', mods: mods.list() })
+    case 'mod-call':
+    case 'mod-app': {
+      need(isStr(m.id) && Number.isFinite(m.seq), 'id, seq')
+      need(m.t === 'mod-call' ? isStr(m.method) : isStr(m.capability), m.t === 'mod-call' ? 'method' : 'capability')
+      const { id, seq } = m
+      // Answered on its own time: a slow backend must not hold up the messages behind it.
+      void (m.t === 'mod-call' ? mods.panelCall(id, m.method, m.params) : mods.appCall(id, m.capability, m.params)).then(
+        (value) => sendTo(ws, { t: 'mod-reply', id, seq, ok: true, value }),
+        (e) => sendTo(ws, { t: 'mod-reply', id, seq, ok: false, error: errorText(e) }),
+      )
+      return
+    }
+    case 'mod-enable':
+      need(isStr(m.id) && typeof m.enabled === 'boolean', 'id, enabled')
+      return mods.enable(m.id, m.enabled)
+    case 'mod-settings':
+      need(isStr(m.id) && m.values && typeof m.values === 'object' && !Array.isArray(m.values), 'id, values')
+      return mods.setSettings(m.id, m.values)
+    // shortcut: install and remove arrive with Task 8 (WC-20); until then they say so.
+    case 'mod-install':
+      return sendTo(ws, { t: 'mod-install', ok: false, reason: 'not implemented' })
+    case 'mod-remove':
+      need(isStr(m.id), 'id')
+      return sendTo(ws, { t: 'mod-remove', id: m.id, ok: false, reason: 'not implemented' })
   }
 }
 
@@ -1064,6 +1156,7 @@ async function shutdown() {
   ++startGen
   stopPhones()
   await closeCurrent()
+  await mods.stopAll()
   process.exit(0)
 }
 // stdin closes when the app exits (or crashes), so the sidecar never outlives it.
@@ -1077,4 +1170,5 @@ http.listen(PORT, '127.0.0.1', () => {
   console.log(`[link] v${VERSION} listening on 127.0.0.1:${PORT}${MOCK ? ' (mock sessions)' : ''}, data in ${DATA_DIR}`)
   // Phone access left on comes back with the app.
   void syncPhones()
+  void mods.init().catch((e) => console.error('[mods] could not start:', e))
 })

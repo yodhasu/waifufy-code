@@ -4,17 +4,12 @@
 
 import { existsSync, statSync } from 'node:fs'
 import { resolve, sep } from 'node:path'
+import type { SettingField } from '../protocol.ts'
 
 /** Manifest API versions this app can run. Anything else is reported as `incompatible`. */
 export const SUPPORTED_API_VERSIONS = [1]
 
-export type SettingField = {
-  key: string
-  type: 'string' | 'number' | 'boolean' | 'select' | 'secret'
-  label: string
-  default?: unknown
-  options?: string[]
-}
+export type { SettingField }
 export type ToolDef = { name: string; description: string; input: Record<string, unknown> }
 export type ModManifest = {
   id: string

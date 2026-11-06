@@ -233,6 +233,7 @@ export type Settings = {
   /**
    * UI plugins the user turned on, by id (app/src/plugins). Missing or false means off, so a plugin is
    * opt-in and an id the app no longer carries is kept rather than dropped. The ticket board's id is `tickets`.
+   * Mods (link/src/mods) use the same flags by mod id; a missing flag means the manifest's `defaultEnabled`.
    */
   plugins?: Record<string, boolean>
 }
@@ -476,6 +477,38 @@ export interface BoardSnapshot {
   columns: TicketColumn[]
 }
 
+// ---------------------------------------------------------------- mods (link/src/mods)
+
+/**
+ * One mod, as the Mods tab and the panel slots draw it. `panel.url` and `settingsPageUrl` are absolute
+ * (http://127.0.0.1:<port>/mods/<id>/<pt>/ui/…) and carry the mod's panel token; only an enabled mod has them.
+ * `values`: the declared settings' current values, without `secret` fields (the app keeps those).
+ */
+/** A declared setting of a mod (its mod.json `settings`), drawn as a native control. */
+export type SettingField = {
+  key: string
+  type: 'string' | 'number' | 'boolean' | 'select' | 'secret'
+  label: string
+  default?: unknown
+  options?: string[]
+}
+
+export type ModInfo = {
+  id: string
+  name: string
+  version: string
+  description: string
+  status: 'running' | 'off' | 'crashed' | 'invalid' | 'incompatible'
+  reason?: string
+  enabled: boolean
+  panel?: { slot: string; url: string }
+  settingsPageUrl?: string
+  settings: SettingField[]
+  values: Record<string, unknown>
+  permissions: string[]
+  source: 'env' | 'installed' | 'repo'
+}
+
 // ---------------------------------------------------------------- client → link
 
 export type ClientMsg =
@@ -592,6 +625,20 @@ export type ClientMsg =
   | { t: 'attach' }
   /** Asks for the ticket board (the waifufy-tickets plugin). Answered by a `tickets` with the snapshot. */
   | { t: 'tickets'; project?: string }
+  /** The mod list; answered by `mods` (also sent to every desktop window whenever it changes). Desktop only, like every mod message. */
+  | { t: 'mods' }
+  /** A panel's `waifufy.call`: to the mod's backend. Answered by `mod-reply` with the same id and seq. */
+  | { t: 'mod-call'; id: string; seq: number; method: string; params?: unknown }
+  /** A panel's `waifufy.app`: a permission-checked app capability (chat.send, notify, theme.set). Answered by `mod-reply`. */
+  | { t: 'mod-app'; id: string; seq: number; capability: string; params?: unknown }
+  /** Turns a mod on or off (the `plugins.<id>` settings flag); answered by `mods` and `settings`. */
+  | { t: 'mod-enable'; id: string; enabled: boolean }
+  /** New values for a mod's declared settings, secrets included (forwarded to its backend, never written). */
+  | { t: 'mod-settings'; id: string; values: Record<string, unknown> }
+  /** Installs the mod folder at `path` into the data folder. Answered by `mod-install`. */
+  | { t: 'mod-install'; path: string; replace?: boolean }
+  /** Removes an installed mod, its data folder too with `deleteData`. Answered by `mod-remove`. */
+  | { t: 'mod-remove'; id: string; deleteData?: boolean }
 
 /**
  * The running session's SDK controls the app may call directly: `Query` methods, by name. They back the in-app
@@ -735,6 +782,12 @@ export type ServerMsg =
    * that joins or comes back from the background shows what the others show. Played without the typewriter.
    */
   | { t: 'replay'; epoch: number; events: SessionEvent[] }
+  | { t: 'mods'; mods: ModInfo[] }
+  | { t: 'mod-reply'; id: string; seq: number; ok: boolean; value?: unknown; error?: string }
+  /** A mod's backend push (`panel.emit`) or a permitted app event, for its panel; `id: '_app'` with `theme.set` is for the app itself. */
+  | { t: 'mod-event'; id: string; type: string; payload: unknown }
+  | { t: 'mod-install'; ok: boolean; id?: string; reason?: string }
+  | { t: 'mod-remove'; id: string; ok: boolean; reason?: string }
 
 /** One input of an MCP elicitation form, from a property of its requested JSON schema. */
 export type ElicitField = {
