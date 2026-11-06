@@ -15,6 +15,7 @@ import { SLACK_MANIFEST, SLACK_REDIRECT_URL } from '../../../link/src/slack-app.
 import type { Ctx, Screen } from '../contracts'
 import { clearPairing, savedPairing } from '../pair'
 import { lowSpec, setLowSpec } from '../lowspec'
+import { pluginEnabled, setPluginFlag, UI_PLUGINS } from '../plugins'
 import { esc } from '../ui'
 import { CUSTOM_PERSONALITY, PERSONALITIES, personalityById } from './personas'
 import './settings.css'
@@ -33,6 +34,7 @@ const TABS = [
   { id: 'voice', label: 'Voice', icon: '♫', blurb: 'Her spoken voice through Fish Audio, in sync with the text and her lips.' },
   { id: 'slack', label: 'Slack', icon: '✉', blurb: 'Your unread Slack messages in the chat, and Slack tools for her.' },
   { id: 'phone', label: 'Phone', icon: '☏', blurb: 'Chat with her from your Android phone while Claude Code keeps working here.' },
+  { id: 'plugins', label: 'Plugins', icon: '⚡', blurb: 'Optional extras for the chat screen. Each one is a folder the agent installs; off until you ask for it.' },
   { id: 'about', label: 'About', icon: '❦', blurb: 'Version, your data, and credits.' },
 ] as const
 type TabId = (typeof TABS)[number]['id']
@@ -229,6 +231,7 @@ const TAB_LINES: Record<TabId, [string, Emotion]> = {
   voice: ['My voice… is still a secret. Soon, {you}!', 'shy'],
   slack: ['I can keep an eye on your messages, {you}. I\'ll only send what you approve.', 'nod'],
   phone: ['Take me with you, {you}? I\'ll keep working here while you\'re away.', 'shy'],
+  plugins: ['Extras for our chat, {you}? Only the ones you ask for.', 'think'],
   about: ['Thank you for choosing me, {you}.', 'happy'],
 }
 const SPEED_SAMPLE = 'Ah, {you}! Is this pace comfortable? I can speak faster, slower… or all at once, if you like.'
@@ -905,9 +908,29 @@ function aboutPane() {
   </div>`
 }
 
+/**
+ * Settings → Plugins: one switch per UI plugin (app/src/plugins), saved as `plugins.<id>` through the store's
+ * normal path. The chat screen mounts what is on when it is shown, so flipping a switch takes effect without a
+ * restart; the switches themselves are painted by sync(), not bound by a dotted path (the field is optional).
+ */
+function pluginsPane() {
+  return `<div class="set-cols">
+    ${card(
+      'Chat plugins',
+      UI_PLUGINS.map(
+        (p) => `<label class="set-toggle"><input type="checkbox" data-test="set-plugins.${p.id}" data-plugin="${p.id}"><i></i>
+          <span><b>${esc(p.name)}</b><small>${esc(p.description)}</small></span></label>`,
+      ).join('') +
+        note('Each plugin is a folder under <code>plugins/</code> that the agent installs for you — none of them ship with the app. A plugin only draws in the chat screen; your sessions and saves are untouched, and turning one off leaves nothing behind.'),
+      'wide',
+      'data-test="plugins-list"',
+    )}
+  </div>`
+}
+
 const PANES: Record<TabId, () => string> = {
   cards: cardsPane, you: youPane, waifu: waifuPane, roleplay: roleplayPane, appearance: appearancePane, motion: motionPane, claude: claudePane,
-  casual: casualPane, voice: voicePane, slack: slackPane, phone: phonePane, about: aboutPane,
+  casual: casualPane, voice: voicePane, slack: slackPane, phone: phonePane, plugins: pluginsPane, about: aboutPane,
 }
 
 // ---------------------------------------------------------------- screen
@@ -1132,6 +1155,11 @@ export function settingsScreen(): Screen {
       if (id && id !== ctx.store.get().claude.model) write('claude.model', id)
     } else if (d.card && committed) {
       writeCard(t)
+    } else if (d.plugin && committed) {
+      const id = d.plugin
+      const on = (t as HTMLInputElement).checked
+      // Only write a real change, so toggling back and forth does not queue settings saves for nothing.
+      if (on !== pluginEnabled(ctx.store.get(), id)) ctx.store.update((s) => setPluginFlag(s, id, on))
     } else if (d.chipInput !== undefined && committed) {
       addChip(t as HTMLInputElement)
     }
@@ -1725,6 +1753,8 @@ export function settingsScreen(): Screen {
       const [path, v] = el.dataset.when!.split('=')
       el.hidden = String(getAt(s, path)) !== v
     }
+    // Plugins (Settings → Plugins): painted from the store, since `plugins.<id>` is optional and has no default.
+    for (const el of qa<HTMLInputElement>('[data-plugin]')) el.checked = pluginEnabled(s, el.dataset.plugin!)
 
     // You
     const addr = addressOf(s)

@@ -230,6 +230,11 @@ export type Settings = {
   card: string
   /** Last folder a session was started in. */
   lastDir: string
+  /**
+   * UI plugins the user turned on, by id (app/src/plugins). Missing or false means off, so a plugin is
+   * opt-in and an id the app no longer carries is kept rather than dropped. The ticket board's id is `tickets`.
+   */
+  plugins?: Record<string, boolean>
 }
 
 // ---------------------------------------------------------------- waifu cards
@@ -422,6 +427,55 @@ export type RemoteStatus = {
   error?: string
 }
 
+// ---------------------------------------------------------------- tickets (waifufy-tickets plugin)
+
+/**
+ * The optional ticket board (plugins/waifufy-tickets), as the chat screen's panel draws it. The store
+ * lives in the plugin folder, not in the app: link loads it when a `tickets` message arrives and reports
+ * `available: false` when the folder or its database is missing. Everything here is read-only; tickets are
+ * created and moved by the agent (the plugin's MCP tools) or by hand (`plugins/waifufy-tickets/bin/tickets.mjs`).
+ */
+export type TicketStatus = 'inbox' | 'todo' | 'doing' | 'blocked' | 'done'
+
+/** One card. `body` is included so expanding a card needs no second round trip. */
+export interface TicketCard {
+  id: string
+  title: string
+  status: TicketStatus
+  /** 0 normal, 1 high, 2 urgent. */
+  priority: number
+  project?: string
+  labels: string[]
+  body?: string
+  /** Why it is blocked; present only while `status` is `blocked`. */
+  blockedReason?: string
+  /** Where the ticket came from (a channel, a file), for display only. */
+  sourceRef?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface TicketColumn {
+  status: TicketStatus
+  /** Display label ("Inbox"), owned by the plugin's store so the app never hardcodes it. */
+  label: string
+  /** One-line meaning of the column, for the panel's headers. */
+  hint: string
+  tickets: TicketCard[]
+}
+
+export interface BoardSnapshot {
+  /** False when the plugin folder could not be loaded; `reason` says why, verbatim for the panel. */
+  available: boolean
+  reason?: string
+  dbPath?: string
+  generatedAt: number
+  total: number
+  counts: Record<TicketStatus, number>
+  projects: { project: string; count: number }[]
+  columns: TicketColumn[]
+}
+
 // ---------------------------------------------------------------- client → link
 
 export type ClientMsg =
@@ -536,6 +590,8 @@ export type ClientMsg =
    * open prompts…) under its epoch.
    */
   | { t: 'attach' }
+  /** Asks for the ticket board (the waifufy-tickets plugin). Answered by a `tickets` with the snapshot. */
+  | { t: 'tickets'; project?: string }
 
 /**
  * The running session's SDK controls the app may call directly: `Query` methods, by name. They back the in-app
@@ -659,6 +715,8 @@ export type ServerMsg =
   | { t: 'ctl_result'; id: string; ok: boolean; data?: unknown; error?: string }
   /** To every window, whenever it changes. */
   | { t: 'slack_status'; status: SlackStatus }
+  /** The ticket board snapshot, in answer to a `tickets`. Always sent, even when the plugin is missing. */
+  | { t: 'tickets'; board: BoardSnapshot }
   /** To every window as the scan finds changes, and to a `slack_inbox` request. */
   | { t: 'slack_inbox'; inbox: SlackInbox }
   | { t: 'slack_convs'; convs: SlackConv[]; error?: string }

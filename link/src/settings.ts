@@ -117,6 +117,8 @@ export function defaultSettings(): Settings {
     },
     card: '',
     lastDir: '',
+    // UI plugins start off, and the merge below keeps whatever ids the stored file has (see protocol.ts).
+    plugins: {},
   }
 }
 

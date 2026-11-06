@@ -22,6 +22,8 @@ import {
 } from './dialogue'
 import { createInput, fromInput, type InputApi, type InputHost } from './input'
 import { phoneNotify } from '../phone-notify'
+import { pluginEnabled, UI_PLUGINS } from '../plugins'
+import { ticketsPlugin } from './tickets'
 import {
   createPanels, doing, isShell, MODE_LABELS, oneLine, relPath, toolIcon, toolLabel, type Panels, type ToolRecord,
 } from './panels'
@@ -1552,6 +1554,52 @@ export function chatScreen(): Screen {
     }
   }
 
+  // ---------------------------------------------------------------- UI plugins (app/src/plugins)
+
+  /** Mounted plugins by id, each with the teardown that takes it off again. */
+  const plugins = new Map<string, () => void>()
+  // UI_PLUGINS owns flags and settings rows; use the concrete chat module for the bundled implementation/CSS.
+  const chatPlugins = UI_PLUGINS.map((registered) => registered.id === ticketsPlugin.id
+    ? { ...registered, mount: ticketsPlugin.mount }
+    : registered)
+
+  /**
+   * Mounts the left column's enabled plugins under the mode/model badges, and takes off the ones whose flag
+   * went off. Each gets its own slot element, so the column's footer stays last and a plugin that renders
+   * nothing leaves no trace. Runs when the screen is shown and whenever settings change.
+   */
+  function syncPlugins() {
+    const left = root.querySelector<HTMLElement>('.chat-left')
+    if (!left) return
+    const on = chatPlugins.filter((p) => pluginEnabled(settings(), p.id))
+    const wanted = new Set(on.map((p) => p.id))
+    for (const [id, off] of [...plugins]) {
+      if (wanted.has(id)) continue
+      off()
+      plugins.delete(id)
+    }
+    const foot = left.querySelector<HTMLElement>('.left-foot')
+    for (const plugin of on) {
+      if (plugins.has(plugin.id)) continue
+      const slot = document.createElement('div')
+      slot.className = 'chat-plugin'
+      slot.dataset.plugin = plugin.id
+      if (foot?.parentElement === left) left.insertBefore(slot, foot)
+      else left.append(slot)
+      const off = plugin.mount(slot)
+      plugins.set(plugin.id, () => {
+        off()
+        slot.remove()
+      })
+    }
+  }
+
+  /** Every plugin off: leaving the chat screen leaves nothing mounted (and nothing fetching). */
+  function unmountPlugins() {
+    for (const off of plugins.values()) off()
+    plugins.clear()
+  }
+
   // ---------------------------------------------------------------- the screen
 
   return {
@@ -1996,6 +2044,7 @@ export function chatScreen(): Screen {
         panels.identity(s)
         updateRibbon()
         updateSpinner()
+        if (visible) syncPlugins()
       })
 
       // Phone: back in front, her notification thread is read; a Reply typed in it is a message to her.
@@ -2019,6 +2068,8 @@ export function chatScreen(): Screen {
       visible = true
       dialogue.setMuted(false)
       ctx.character.setPlacement('chat')
+      // Enabled plugins mount here, so their data is fetched when the chat is actually looked at.
+      syncPlugins()
       const p = params as ChatParams | undefined
       if (p && 'attach' in p) return attach()
       if (p?.cwd) return start({ cwd: p.cwd, resume: p.resume, title: p.title }, true)
@@ -2031,6 +2082,8 @@ export function chatScreen(): Screen {
     hide() {
       visible = false
       stopSkip()
+      // Leaving the chat screen takes the plugin panels off with it; showing it again mounts them afresh.
+      unmountPlugins()
       // Pages that keep streaming while Settings is open land silently, so her face and mouth stay still there.
       dialogue.setMuted(true)
     },

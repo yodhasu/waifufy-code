@@ -1,0 +1,16 @@
+{
+  "name": "waifufy-tickets",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agent-driven local kanban board (v0). Zero dependencies: store is node:sqlite, tools are a hand-rolled MCP stdio server.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "test": "node --test",
+    "board": "node bin/tickets.mjs board",
+    "mcp": "node bin/tickets-mcp.mjs"
+  }
+}

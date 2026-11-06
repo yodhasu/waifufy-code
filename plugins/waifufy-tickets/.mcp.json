@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "tickets": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/bin/tickets-mcp.mjs"
+      ]
+    }
+  }
+}

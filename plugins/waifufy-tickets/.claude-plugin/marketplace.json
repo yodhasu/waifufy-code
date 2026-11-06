@@ -1,0 +1,19 @@
+{
+  "name": "waifufy",
+  "description": "Waifufy Code plugin experiments. Add with: claude plugin marketplace add <this folder>",
+  "owner": {
+    "name": "Alethea Agung Yodha Pratama"
+  },
+  "plugins": [
+    {
+      "name": "waifufy-tickets",
+      "source": "./",
+      "description": "Local SQLite kanban board for agent-driven triage: the main agent filters raw input into tickets; you move them across columns with slash commands.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Alethea Agung Yodha Pratama"
+      },
+      "category": "productivity"
+    }
+  ]
+}

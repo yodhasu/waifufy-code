@@ -1,0 +1,16 @@
+{
+  "name": "waifufy-tickets",
+  "description": "Local SQLite kanban board for agent-driven triage. The main agent is the filter: it turns raw input (chat paste, Slack export, logs, a file) into tickets, and you move them across Inbox -> Todo -> Doing -> Blocked -> Done.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Alethea Agung Yodha Pratama"
+  },
+  "license": "MIT",
+  "keywords": [
+    "kanban",
+    "tickets",
+    "triage",
+    "todo",
+    "sqlite"
+  ]
+}

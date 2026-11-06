@@ -1,0 +1,15 @@
+# No dependencies are installed by this plugin, but the app's tooling may create these.
+node_modules/
+
+# Local databases and their write-ahead logs (WC_TICKETS_DB, or the default under %APPDATA%).
+*.db
+*.db-wal
+*.db-shm
+
+# Snapshots written by `bin/tickets.mjs board --html <file>`.
+board.html
+*.board.html
+
+# Throwaway scripts used when checking the integration by hand.
+scratch/
+*.scratch.mjs
