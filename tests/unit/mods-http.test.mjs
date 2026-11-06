@@ -14,6 +14,7 @@ const mk = (id) => {
   writeFileSync(join(dir, 'mod.json'), '{"secret":true}')
   writeFileSync(join(dir, 'ui', 'index.html'), `<h1>${id}</h1>`)
   writeFileSync(join(dir, 'ui', 'app.js'), '1')
+  writeFileSync(join(dir, 'ui', 'pic.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>')
   return { id, dir, source: 'env', status: 'ok' }
 }
 const mods = [mk('tickets'), mk('other'), { ...mk('broken'), status: 'invalid' }]
@@ -33,27 +34,40 @@ const eq = (a, b) => { if (a !== b) throw new Error(`${a} !== ${b}`) }
 
 const pt = panelToken('tickets')
 await test('serves ui/index.html with the CSP header', async () => {
-  const r = await get(`/mods/tickets/ui/index.html?pt=${pt}`)
+  const r = await get(`/mods/tickets/${pt}/ui/index.html`)
   eq(r.status, 200)
   eq(r.headers.get('content-security-policy'), "default-src 'self'; connect-src 'none'")
   eq(r.headers.get('content-type').startsWith('text/html'), true)
   eq(await r.text(), '<h1>tickets</h1>')
 })
-await test('js gets a js content type', async () => eq((await get(`/mods/tickets/ui/app.js?pt=${pt}`)).headers.get('content-type').startsWith('text/javascript'), true))
-await test('/mods/tickets/ui/../mod.json → 404', async () => eq(await raw(`/mods/tickets/ui/../mod.json?pt=${pt}`), 404))
+await test('js gets a js content type', async () => eq((await get(`/mods/tickets/${pt}/ui/app.js`)).headers.get('content-type').startsWith('text/javascript'), true))
+const CSP = "default-src 'self'; connect-src 'none'"
+await test('every served type carries the CSP and nosniff', async () => {
+  for (const f of ['app.js', 'pic.svg']) {
+    const r = await get(`/mods/tickets/${pt}/ui/${f}`)
+    eq(r.status, 200)
+    eq(r.headers.get('content-security-policy'), CSP)
+    eq(r.headers.get('x-content-type-options'), 'nosniff')
+  }
+})
+await test('a relative file resolves against the index URL and loads', async () => {
+  const r = await get(new URL('app.js', `${base}/mods/tickets/${pt}/ui/index.html`).pathname)
+  eq(r.status, 200)
+  eq(await r.text(), '1')
+})
+await test('/mods/tickets/<pt>/ui/../mod.json → 404', async () => eq(await raw(`/mods/tickets/${pt}/ui/../mod.json`), 404))
 await test('%2e%2e encoded escape → 404', async () => {
-  eq(await raw(`/mods/tickets/ui/%2e%2e/mod.json?pt=${pt}`), 404)
-  eq(await raw(`/mods/tickets/ui/..%2fmod.json?pt=${pt}`), 404)
-  eq(await raw(`/mods/tickets/ui/..%5cmod.json?pt=${pt}`), 404)
+  eq(await raw(`/mods/tickets/${pt}/ui/%2e%2e/mod.json`), 404)
+  eq(await raw(`/mods/tickets/${pt}/ui/..%2fmod.json`), 404)
+  eq(await raw(`/mods/tickets/${pt}/ui/..%5cmod.json`), 404)
 })
-await test('wrong or missing pt → 403', async () => {
-  eq((await get('/mods/tickets/ui/index.html')).status, 403)
-  eq((await get('/mods/tickets/ui/index.html?pt=nope')).status, 403)
+await test('wrong pt → 403', async () => {
+  eq((await get('/mods/tickets/nope/ui/index.html')).status, 403)
 })
-await test('pt of mod A does not open mod B', async () => eq((await get(`/mods/other/ui/index.html?pt=${pt}`)).status, 403))
+await test('pt of mod A does not open mod B', async () => eq((await get(`/mods/other/${pt}/ui/index.html`)).status, 403))
 await test('disabled or unknown id → 404', async () => {
-  eq((await get(`/mods/ghost/ui/index.html?pt=${panelToken('ghost')}`)).status, 404)
-  eq((await get(`/mods/broken/ui/index.html?pt=${panelToken('broken')}`)).status, 404)
+  eq((await get(`/mods/ghost/${panelToken('ghost')}/ui/index.html`)).status, 404)
+  eq((await get(`/mods/broken/${panelToken('broken')}/ui/index.html`)).status, 404)
 })
 await test('/mods/_sdk/waifufy.js served without a token', async () => {
   const r = await get('/mods/_sdk/waifufy.js')

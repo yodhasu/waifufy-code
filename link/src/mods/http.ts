@@ -38,7 +38,7 @@ function send(res: ServerResponse, status: number, body: string | Buffer, type =
   res.end(body)
 }
 
-/** Handles /mods/_sdk/waifufy.js and /mods/<id>/ui/...?pt=. Returns false for any other path. */
+/** Handles /mods/_sdk/waifufy.js and /mods/<id>/<pt>/ui/.... Returns false for any other path. */
 export function serveMod(req: IncomingMessage, res: ServerResponse, mods: () => DiscoveredMod[]): boolean {
   const url = new URL(req.url ?? '/', 'http://link')
   if (!url.pathname.startsWith('/mods/')) return false
@@ -54,10 +54,10 @@ async function handle(url: URL, res: ServerResponse, mods: () => DiscoveredMod[]
   } catch {
     return send(res, 404, 'not found')
   }
-  const [, , id, ui, ...rest] = path.split('/')
+  const [, , id, pt, ui, ...rest] = path.split('/') // /mods/<id>/<pt>/ui/<file>: the token is in the path so relative files carry it
   const mod = mods().find((m) => m.id === id && m.status === 'ok')
   if (!mod || ui !== 'ui' || !rest.length) return send(res, 404, 'not found')
-  if (!checkPanelToken(mod.id, url.searchParams.get('pt') ?? '')) return send(res, 403, 'forbidden')
+  if (!checkPanelToken(mod.id, pt ?? '')) return send(res, 403, 'forbidden')
   if (rest.some((s) => s === '..' || s.includes('\\') || s.includes('\0'))) return send(res, 404, 'not found')
   const base = resolve(mod.dir, 'ui')
   const file = resolve(base, ...rest)
@@ -65,5 +65,6 @@ async function handle(url: URL, res: ServerResponse, mods: () => DiscoveredMod[]
   const type = TYPES[extname(file).toLowerCase()]
   if (!type) return send(res, 404, 'not found')
   const body = await readFile(file)
-  send(res, 200, body, type, type.startsWith('text/html') ? { 'Content-Security-Policy': "default-src 'self'; connect-src 'none'" } : {})
+  // CSP on every type: an SVG runs scripts too, and panels do all I/O through the bridge.
+  send(res, 200, body, type, { 'Content-Security-Policy': "default-src 'self'; connect-src 'none'", 'X-Content-Type-Options': 'nosniff' })
 }

@@ -102,11 +102,11 @@ Verified (Node 24.15): node:sqlite works under --permission with the database in
 
 ## 3. Panels (app: `ModSlot`)
 
-- The link serves `/mods/<id>/ui/…` from the mod folder on its existing `127.0.0.1` HTTP server, with a path
-  traversal guard and a per-mod panel token (`pt`) that only unlocks that mod's files.
+- The link serves `/mods/<id>/<pt>/ui/…` from the mod folder on its existing `127.0.0.1` HTTP server, with a path
+  traversal guard and a per-mod panel token (`pt`, in the path so relative files carry it) that only unlocks that mod's files.
 - Mod pages are served with their own CSP: `default-src 'self'; connect-src 'none'` (panels do all I/O through
   the bridge).
-- The app mounts `<iframe sandbox="allow-scripts" title="<mod name>" src="http://127.0.0.1:<port>/mods/<id>/ui/index.html?pt=…">`.
+- The app mounts `<iframe sandbox="allow-scripts" title="<mod name>" src="http://127.0.0.1:<port>/mods/<id>/<pt>/ui/index.html">`.
   No `allow-same-origin`, so a panel cannot read the app's storage or DOM.
 - The app's Tauri CSP gains `frame-src http://127.0.0.1:*` (the one rebuild this feature needs).
 - Bridge SDK, served at `/mods/_sdk/waifufy.js`:

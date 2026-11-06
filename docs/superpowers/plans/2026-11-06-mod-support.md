@@ -109,7 +109,7 @@ The existing ticket work (`link/src/tickets.ts`, `app/src/plugins/`, `app/src/ch
 - Consumes: `DiscoveredMod` (Task 2)
 - Produces:
   - `panelToken(id: string): string` (random per link run, stable per id) and `checkPanelToken(id: string, token: string): boolean`
-  - `serveMod(req: IncomingMessage, res: ServerResponse, mods: () => DiscoveredMod[]): boolean` — handles `/mods/_sdk/waifufy.js` and `/mods/<id>/ui/...?pt=`; returns false for other paths. Sets `Content-Security-Policy: default-src 'self'; connect-src 'none'` on HTML, correct content types for html/js/css/png/svg/json.
+  - `serveMod(req: IncomingMessage, res: ServerResponse, mods: () => DiscoveredMod[]): boolean` — handles `/mods/_sdk/waifufy.js` and `/mods/<id>/<pt>/ui/...`; returns false for other paths. Sets `Content-Security-Policy: default-src 'self'; connect-src 'none'` and `X-Content-Type-Options: nosniff` on every file, correct content types for html/js/css/png/svg/json.
   - Bridge SDK globals (`window.waifufy`): `call(method, params): Promise<unknown>`, `on(type, fn): () => void`, `app(capability, params): Promise<unknown>`, `resize(height: number): void`, `ready(): void`, `theme: Record<string,string>`. Wire format to the parent: `{ wc: 1, kind: 'call'|'app'|'resize'|'ready', seq?, method?, capability?, params? }`; from the parent: `{ wc: 1, kind: 'reply'|'event'|'theme', seq?, ok?, value?, error?, type?, payload?, vars? }`.
 
 - [ ] **Step 1: Failing tests**: `serves ui/index.html with the CSP header`; `/mods/tickets/ui/../mod.json → 404`; `%2e%2e encoded escape → 404`; `wrong or missing pt → 403`; `pt of mod A does not open mod B → 403`; `disabled or unknown id → 404`; `/mods/_sdk/waifufy.js served without a token`.
@@ -128,7 +128,7 @@ The existing ticket work (`link/src/tickets.ts`, `app/src/plugins/`, `app/src/ch
 **Interfaces:**
 - Consumes: Tasks 1–4
 - Produces:
-  - `type ModInfo = { id; name; version; description; status: 'running'|'off'|'crashed'|'invalid'|'incompatible'; reason?: string; enabled: boolean; panel?: { slot: string; url: string }; settingsPageUrl?: string; settings: SettingField[]; values: Record<string, unknown>; permissions: string[]; source: 'env'|'installed'|'repo' }` (in protocol.ts; `url` already carries `?pt=`)
+  - `type ModInfo = { id; name; version; description; status: 'running'|'off'|'crashed'|'invalid'|'incompatible'; reason?: string; enabled: boolean; panel?: { slot: string; url: string }; settingsPageUrl?: string; settings: SettingField[]; values: Record<string, unknown>; permissions: string[]; source: 'env'|'installed'|'repo' }` (in protocol.ts; `url` already carries the token in its path)
   - Client → link: `{ t: 'mods' }`, `{ t: 'mod-call'; id; seq: number; method; params? }`, `{ t: 'mod-app'; id; seq; capability; params? }`, `{ t: 'mod-enable'; id; enabled: boolean }`, `{ t: 'mod-settings'; id; values: Record<string, unknown> }`, `{ t: 'mod-install'; path: string; replace?: boolean }`, `{ t: 'mod-remove'; id; deleteData?: boolean }`
   - Link → client: `{ t: 'mods'; mods: ModInfo[] }` (sent on request and on every change), `{ t: 'mod-reply'; id; seq; ok: boolean; value?; error? }`, `{ t: 'mod-event'; id; type; payload }`
   - `class Mods`: `init(): Promise<void>`, `list(): ModInfo[]`, `enable(id, on): Promise<void>`, `appEvent(type: 'turn.end'|'emotion'|'affection'|'message', payload): void` (only to mods whose permissions name it), `toolCall(id, name, input)`, `enabledTools(): { id: string; tool: ToolDef }[]`, `enabledSkills(): { id: string; name: string; dir: string }[]`, `on('changed', fn)`.
