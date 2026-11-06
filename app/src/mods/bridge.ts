@@ -43,6 +43,7 @@ export function createBridge(frame: HTMLIFrameElement, mod: ModInfo, link: Link,
     close() {
       removeEventListener('message', onMessage)
       offLink()
+      offStatus()
       themeWatch.disconnect()
       pending.clear()
     },
@@ -74,6 +75,13 @@ export function createBridge(frame: HTMLIFrameElement, mod: ModInfo, link: Link,
       pending.delete(m.seq)
       post({ kind: 'reply', seq: theirs, ok: m.ok, value: m.value, error: m.error })
     } else if (m.t === 'mod-event' && m.id === mod.id) bridge.event(m.type, m.payload)
+  })
+
+  // The link answers a call only on the socket that sent it, so a dropped socket means no answer ever comes.
+  const offStatus = link.onStatus((s) => {
+    if (s !== 'down') return
+    for (const theirs of pending.values()) post({ kind: 'reply', seq: theirs, ok: false, error: 'link dropped' })
+    pending.clear()
   })
 
   // A theme or accent change (state.ts) or a mod's theme.set lands on :root's attributes.

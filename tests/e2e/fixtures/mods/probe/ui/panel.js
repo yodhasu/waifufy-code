@@ -12,6 +12,8 @@ addEventListener('message', (e) => {
 })
 waifufy.on('tick', (p) => report({ tick: p }))
 waifufy.on('reconnected', () => report({ reconnected: true }))
+// The test pushes `hang` (an injected mod-event), then drops the link while this call waits.
+waifufy.on('hang', () => waifufy.call('hang').then(() => report({ hang: 'answered' }), (e) => report({ hang: e.message })))
 waifufy.ready()
 report({ parentDoc })
 waifufy.call('echo', { n: 1 }).then((v) => report({ echo: v }), (e) => report({ echoError: e.message }))

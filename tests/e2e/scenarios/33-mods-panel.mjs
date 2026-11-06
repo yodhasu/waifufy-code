@@ -105,10 +105,15 @@ export default {
     },
     {
       r: 'M1',
-      name: 'after a link reconnect the app asks for mods again and tells each panel',
+      name: 'a link drop rejects in-flight calls; after the reconnect the app asks for mods again and tells each panel',
       async run({ app }) {
+        // A call waiting on the backend (`hang` never answers) when the link drops is rejected, not left hanging.
+        const h = await app.mark()
+        await app.inject({ t: 'mod-event', id: 'probe', type: 'hang', payload: null })
+        await app.waitSent('mod-call', { id: 'probe', method: 'hang' }, h)
         const m = await app.mark()
         await app.eval(() => window.__e2e.dropLinks())
+        eq(await reported(app, 'hang', m), 'link dropped', 'the in-flight call was rejected with link dropped')
         await app.waitSent('mods', {}, m, 10_000)
         eq(await reported(app, 'reconnected', m), true, 'the panel got the reconnected event')
         assert((await reported(app, 'accent', m)) !== undefined, 'the theme was re-sent')
