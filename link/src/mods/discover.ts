@@ -23,7 +23,7 @@ export const modsDir = () => join(DATA_DIR, 'mods')
 
 /** A mod's private writable folder (created on demand). Kept apart from the mod's own code folder. */
 export function modDataDir(id: string): string {
-  const dir = join(DATA_DIR, 'mods-data', id)
+  const dir = join(DATA_DIR, 'mod-data', id)
   mkdirSync(dir, { recursive: true })
   return dir
 }

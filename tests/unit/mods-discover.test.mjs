@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const dataDir = mkdtempSync(join(tmpdir(), 'wc-mods-data-'))
+const dataDir = mkdtempSync(join(tmpdir(), 'wc-mod-data-'))
 process.env.WC_DATA_DIR = dataDir
 const { discoverMods, modDataDir } = await import('../../link/src/mods/discover.ts')
 
@@ -69,7 +69,7 @@ test('folder name differing from manifest id -> invalid "folder name must match 
 })
 
 test('modDataDir creates and returns a per-mod folder under DATA_DIR', () => {
-  eq(modDataDir('x'), join(dataDir, 'mods-data', 'x'), 'path')
+  eq(modDataDir('x'), join(dataDir, 'mod-data', 'x'), 'path')
 })
 
 process.exit(failures ? 1 : 0)
