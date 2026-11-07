@@ -595,7 +595,7 @@ class MockSession implements SessionApi {
     if (/\bquestion/.test(k)) return this.question(turn)
     if (/\bplan\b/.test(k)) return this.plan(turn)
     if (/\bpush\b/.test(k)) return this.push(turn)
-    if (/\bmodtool\b/.test(k)) return this.modTool(turn)
+    if (/\bmodtool\b/.test(k)) return this.modTool(turn, t)
     if (/\btools?\b/.test(k)) return this.tools(turn)
     if (/\blong\b/.test(k)) return this.long(turn)
     if (/\bslow\b/.test(k)) return this.slow(turn)
@@ -616,12 +616,16 @@ class MockSession implements SessionApi {
     return addressOf(this.opts.settings)
   }
 
-  /** The agent calls the first enabled mod tool through the adapter's handler, as the SDK's MCP server would. */
-  private async modTool(turn: Turn): Promise<Outcome> {
+  /**
+   * The agent calls an enabled mod tool through the adapter's handler, as the SDK's MCP server would: the first
+   * one with `{ text: 'ping' }`, or `modtool <name> {json}` for a named tool and its input.
+   */
+  private async modTool(turn: Turn, text: string): Promise<Outcome> {
     await this.think(turn)
     const mods = this.opts.mods
-    const first = mods?.enabledTools()[0]
-    const r = mods && first ? await callModTool(mods, first.id, first.tool.name, { text: 'ping' }) : undefined
+    const named = /\bmodtool\s+(\w+)\s+(\{.*\})/is.exec(text)
+    const first = mods?.enabledTools().find((x) => !named || x.tool.name === named[1]) ?? undefined
+    const r = mods && first ? await callModTool(mods, first.id, first.tool.name, named ? JSON.parse(named[2]!) : { text: 'ping' }) : undefined
     await this.speak(turn, `[nod] Mod tool said: ${r ? (r.content[0] as { text: string }).text : 'no mod tools'}`)
     return { ok: true }
   }

@@ -34,8 +34,7 @@ const TABS = [
   { id: 'voice', label: 'Voice', icon: '♫', blurb: 'Her spoken voice through Fish Audio, in sync with the text and her lips.' },
   { id: 'slack', label: 'Slack', icon: '✉', blurb: 'Your unread Slack messages in the chat, and Slack tools for her.' },
   { id: 'phone', label: 'Phone', icon: '☏', blurb: 'Chat with her from your Android phone while Claude Code keeps working here.' },
-  // The id stays `plugins` (scenario 31 opens it by that) until the tickets card is ported to a mod.
-  { id: 'plugins', label: 'Mods', icon: '⚡', blurb: 'Optional extras for the chat screen. Each mod is a folder with its own sandbox; off until you switch it on.' },
+  { id: 'mods', label: 'Mods', icon: '⚡', blurb: 'Optional extras for the chat screen. Each mod is a folder with its own sandbox; off until you switch it on.' },
   { id: 'about', label: 'About', icon: '❦', blurb: 'Version, your data, and credits.' },
 ] as const
 type TabId = (typeof TABS)[number]['id']
@@ -232,7 +231,7 @@ const TAB_LINES: Record<TabId, [string, Emotion]> = {
   voice: ['My voice… is still a secret. Soon, {you}!', 'shy'],
   slack: ['I can keep an eye on your messages, {you}. I\'ll only send what you approve.', 'nod'],
   phone: ['Take me with you, {you}? I\'ll keep working here while you\'re away.', 'shy'],
-  plugins: ['Extras for our chat, {you}? Only the ones you ask for.', 'think'],
+  mods: ['Extras for our chat, {you}? Only the ones you ask for.', 'think'],
   about: ['Thank you for choosing me, {you}.', 'happy'],
 }
 const SPEED_SAMPLE = 'Ah, {you}! Is this pace comfortable? I can speak faster, slower… or all at once, if you like.'
@@ -911,7 +910,7 @@ function aboutPane() {
 
 const PANES: Record<TabId, () => string> = {
   cards: cardsPane, you: youPane, waifu: waifuPane, roleplay: roleplayPane, appearance: appearancePane, motion: motionPane, claude: claudePane,
-  casual: casualPane, voice: voicePane, slack: slackPane, phone: phonePane, plugins: () => MODS_PANE, about: aboutPane,
+  casual: casualPane, voice: voicePane, slack: slackPane, phone: phonePane, mods: () => MODS_PANE, about: aboutPane,
 }
 
 // ---------------------------------------------------------------- screen
@@ -1349,7 +1348,7 @@ export function settingsScreen(): Screen {
       const dir = ctx.store.get().appearance.modelsDir
       requestCostumes(dir, dir ? 0 : SAVE_SETTLE_MS)
     }
-    if (id === 'plugins') modsTab.show()
+    if (id === 'mods') modsTab.show()
     if (id === 'about' && !about) ctx.link.send({ t: 'hello' })
     if (id === 'cards') ctx.link.send({ t: 'cards' })
     if (id === 'roleplay') {
@@ -2075,7 +2074,7 @@ export function settingsScreen(): Screen {
           <div class="set-preview-plate" data-preview-name></div>
           <p class="set-preview-text" data-preview-text></p>
         </div>`
-      modsTab = mountModsTab(q('[data-pane="plugins"]'), ctx)
+      modsTab = mountModsTab(q('[data-pane="mods"]'), ctx)
       root.addEventListener('input', (e) => onField(e.target, false))
       root.addEventListener('change', (e) => onField(e.target, true))
       root.addEventListener('focusout', (e) => {

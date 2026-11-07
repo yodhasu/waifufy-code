@@ -25,8 +25,8 @@ function reported(app, pred, from = 0) {
 
 async function openMods(app) {
   await app.go('settings')
-  await app.waitVisible('[data-tab="plugins"]')
-  await app.click('[data-tab="plugins"]')
+  await app.waitVisible('[data-tab="mods"]')
+  await app.click('[data-tab="mods"]')
   await app.waitVisible(row('probe'))
 }
 

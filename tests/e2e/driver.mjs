@@ -170,7 +170,8 @@ class Cdp {
     for (const fn of this.#listeners.get(m.method) ?? []) fn(m.params)
   }
 
-  send(method, params = {}) {
+  /** `sessionId` addresses an attached child target (a cross-process iframe) over the same socket. */
+  send(method, params = {}, sessionId) {
     const id = ++this.#seq
     return new Promise((resolve, reject) => {
       // A WebView whose host exited can keep the socket open without ever answering.
@@ -180,7 +181,7 @@ class Cdp {
       }, CDP_CALL_MS)
       const done = (fn) => (v) => (clearTimeout(timer), fn(v))
       this.#pending.set(id, { resolve: done(resolve), reject: done(reject), method })
-      this.#ws.send(JSON.stringify({ id, method, params }))
+      this.#ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
     })
   }
 
@@ -378,6 +379,44 @@ export class App {
       throw new Error(`page: ${d.exception?.description ?? d.text}`.split('\n')[0])
     }
     return r.result.value
+  }
+
+  /**
+   * Evaluates `fn(...args)` inside the iframe of mod `id`'s panel (a sandboxed frame has an opaque origin, so
+   * the page can't reach it, but the debugger can) and returns its JSON value.
+   */
+  async frameEval(id, fn, ...args) {
+    const frame = [...this.cdp.frames.values()].find((f) => f.url.includes(`/mods/${id}/`))
+    if (!frame) throw new Error(`no panel frame for mod ${id}`)
+    const expression = `(${fn.toString()})(...${JSON.stringify(args)})`
+    const r = await this.cdp.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: true }, frame.sessionId)
+    if (r.exceptionDetails) throw new Error(`frame: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`.split('\n')[0])
+    return r.result.value
+  }
+
+  /** Polls `fn(...args)` in mod `id`'s panel frame until it returns a truthy value. */
+  async frameWaitFor(id, fn, { timeout = DEFAULT_WAIT_MS, label, args = [] } = {}) {
+    const deadline = Date.now() + timeout
+    let lastError
+    while (Date.now() < deadline) {
+      try {
+        const v = await this.frameEval(id, fn, ...args)
+        if (v) return v
+      } catch (e) {
+        lastError = e
+        if (/socket closed/.test(e.message)) throw e
+      }
+      await sleep(POLL_MS)
+    }
+    throw new Error(`timed out after ${timeout}ms waiting for ${label ?? fn.toString().slice(0, 120)} in the ${id} panel${lastError ? ` (last error: ${lastError.message})` : ''}`)
+  }
+
+  /**
+   * Clicks an element in mod `id`'s panel frame. A DOM click, not mouse events: the frame sits in a scaled page,
+   * so the page's coordinates do not map onto the frame's one-to-one.
+   */
+  frameClick(id, sel) {
+    return this.frameEval(id, (s) => document.querySelector(s).click(), sel)
   }
 
   /** Polls `fn(...args)` in the page until it returns a truthy value, which it resolves with. */
@@ -740,12 +779,26 @@ async function prepare(page, url, viewport = process.env.WC_E2E_VIEWPORT) {
   cdp.on('Page.frameNavigated', ({ frame }) => {
     if (!frame.parentId) cdp.navigations++
   })
+  // A mod panel's iframe is on another site (127.0.0.1), so it runs in its own process: keep the sessions of
+  // attached iframe targets, by target id, for frameEval.
+  cdp.frames = new Map()
+  cdp.on('Target.attachedToTarget', ({ sessionId, targetInfo }) => {
+    if (targetInfo.type === 'iframe') cdp.frames.set(targetInfo.targetId, { sessionId, url: targetInfo.url })
+  })
+  cdp.on('Target.targetInfoChanged', ({ targetInfo }) => {
+    const f = cdp.frames.get(targetInfo.targetId)
+    if (f) f.url = targetInfo.url
+  })
+  cdp.on('Target.detachedFromTarget', ({ sessionId }) => {
+    for (const [id, f] of cdp.frames) if (f.sessionId === sessionId) cdp.frames.delete(id)
+  })
   cdp.on('Runtime.exceptionThrown', ({ exceptionDetails: d }) => {
     cdp.errors.push((d.exception?.description ?? d.text ?? '').split('\n')[0])
     if (cdp.errors.length > MAX_PAGE_ERRORS) cdp.errors.shift()
   })
   await cdp.send('Page.enable')
   await cdp.send('Runtime.enable')
+  await cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true })
   // WC_E2E_VIEWPORT=412x915@2.625: a phone (portrait layout, touch), before the page boots so it starts that size.
   const vp = /^(\d+)x(\d+)(?:@([\d.]+))?$/.exec(viewport ?? '')
   if (vp) {

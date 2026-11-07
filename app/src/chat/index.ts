@@ -1572,7 +1572,7 @@ export function chatScreen(): Screen {
   function syncPlugins() {
     const left = root.querySelector<HTMLElement>('.chat-left')
     if (!left) return
-    const on = chatPlugins.filter((p) => pluginEnabled(settings(), p.id))
+    const on = chatPlugins.filter((p) => !modIds.has(p.id) && pluginEnabled(settings(), p.id))
     const wanted = new Set(on.map((p) => p.id))
     for (const [id, off] of [...plugins]) {
       if (wanted.has(id)) continue
@@ -1615,6 +1615,8 @@ export function chatScreen(): Screen {
     }
   }
   let modSlots: ReturnType<typeof createModSlots>
+  /** Ids of the mods the link knows (on or off): a built-in plugin with the same id gives way to its mod. */
+  let modIds = new Set<string>()
 
   // ---------------------------------------------------------------- the screen
 
@@ -2059,7 +2061,13 @@ export function chatScreen(): Screen {
       // Mod panels: the link sends the list on request and on every change. Phones have no mod panels (desktop only).
       modSlots = createModSlots(ctx.link, modHost)
       listenAppEvents(ctx.link, (text) => ctx.toast(text, 5000))
-      ctx.link.on((m) => void (m.t === 'mods' && visible && modSlots.sync(m.mods)))
+      ctx.link.on((m) => {
+        if (m.t !== 'mods') return
+        modIds = new Set(m.mods.map((x) => x.id))
+        if (!visible) return
+        modSlots.sync(m.mods)
+        syncPlugins() // a mod with a built-in's id replaces it
+      })
       ctx.link.onStatus((s) => void (s === 'up' && visible && !ctx.link.remote && ctx.link.send({ t: 'mods' })))
       ctx.store.subscribe((s) => {
         panels.identity(s)

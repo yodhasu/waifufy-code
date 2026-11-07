@@ -46,8 +46,9 @@ function scan(root: string, source: DiscoveredMod['source']): DiscoveredMod[] {
     }
     const r = parseManifest(raw, dir)
     if (!r.ok) out.push(bad(r.reason, r.status))
-    else if (r.manifest.id !== e.name) out.push(bad('folder name must match id'))
-    else out.push({ id: e.name, dir, source, manifest: r.manifest, status: 'ok' })
+    // A repo plugin folder is shared with other tools (waifufy-tickets is also a Claude Code plugin), so only it may be named differently.
+    else if (r.manifest.id !== e.name && source !== 'repo') out.push(bad('folder name must match id'))
+    else out.push({ id: r.manifest.id, dir, source, manifest: r.manifest, status: 'ok' })
   }
   return out
 }

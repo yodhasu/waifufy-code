@@ -68,6 +68,13 @@ test('folder name differing from manifest id -> invalid "folder name must match 
   eq([m.id, m.status, m.reason], ['folder', 'invalid', 'folder name must match id'], 'entry')
 })
 
+test('a repo plugin folder may be named differently from its mod id', () => {
+  const repo = tmp()
+  mod(repo, 'folder', good('other'))
+  const [m] = discoverMods({ env: tmp(), installed: tmp(), repo })
+  eq([m.id, m.status, m.source], ['other', 'ok', 'repo'], 'entry')
+})
+
 test('modDataDir creates and returns a per-mod folder under DATA_DIR', () => {
   eq(modDataDir('x'), join(dataDir, 'mod-data', 'x'), 'path')
 })
