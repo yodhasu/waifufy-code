@@ -1,7 +1,7 @@
 // Unit check of Mods.install / Mods.remove and the settings merge (link/src/mods/index.ts): copying a mod folder into
 // the data folder, replacing an older version, removal keeping its data, and partial settings updates.
 // Run: node tests/unit/mods-install.test.mjs   (no app, no Claude).
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -46,7 +46,12 @@ for (const [root, id] of [[envRoot, 'envmod'], [repoRoot, 'repomod']]) {
   writeFileSync(join(dir, 'mod.json'), JSON.stringify({ id, name: id, version: '1.0.0', apiVersion: 1, panel: { entry: 'ui/index.html', slot: 'chat.left' } }))
 }
 const flags = {}
+let failCopy = false
 const mods = new Mods({
+  copy: (from, to) => {
+    cpSync(from, to, { recursive: true })
+    if (failCopy) throw new Error('disk full')
+  },
   host: new ModHost({ stopGraceMs: 300, restartDelayMs: 0 }),
   discover: () => discoverMods({ env: envRoot, installed: modsDir(), repo: repoRoot }),
   broadcast: () => {},
@@ -84,6 +89,27 @@ try {
     eq(await mods.install(source('fresh', '2.0.0'), true), { ok: true, id: 'fresh' }, 'replaced')
     eq(info('fresh').version, '2.0.0', 'new version listed')
     eq(readFileSync(join(modsDir(), 'fresh', 'ui', 'index.html'), 'utf8'), '<h1>fresh 2.0.0</h1>', 'new files')
+  })
+
+  await test('a failed copy leaves the old version installed and listed', async () => {
+    failCopy = true
+    const r = await mods.install(source('fresh', '3.0.0'), true)
+    failCopy = false
+    ok(!r.ok && /disk full/.test(r.reason), JSON.stringify(r))
+    eq(info('fresh').version, '2.0.0', 'still listed at the old version')
+    eq(readFileSync(join(modsDir(), 'fresh', 'ui', 'index.html'), 'utf8'), '<h1>fresh 2.0.0</h1>', 'old files intact')
+    ok(!existsSync(join(dataDir, '.mods-install-fresh')), 'no temp folder left')
+  })
+
+  await test('a path inside the installed folder is refused and nothing is deleted', async () => {
+    // A valid mod folder nested in the installed one (replace from a subfolder).
+    const sub = join(modsDir(), 'fresh', 'sub')
+    const stage = tmp()
+    cpSync(join(modsDir(), 'fresh'), stage, { recursive: true })
+    cpSync(stage, sub, { recursive: true })
+    const r = await mods.install(sub, true)
+    ok(!r.ok && /already installed from that folder/.test(r.reason), JSON.stringify(r))
+    ok(existsSync(join(sub, 'mod.json')) && existsSync(join(modsDir(), 'fresh', 'mod.json')), 'source and installed copy intact')
   })
 
   await test('remove keeps mod-data unless deleteData', async () => {

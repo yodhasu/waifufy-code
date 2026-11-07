@@ -128,5 +128,20 @@ export default {
         await reported(app, (p) => p.page === 'settings')
       },
     },
+    {
+      r: 'M2',
+      name: 'a new settings-page URL (a restarted link has a new token) remounts the page',
+      async run({ app }) {
+        const sel = `${row('knobs')} iframe`
+        const before = await app.eval((s) => document.querySelector(s).src, sel)
+        const mods = (await app.events(0, 'mods')).at(-1).mods.map((m) => (m.id === 'knobs' ? { ...m, settingsPageUrl: m.settingsPageUrl + '?t=2' } : m))
+        await app.inject({ t: 'mods', mods })
+        await app.waitFor((s, old) => document.querySelector(s)?.src.endsWith('?t=2') && document.querySelector(s).src !== old, { args: [sel, before], label: 'the settings page iframe is mounted with the new URL' })
+        // The same list again must not remount it.
+        await app.eval((s) => void (window.__frame = document.querySelector(s)), sel)
+        await app.inject({ t: 'mods', mods })
+        eq(await app.eval((s) => window.__frame === document.querySelector(s), sel), true, 'an unchanged URL keeps the frame')
+      },
+    },
   ],
 }

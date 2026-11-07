@@ -3,8 +3,8 @@
 // WebSocket; everything here reaches the app through the `broadcast` it is given.
 
 import { EventEmitter } from 'node:events'
-import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve, sep } from 'node:path'
 import type { ModInfo, ServerMsg } from '../protocol.ts'
 import { discoverMods, modDataDir, modsDir, type DiscoveredMod } from './discover.ts'
 import { ModHost } from './host.ts'
@@ -27,6 +27,8 @@ export type ModsOptions = {
   /** Runs `chat.send` for a mod (already permission-checked). */
   app: (id: string, capability: 'chat.send', params: unknown) => unknown
   discover?: () => DiscoveredMod[]
+  /** Copies a mod folder on install (cpSync); a seam for tests. */
+  copy?: (from: string, to: string) => void
   host?: ModHost
 }
 
@@ -79,16 +81,25 @@ export class Mods extends EventEmitter {
     if (!r.ok) return { ok: false, reason: r.reason }
     const id = r.manifest.id
     const dest = join(modsDir(), id)
-    if (resolve(path) === resolve(dest)) return { ok: false, reason: `${id} is already installed from that folder` }
+    const src = resolve(path), target = resolve(dest)
+    // The source may not be the destination or inside it: replacing deletes the destination.
+    if (src === target || src.startsWith(target + sep)) return { ok: false, reason: `${id} is already installed from that folder` }
     if (existsSync(dest) && !replace) return { ok: false, reason: `${id} is already installed`, needsReplace: true }
+    // Copy beside the destination first, so a failed copy leaves the old version (and its backend) alone.
+    const tmp = join(dirname(modsDir()), `.mods-install-${id}`)
     try {
+      rmSync(tmp, { recursive: true, force: true })
+      ;(this.o.copy ?? ((from, to) => cpSync(from, to, { recursive: true })))(path, tmp)
       await this.host.stop(id)
+      mkdirSync(modsDir(), { recursive: true })
       rmSync(dest, { recursive: true, force: true })
-      cpSync(path, dest, { recursive: true })
+      renameSync(tmp, dest)
     } catch (e) {
       return { ok: false, reason: `could not copy the mod: ${(e as Error).message}` }
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+      await this.rescan() // every exit: the list and backends match the disk
     }
-    await this.rescan()
     return { ok: true, id }
   }
 

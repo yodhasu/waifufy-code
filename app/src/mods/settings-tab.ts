@@ -40,7 +40,7 @@ export function mountModsTab(host: HTMLElement, ctx: Ctx): { show(): void } {
   const emptyEl = host.querySelector<HTMLElement>('[data-mod-empty]')!
   let mods: ModInfo[] = []
   /** Rows by mod id, with what they were drawn from and their settings page's teardown. */
-  const rows = new Map<string, { el: HTMLElement; sig: string; off?: () => void }>()
+  const rows = new Map<string, { el: HTMLElement; sig: string; url?: string; off?: () => void }>()
   /** A row's open confirm step: the permission list before a first enable, or the remove confirmation. */
   const step = new Map<string, Step>()
   let changedAt = 0
@@ -120,13 +120,14 @@ export function mountModsTab(host: HTMLElement, ctx: Ctx): { show(): void } {
       // The panel token in the URLs changes nothing the row shows, so it stays out of the signature.
       const sig = JSON.stringify([m.name, m.version, m.description, m.status, m.reason, m.enabled, m.permissions, m.settings, m.source, !!m.settingsPageUrl, step.get(m.id)])
       let r = rows.get(m.id)
-      if (!r || r.sig !== sig) {
+      // A new settings-page URL (the token changes when the link restarts) remounts the page; it is only compared.
+      if (!r || r.sig !== sig || r.url !== m.settingsPageUrl) {
         r?.off?.()
         const el = document.createElement('div')
         el.innerHTML = rowHtml(m)
         const fresh = el.firstElementChild as HTMLElement
         r?.el.replaceWith(fresh)
-        r = { el: fresh, sig }
+        r = { el: fresh, sig, url: m.settingsPageUrl }
         rows.set(m.id, r)
         const page = fresh.querySelector<HTMLElement>('[data-mod-page]')
         if (page && m.settingsPageUrl) {
