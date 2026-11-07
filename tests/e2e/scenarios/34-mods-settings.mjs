@@ -54,7 +54,7 @@ export default {
         eq(rows.probe, { status: 'running', on: true }, 'probe runs')
         eq(rows.knobs, { status: 'off', on: false }, 'knobs is off')
         assert(rows.boom, 'boom is listed')
-        eq(await app.eval(() => !!document.querySelector('[data-test="mods-builtin"] [data-test="set-plugins.tickets"]')), true, 'the built-in ticket switch sits in the Built-in group')
+        eq(await app.eval(() => !!document.querySelector('[data-test="mods-builtin"], [data-test^="set-plugins."]')), false, 'no built-in group is left')
       },
     },
     {

@@ -33,7 +33,6 @@ import {
   addDevice, addresses, deviceName, phoneAuth, REMOTE_PORT, remoteEnabled, remoteStatus, removeDevice, resetRemoteToken, sawDevice, setRemoteEnabled,
 } from './remote.ts'
 import { acceptTrust, isTrusted, trustConcerns } from './trust.ts'
-import { ticketBoard } from './tickets.ts'
 
 // The Tauri app starts this process with a free port and a token, and closes stdin when it quits.
 const PORT = Number(process.env.WC_PORT ?? 47900)
@@ -1027,11 +1026,6 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       const { id, channel, text, thread } = m
       return slackReply(ws, async () => (await slack.send(channel, text, thread), { t: 'slack_sent', id, ok: true }), (error) => ({ t: 'slack_sent', id, ok: false, error }))
     }
-    case 'tickets':
-      // Session-independent, like the slack cases: the board is read from the plugin's own store on disk,
-      // so the panel works before anything is started. `ticketBoard` answers, it never throws for a missing plugin.
-      need(m.project === undefined || isStr(m.project), 'project')
-      return sendTo(ws, { t: 'tickets', board: await ticketBoard(m.project) })
     case 'attach':
       return attach(ws)
     case 'mods':

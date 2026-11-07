@@ -1,11 +1,9 @@
 // Settings → Mods (WC-20): every mod with its status and an enable switch, its declared settings as native controls,
-// its own settings page in a sandboxed slot, install from a folder and remove. The built-in UI plugins
-// (app/src/plugins) keep their switches in a "Built-in" group until they become mods. The list is the link's `mods`
+// its own settings page in a sandboxed slot, install from a folder and remove. The list is the link's `mods`
 // message; a row is redrawn only when what it shows changed, so a field being typed in is never replaced under the cursor.
 
 import type { ModInfo, ServerMsg } from '../../../link/src/protocol.ts'
 import type { Ctx } from '../contracts'
-import { pluginEnabled, setPluginFlag, UI_PLUGINS } from '../plugins'
 import { esc } from '../ui'
 import { secretDelete, secretGet, secretSet } from './secrets'
 import { mountModPanel } from './slot'
@@ -20,12 +18,6 @@ type Step = 'perms' | 'remove'
 
 /** The markup of the tab; settings.ts puts it in the Mods pane and calls `mountModsTab` on it. */
 export const MODS_PANE = `<div class="set-cols">
-  <section class="set-card wide" data-test="mods-builtin"><h4>Built-in</h4>
-    ${UI_PLUGINS.map(
-      (p) => `<label class="set-toggle"><input type="checkbox" data-test="set-plugins.${p.id}" data-builtin="${p.id}"><i></i>
-        <span><b>${esc(p.name)}</b><small>${esc(p.description)}</small></span></label>`,
-    ).join('')}
-  </section>
   <section class="set-card wide" data-test="mods-list"><h4>Mods</h4>
     <div class="mod-rows" data-mod-rows></div>
     <p class="set-empty" data-mod-empty hidden>No mods yet. Install one from a folder, or drop it in <code>plugins/</code>.</p>
@@ -140,10 +132,6 @@ export function mountModsTab(host: HTMLElement, ctx: Ctx): { show(): void } {
     })
   }
 
-  function paintBuiltin() {
-    for (const el of host.querySelectorAll<HTMLInputElement>('[data-builtin]')) el.checked = pluginEnabled(ctx.store.get(), el.dataset.builtin!)
-  }
-
   const modOf = (id: string | undefined) => mods.find((m) => m.id === id)
 
   function setStep(id: string, s: Step | undefined) {
@@ -208,11 +196,7 @@ export function mountModsTab(host: HTMLElement, ctx: Ctx): { show(): void } {
   host.addEventListener('change', (e) => {
     const t = e.target
     if (!(t instanceof HTMLInputElement || t instanceof HTMLSelectElement)) return
-    if (t.dataset.builtin) {
-      const on = (t as HTMLInputElement).checked
-      // Only a real change is written, so toggling back and forth does not queue settings saves for nothing.
-      if (on !== pluginEnabled(ctx.store.get(), t.dataset.builtin)) ctx.store.update((s) => setPluginFlag(s, t.dataset.builtin!, on))
-    } else if (t.dataset.modToggle) {
+    if (t.dataset.modToggle) {
       const id = t.dataset.modToggle
       const on = (t as HTMLInputElement).checked
       if (on && !approved(id)) {
@@ -253,14 +237,11 @@ export function mountModsTab(host: HTMLElement, ctx: Ctx): { show(): void } {
       for (const mod of mods) paint(rows.get(mod.id)!.el, mod)
     }
   })
-  ctx.store.subscribe(paintBuiltin)
-  paintBuiltin()
   // Phones have no mods (they are managed on the desktop): only the built-in switches show.
   if (ctx.link.remote) host.querySelector<HTMLElement>('[data-test="mods-list"]')!.hidden = true
 
   return {
     show() {
-      paintBuiltin()
       if (!ctx.link.remote) ctx.link.send({ t: 'mods' })
     },
   }
