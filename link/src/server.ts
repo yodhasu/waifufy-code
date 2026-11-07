@@ -1096,13 +1096,19 @@ async function modMessage(ws: WebSocket, m: ModMsg) {
       return mods.enable(m.id, m.enabled)
     case 'mod-settings':
       need(isStr(m.id) && m.values && typeof m.values === 'object' && !Array.isArray(m.values), 'id, values')
-      return mods.setSettings(m.id, m.values)
-    // shortcut: install and remove arrive with Task 8 (WC-20); until then they say so.
+      // A rejected value is the sender's mistake, told to it as an app_error with the reason.
+      return mods.setSettings(m.id, m.values).catch((e) => {
+        throw new BadRequest(errorText(e))
+      })
     case 'mod-install':
-      return sendTo(ws, { t: 'mod-install', ok: false, reason: 'not implemented' })
+      need(isStr(m.path), 'path')
+      return sendTo(ws, { t: 'mod-install', ...(await mods.install(m.path, m.replace === true)) })
     case 'mod-remove':
       need(isStr(m.id), 'id')
-      return sendTo(ws, { t: 'mod-remove', id: m.id, ok: false, reason: 'not implemented' })
+      return mods.remove(m.id, m.deleteData === true).then(
+        () => sendTo(ws, { t: 'mod-remove', id: m.id, ok: true }),
+        (e) => sendTo(ws, { t: 'mod-remove', id: m.id, ok: false, reason: errorText(e) }),
+      )
   }
 }
 

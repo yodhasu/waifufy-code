@@ -3,13 +3,13 @@
 // WebSocket; everything here reaches the app through the `broadcast` it is given.
 
 import { EventEmitter } from 'node:events'
-import { readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import type { ModInfo, ServerMsg } from '../protocol.ts'
-import { discoverMods, modDataDir, type DiscoveredMod } from './discover.ts'
+import { discoverMods, modDataDir, modsDir, type DiscoveredMod } from './discover.ts'
 import { ModHost } from './host.ts'
 import { panelToken } from './http.ts'
-import type { SettingField, ToolDef } from './manifest.ts'
+import { parseManifest, type SettingField, type ToolDef } from './manifest.ts'
 
 export type AppEventType = 'turn.end' | 'emotion' | 'affection' | 'message'
 /** The permission each app event needs. */
@@ -29,6 +29,8 @@ export type ModsOptions = {
   discover?: () => DiscoveredMod[]
   host?: ModHost
 }
+
+export type InstallResult = { ok: true; id: string } | { ok: false; reason: string; needsReplace?: boolean }
 
 export class Mods extends EventEmitter {
   private o: ModsOptions
@@ -54,8 +56,55 @@ export class Mods extends EventEmitter {
   }
 
   async init(): Promise<void> {
+    await this.rescan()
+  }
+
+  /** Finds the mod folders again (after an install or removal) and brings the backends in line. */
+  private async rescan(): Promise<void> {
     this.mods = (this.o.discover ?? discoverMods)()
     await this.refresh()
+  }
+
+  /** Validates the mod folder at `path` and copies it into the data folder; an existing id needs `replace`. */
+  async install(path: string, replace = false): Promise<InstallResult> {
+    const file = join(path, 'mod.json')
+    if (!existsSync(file)) return { ok: false, reason: 'no mod.json in that folder' }
+    let raw: unknown
+    try {
+      raw = JSON.parse(readFileSync(file, 'utf8'))
+    } catch (e) {
+      return { ok: false, reason: `mod.json is not valid JSON: ${(e as Error).message}` }
+    }
+    const r = parseManifest(raw, path)
+    if (!r.ok) return { ok: false, reason: r.reason }
+    const id = r.manifest.id
+    const dest = join(modsDir(), id)
+    if (resolve(path) === resolve(dest)) return { ok: false, reason: `${id} is already installed from that folder` }
+    if (existsSync(dest) && !replace) return { ok: false, reason: `${id} is already installed`, needsReplace: true }
+    try {
+      await this.host.stop(id)
+      rmSync(dest, { recursive: true, force: true })
+      cpSync(path, dest, { recursive: true })
+    } catch (e) {
+      return { ok: false, reason: `could not copy the mod: ${(e as Error).message}` }
+    }
+    await this.rescan()
+    return { ok: true, id }
+  }
+
+  /** Deletes an installed mod's folder (and its data folder with `deleteData`). Env and repo mods are not ours to delete. */
+  async remove(id: string, deleteData = false): Promise<void> {
+    const m = this.find(id)
+    if (!m) throw new Error(`no mod ${id}`)
+    if (m.source !== 'installed') throw new Error(`${id} is not an installed mod: remove its folder yourself`)
+    await this.host.stop(id)
+    rmSync(m.dir, { recursive: true, force: true })
+    if (deleteData) {
+      rmSync(modDataDir(id), { recursive: true, force: true })
+      this.secrets.delete(id)
+    }
+    this.errors.delete(id)
+    await this.rescan()
   }
 
   /** Re-reads the flags and starts or stops backends to match (after the settings changed). */
@@ -123,12 +172,7 @@ export class Mods extends EventEmitter {
   private values(m: DiscoveredMod, withSecrets: boolean): Record<string, unknown> {
     const out: Record<string, unknown> = {}
     const fields = m.manifest?.settings ?? []
-    let stored: Record<string, unknown> = {}
-    try {
-      if (fields.length) stored = JSON.parse(readFileSync(this.settingsFile(m.id), 'utf8'))
-    } catch {
-      // no file yet, or a broken one: the defaults stand
-    }
+    const stored = fields.length ? this.readStored(m.id) : {}
     const secrets = this.secrets.get(m.id) ?? {}
     for (const f of fields) {
       const v = f.type === 'secret' ? (withSecrets ? secrets[f.key] : undefined) : stored[f.key]
@@ -138,17 +182,29 @@ export class Mods extends EventEmitter {
     return out
   }
 
-  /** Keeps the declared, well-typed values: secrets in memory, the rest in the mod's settings.json. */
+  private readStored(id: string): Record<string, unknown> {
+    try {
+      return JSON.parse(readFileSync(this.settingsFile(id), 'utf8'))
+    } catch {
+      return {} // no file yet, or a broken one: the defaults stand
+    }
+  }
+
+  /**
+   * Merges `values` into the stored settings: secrets in memory, the rest in the mod's settings.json. Every value is
+   * checked first and a bad one rejects the whole call with the reason, so nothing is half-applied or silently dropped.
+   */
   async setSettings(id: string, values: Record<string, unknown>): Promise<void> {
     const m = this.find(id)
     if (!m?.manifest) throw new Error(`no mod ${id}`)
-    const plain: Record<string, unknown> = {}
+    const plain = this.readStored(id)
     const secret: Record<string, unknown> = { ...this.secrets.get(id) }
-    for (const f of m.manifest.settings) {
-      const v = values?.[f.key]
-      if (!valid(f, v)) continue
-      if (f.type === 'secret') secret[f.key] = v
-      else plain[f.key] = v
+    for (const [key, v] of Object.entries(values)) {
+      const f = m.manifest.settings.find((x) => x.key === key)
+      if (!f) throw new Error(`${id} has no setting "${key}"`)
+      if (!valid(f, v)) throw new Error(`setting "${key}" must be ${EXPECTED[f.type]}`)
+      if (f.type === 'secret') secret[key] = v
+      else plain[key] = v
     }
     writeFileSync(this.settingsFile(id), JSON.stringify(plain, null, 2) + '\n')
     this.secrets.set(id, secret)
@@ -235,6 +291,8 @@ export class Mods extends EventEmitter {
     return this.host.stopAll()
   }
 }
+
+const EXPECTED: Record<SettingField['type'], string> = { string: 'text', secret: 'text', number: 'a number', boolean: 'true or false', select: 'one of its options' }
 
 function valid(f: SettingField, v: unknown): boolean {
   switch (f.type) {

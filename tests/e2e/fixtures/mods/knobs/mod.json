@@ -1,0 +1,17 @@
+{
+  "id": "knobs",
+  "name": "Knobs",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "E2E fixture: declared settings of every kind and a custom settings page that reports what the backend holds.",
+  "backend": { "entry": "backend.mjs" },
+  "settingsPage": "ui/settings.html",
+  "permissions": ["events.turn", "notify"],
+  "settings": [
+    { "key": "name", "type": "string", "label": "Name", "default": "Rem" },
+    { "key": "limit", "type": "number", "label": "Limit", "default": 3 },
+    { "key": "mode", "type": "select", "label": "Mode", "options": ["calm", "loud"], "default": "calm" },
+    { "key": "shout", "type": "boolean", "label": "Shout", "default": false },
+    { "key": "token", "type": "secret", "label": "Token" }
+  ]
+}

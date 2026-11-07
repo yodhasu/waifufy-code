@@ -22,6 +22,8 @@ serde = { version = "1", features = ["derive"] }
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
+# Mod secret settings (src/secrets.rs): the OS credential store.
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
 
 # The phone app pairs with a desktop by scanning the QR code its Settings show.
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]

@@ -673,7 +673,7 @@ pub fn run() {
             thread::spawn(move || supervise(handle));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![link_info, quit])
+        .invoke_handler(tauri::generate_handler![link_info, quit, crate::secrets::secret_get, crate::secrets::secret_set, crate::secrets::secret_delete])
         .build(context)
         .expect("error while building waifufy-code");
     app.run(|app, event| {

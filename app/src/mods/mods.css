@@ -7,3 +7,15 @@
 .mod-error { display: flex; flex-direction: column; gap: 6px; padding: 8px 9px; font-size: 12px; color: var(--text-soft); }
 .mod-error p { margin: 0; }
 .mod-error-acts { display: flex; gap: 6px; }
+
+/* Settings → Mods (app/src/mods/settings-tab.ts) */
+.mod-rows { display: flex; flex-direction: column; gap: 10px; }
+.mod-row { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 12px; border: 1px solid var(--panel-line); background: var(--panel-inset); }
+.mod-pill { font-style: normal; font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--c-buffer); color: var(--text-soft); }
+.mod-pill[data-status="running"] { background: var(--accent); color: #fff; }
+.mod-pill[data-status="crashed"], .mod-pill[data-status="invalid"], .mod-pill[data-status="incompatible"] { background: #c0504d; color: #fff; }
+.mod-reason { color: #c0504d; }
+.mod-perms { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 10px; background: var(--hover); font-size: 13px; }
+.mod-perms p, .mod-perms ul { margin: 0; }
+.mod-perms ul { padding-left: 18px; }
+.mod-page .mod-panel { margin-top: 2px; }

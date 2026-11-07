@@ -786,7 +786,7 @@ export type ServerMsg =
   | { t: 'mod-reply'; id: string; seq: number; ok: boolean; value?: unknown; error?: string }
   /** A mod's backend push (`panel.emit`) or a permitted app event, for its panel; `id: '_app'` is for the app itself: `theme.set` (payload: CSS variables) or `notify` (payload `{ modId, text }`, a toast). */
   | { t: 'mod-event'; id: string; type: string; payload: unknown }
-  | { t: 'mod-install'; ok: boolean; id?: string; reason?: string }
+  | { t: 'mod-install'; ok: boolean; id?: string; reason?: string; needsReplace?: boolean }
   | { t: 'mod-remove'; id: string; ok: boolean; reason?: string }
 
 /** One input of an MCP elicitation form, from a property of its requested JSON schema. */

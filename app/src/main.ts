@@ -14,6 +14,7 @@ import { studioScreen } from './screens/studio'
 import { applyAppearance, createStore } from './state'
 import { lowSpec } from './lowspec'
 import { installBackButton } from './back'
+import { watchModSecrets } from './mods/secrets'
 import { pickRemoteFolder } from './remote-folder'
 import { createSlack } from './slack'
 import { createVoice } from './voice'
@@ -211,6 +212,8 @@ const ctx: Ctx = {
   pickFile: link.remote ? async () => '' : pickFile,
   pickSavePath: link.remote ? async () => '' : pickSavePath,
 }
+// Mods keep their secret settings in the system keychain; the link only holds them in memory (desktop only).
+if (!link.remote) watchModSecrets(link)
 for (const [name, screen] of Object.entries(screens)) screen.mount(document.getElementById(`screen-${name}`)!, ctx)
 
 // WebView2 keeps the browser's reload keys. Reloading would drop the page's session (the link closes it), so they

@@ -193,7 +193,7 @@ try {
   })
 
   await test('settings values persist to mod-data/<id>/settings.json except secret fields', async () => {
-    await mods.setSettings('alpha', { name: 'Rem', limit: 'lots', token: 's3cret', bogus: 1 })
+    await mods.setSettings('alpha', { name: 'Rem', token: 's3cret' })
     const file = JSON.parse(readFileSync(join(modDataDir('alpha'), 'settings.json'), 'utf8'))
     eq(file, { name: 'Rem' }, 'file')
     eq(info('alpha').values, { name: 'Rem', limit: 3 }, 'values shown (no secret)')
