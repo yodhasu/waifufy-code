@@ -604,7 +604,7 @@ async function start(m: Extract<ClientMsg, { t: 'start' }>) {
     // From here to `current = live` nothing awaits, so no other start can slip in between.
     live = makeLive(m.epoch, cwd, settings.card)
     current = live
-    live.session = factory({ epoch: m.epoch, cwd, resume: m.resume, resumeAt: m.resumeAt, dropsTurn: m.dropsTurn, settings, claudePath, emit: live.emit })
+    live.session = factory({ epoch: m.epoch, cwd, resume: m.resume, resumeAt: m.resumeAt, dropsTurn: m.dropsTurn, settings, claudePath, emit: live.emit, mods })
     console.log(`[session] epoch ${m.epoch} ${m.resume ? `resume ${m.resume}` : 'new'} in ${cwd}${MOCK ? ' (mock)' : ''}`)
     const started: SessionEvent = { t: 'started', cwd, cwdShort: shortPath(cwd), resumed: !!m.resume, history, save, love }
     live.latest.set('started', started)

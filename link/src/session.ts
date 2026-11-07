@@ -41,6 +41,7 @@ import {
 } from './protocol.ts'
 import type { SessionApi, SessionFactory, SessionOptions } from './session-api.ts'
 import { ATTACH_DIR } from './attachments.ts'
+import { MODS_SERVER, modsMcpServer, modToolNames, writeSkillsPlugin } from './mods/claude-adapter.ts'
 import { HISTORY_SERVER, HISTORY_TOOL_NAMES, historyServer } from './history-search.ts'
 import { addressOf, defaultSettings } from './settings.ts'
 import { status as slackStatus } from './slack.ts'
@@ -507,6 +508,7 @@ class Session implements SessionApi {
     } catch (e) {
       return this.die(`Claude Code could not start: ${message(e)}`)
     }
+    this.opts.mods?.on('changed', this.onModsChanged)
     void this.pump(q)
     const c = this.opts.settings.claude
     const mode = c.permissionMode === 'default' ? settingsMode(this.cwd, c.settingSources) : c.permissionMode
@@ -543,6 +545,7 @@ class Session implements SessionApi {
   private options(): Options {
     const s = this.opts.settings
     const c = s.claude
+    const mods = this.opts.mods
     return {
       cwd: this.cwd,
       ...(this.opts.resume ? { resume: this.opts.resume } : { sessionId: this.sid }),
@@ -573,15 +576,36 @@ class Session implements SessionApi {
       // search_history over this session's every line, and her Slack tools while the app is signed in to Slack
       // (signing in mid-session adds them from the next one). None asks through the CLI's prompt: reading needs no
       // approval, and Slack's `send` asks the person itself, in every mode.
-      mcpServers: {
-        [HISTORY_SERVER]: historyServer(() => {
-          const s = this.opts.settings
-          return { id: this.sessionId(), cwd: this.cwd, you: addressOf(s), name: s.waifu.name.trim() || defaultSettings().waifu.name }
-        }),
-        ...(slackStatus().signedIn ? { [SLACK_SERVER]: slackServer((o) => this.confirmSend(o)) } : {}),
-      },
-      allowedTools: [...HISTORY_TOOL_NAMES, ...(slackStatus().signedIn ? SLACK_TOOL_NAMES : [])],
+      mcpServers: this.servers(),
+      allowedTools: [...HISTORY_TOOL_NAMES, ...(slackStatus().signedIn ? SLACK_TOOL_NAMES : []), ...(mods ? modToolNames(mods) : [])],
+      // The enabled mods' skills, as a local plugin written fresh at each start.
+      ...(mods ? { plugins: [{ type: 'local' as const, path: writeSkillsPlugin(mods) }] } : {}),
     }
+  }
+
+  /** Every in-process MCP server the session offers; setMcpServers replaces the whole set, so a refresh sends all of it. */
+  private servers() {
+    const mods = this.opts.mods
+    return {
+      [HISTORY_SERVER]: historyServer(() => {
+        const s = this.opts.settings
+        return { id: this.sessionId(), cwd: this.cwd, you: addressOf(s), name: s.waifu.name.trim() || defaultSettings().waifu.name }
+      }),
+      ...(slackStatus().signedIn ? { [SLACK_SERVER]: slackServer((o) => this.confirmSend(o)) } : {}),
+      ...(mods ? { [MODS_SERVER]: modsMcpServer(mods) } : {}),
+    }
+  }
+
+  /** A mod was enabled, disabled or restarted: the tool list updates now (new tools are not auto-allowed, so the normal prompt applies); skills from the next session. */
+  private onModsChanged = () => {
+    const mods = this.opts.mods
+    if (!mods || this.ended) return
+    try {
+      writeSkillsPlugin(mods)
+    } catch (e) {
+      console.warn('[mods] could not write the skills plugin:', message(e))
+    }
+    this.q?.setMcpServers(this.servers()).catch((e) => console.warn("[mods] could not update the session's tools:", message(e)))
   }
 
   /** A Slack send waits on the person: the same choice menu as a permission prompt, with no "don't ask again". */
@@ -727,6 +751,7 @@ class Session implements SessionApi {
     for (const p of this.pending.values()) p.resolve({ behavior: 'deny', message: 'The session was closed.', interrupt: true })
     this.pending.clear()
     this.inbox.close()
+    this.opts.mods?.off('changed', this.onModsChanged)
     this.q?.close()
   }
 
@@ -893,6 +918,7 @@ class Session implements SessionApi {
     // Also keeps pump() from reporting the abort error that closing causes.
     this.closed = true
     this.inbox.close()
+    this.opts.mods?.off('changed', this.onModsChanged)
     this.q?.close()
   }
 

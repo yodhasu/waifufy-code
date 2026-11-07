@@ -1,5 +1,6 @@
 import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk'
 import type { Mood } from './affection.ts'
+import type { Mods } from './mods/index.ts'
 import type { ChatMode, CtlOp, Image, PermissionModeName, SessionEvent, Settings } from './protocol.ts'
 
 /** Contract between server.ts and a session implementation: session.ts (real SDK) or mock.ts (E2E tests). */
@@ -16,6 +17,8 @@ export type SessionOptions = {
   /** Full path to the Claude Code executable (bundled claude.exe in release); undefined = SDK default lookup. */
   claudePath?: string
   emit(e: SessionEvent): void
+  /** The mods whose tools and skills the agent gets; absent (tests) = none. */
+  mods?: Mods
 }
 
 export interface SessionApi {

@@ -23,6 +23,7 @@ import {
   type Todo,
 } from './protocol.ts'
 import { toPreset, type ResearchOptions } from './research.ts'
+import { callModTool } from './mods/claude-adapter.ts'
 import type { SessionApi, SessionFactory, SessionOptions } from './session-api.ts'
 import { addressOf } from './settings.ts'
 import { voiceActive } from './tts.ts'
@@ -594,6 +595,7 @@ class MockSession implements SessionApi {
     if (/\bquestion/.test(k)) return this.question(turn)
     if (/\bplan\b/.test(k)) return this.plan(turn)
     if (/\bpush\b/.test(k)) return this.push(turn)
+    if (/\bmodtool\b/.test(k)) return this.modTool(turn)
     if (/\btools?\b/.test(k)) return this.tools(turn)
     if (/\blong\b/.test(k)) return this.long(turn)
     if (/\bslow\b/.test(k)) return this.slow(turn)
@@ -612,6 +614,16 @@ class MockSession implements SessionApi {
 
   private get addr() {
     return addressOf(this.opts.settings)
+  }
+
+  /** The agent calls the first enabled mod tool through the adapter's handler, as the SDK's MCP server would. */
+  private async modTool(turn: Turn): Promise<Outcome> {
+    await this.think(turn)
+    const mods = this.opts.mods
+    const first = mods?.enabledTools()[0]
+    const r = mods && first ? await callModTool(mods, first.id, first.tool.name, { text: 'ping' }) : undefined
+    await this.speak(turn, `[nod] Mod tool said: ${r ? (r.content[0] as { text: string }).text : 'no mod tools'}`)
+    return { ok: true }
   }
 
   /** Her answer to a `!` command's output. */

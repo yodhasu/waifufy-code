@@ -3,7 +3,7 @@
 // `waifufy.call('report', …)`, which the test reads off the app's socket: the frame is cross-origin to the page.
 // Tagged M1, the mod work's own tag (R1–R82 predate it).
 import { fileURLToPath } from 'node:url'
-import { assert, eq, newGame, T } from '../lib.mjs'
+import { assert, eq, newGame, say, T, turnEnd } from '../lib.mjs'
 
 const MODS = fileURLToPath(new URL('../fixtures/mods', import.meta.url))
 const panel = (id) => T('mod-panel', { id })
@@ -117,6 +117,18 @@ export default {
         await app.waitSent('mods', {}, m, 10_000)
         eq(await reported(app, 'reconnected', m), true, 'the panel got the reconnected event')
         assert((await reported(app, 'accent', m)) !== undefined, 'the theme was re-sent')
+      },
+    },
+    {
+      r: 'M1',
+      name: 'a mock agent call to the fixture tool reaches its backend',
+      async run({ app, project }) {
+        await newGame(app, project)
+        // The mock agent calls the first enabled mod tool through the adapter's handler; the probe backend echoes `text`.
+        const m = await say(app, 'modtool')
+        await turnEnd(app, m)
+        await app.waitText(T('dialogue-text'), 'echoed', { label: 'her reply carries the backend answer' })
+        await app.waitText(T('dialogue-text'), 'ping', { label: 'the echoed text came from the tool input' })
       },
     },
   ],
