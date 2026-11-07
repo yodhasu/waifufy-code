@@ -6,5 +6,6 @@
   "description": "E2E fixture: a chat.left panel that reports what it sees through the bridge.",
   "panel": { "entry": "ui/index.html", "slot": "chat.left" },
   "backend": { "entry": "backend.mjs" },
+  "permissions": ["agent.tools"],
   "tools": [{ "name": "probe_echo", "description": "Echoes its text back.", "input": { "type": "object", "properties": { "text": { "type": "string" } } } }]
 }

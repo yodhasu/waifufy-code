@@ -41,7 +41,7 @@ import {
 } from './protocol.ts'
 import type { SessionApi, SessionFactory, SessionOptions } from './session-api.ts'
 import { ATTACH_DIR } from './attachments.ts'
-import { MODS_SERVER, modsMcpServer, modToolNames, writeSkillsPlugin } from './mods/claude-adapter.ts'
+import { MODS_SERVER, modsMcpServer, modsSignature, modToolNames, writeSkillsPlugin } from './mods/claude-adapter.ts'
 import { HISTORY_SERVER, HISTORY_TOOL_NAMES, historyServer } from './history-search.ts'
 import { addressOf, defaultSettings } from './settings.ts'
 import { status as slackStatus } from './slack.ts'
@@ -456,6 +456,8 @@ class Session implements SessionApi {
   private stderr: string[] = []
   private closed = false
   private ended = false
+  /** What the session's tools and skills were last built from (modsSignature). */
+  private modsSig = ''
   /** A turn is in flight (sent, no result yet). */
   private running = false
   private turnStart = 0
@@ -579,7 +581,18 @@ class Session implements SessionApi {
       mcpServers: this.servers(),
       allowedTools: [...HISTORY_TOOL_NAMES, ...(slackStatus().signedIn ? SLACK_TOOL_NAMES : []), ...(mods ? modToolNames(mods) : [])],
       // The enabled mods' skills, as a local plugin written fresh at each start.
-      ...(mods ? { plugins: [{ type: 'local' as const, path: writeSkillsPlugin(mods) }] } : {}),
+      ...(mods ? this.skillsPlugin(mods) : {}),
+    }
+  }
+
+  /** The skills plugin option; a failed write (file lock, antivirus) leaves it out rather than aborting the start. */
+  private skillsPlugin(mods: Parameters<typeof modsSignature>[0]) {
+    this.modsSig = modsSignature(mods)
+    try {
+      return { plugins: [{ type: 'local' as const, path: writeSkillsPlugin(mods) }] }
+    } catch (e) {
+      console.warn('[mods] could not write the skills plugin:', message(e))
+      return {}
     }
   }
 
@@ -600,6 +613,10 @@ class Session implements SessionApi {
   private onModsChanged = () => {
     const mods = this.opts.mods
     if (!mods || this.ended) return
+    // Status flips and settings writes also fire `changed`; only a different tool or skill set needs the work below.
+    const sig = modsSignature(mods)
+    if (sig === this.modsSig) return
+    this.modsSig = sig
     try {
       writeSkillsPlugin(mods)
     } catch (e) {

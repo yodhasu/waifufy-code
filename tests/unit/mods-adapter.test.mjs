@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 process.env.WC_DATA_DIR = mkdtempSync(join(tmpdir(), 'wc-adapter-data-'))
-const { MODS_SERVER, callModTool, modToolNames, modsMcpServer, writeSkillsPlugin } = await import('../../link/src/mods/claude-adapter.ts')
+const { MODS_SERVER, callModTool, modToolNames, modsMcpServer, modsSignature, writeSkillsPlugin } = await import('../../link/src/mods/claude-adapter.ts')
 
 const root = mkdtempSync(join(tmpdir(), 'wc-adapter-'))
 const skill = (mod, name) => {
@@ -31,6 +31,17 @@ const tests = [
     assert.equal(s.name, MODS_SERVER)
     assert.deepEqual(Object.keys(s.instance._registeredTools).sort(), ['one', 'two'])
     assert.deepEqual(modToolNames(mods), ['mcp__waifufy-mods__one', 'mcp__waifufy-mods__two'])
+  }],
+  ['modsSignature changes with the tools or skills, not with anything else', async () => {
+    const before = modsSignature(mods)
+    assert.equal(modsSignature({ ...mods }), before)
+    tools = [...tools, { id: 'c', tool: T('three') }]
+    assert.notEqual(modsSignature(mods), before)
+    tools = [{ id: 'a', tool: T('one') }, { id: 'b', tool: T('two') }]
+    assert.equal(modsSignature(mods), before)
+    skills = [...skills, { id: 'c', name: 'new', dir: skills[0].dir }]
+    assert.notEqual(modsSignature(mods), before)
+    skills = skills.slice(0, 2)
   }],
   ['name clash keeps first, logs second', async () => {
     tools = [{ id: 'a', tool: T('dup') }, { id: 'b', tool: T('dup') }]

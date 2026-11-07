@@ -15,6 +15,8 @@
 .mod-pill[data-status="running"] { background: var(--accent); color: #fff; }
 .mod-pill[data-status="crashed"], .mod-pill[data-status="invalid"], .mod-pill[data-status="incompatible"] { background: #c0504d; color: #fff; }
 .mod-reason { color: #c0504d; }
+.mod-has { display: block; opacity: .75; }
+.mod-has code { margin-right: 4px; }
 .mod-perms { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 10px; background: var(--hover); font-size: 13px; }
 .mod-perms p, .mod-perms ul { margin: 0; }
 .mod-perms ul { padding-left: 18px; }

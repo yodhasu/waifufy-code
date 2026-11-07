@@ -53,6 +53,9 @@ export function modsMcpServer(mods: Mods) {
 /** The names `allowedTools` needs for them. */
 export const modToolNames = (mods: Mods): string[] => uniqueTools(mods).map(({ tool: t }) => `mcp__${MODS_SERVER}__${t.name}`)
 
+/** Changes when the enabled tools or skills do; session.ts skips its refresh while this stays the same. */
+export const modsSignature = (mods: Mods): string => JSON.stringify([modToolNames(mods), mods.enabledSkills().map((s) => s.id + '-' + s.name)])
+
 /** Writes the plugin folder (manifest + one skill folder per enabled mod skill, stale ones removed); returns it. */
 export function writeSkillsPlugin(mods: Mods, outDir = join(DATA_DIR, 'adapters', 'claude', MODS_SERVER)): string {
   mkdirSync(join(outDir, '.claude-plugin'), { recursive: true })

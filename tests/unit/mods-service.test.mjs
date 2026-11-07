@@ -51,7 +51,7 @@ function mod(id, manifest) {
 mod('alpha', {
   backend: { entry: 'backend.mjs' },
   panel: { entry: 'ui/index.html', slot: 'chat.left' },
-  permissions: ['events.emotion', 'chat.send', 'theme', 'notify'],
+  permissions: ['events.emotion', 'chat.send', 'theme', 'notify', 'agent.tools'],
   settings: [
     { key: 'name', type: 'string', label: 'Name', default: 'x' },
     { key: 'limit', type: 'number', label: 'Limit', default: 3 },
@@ -60,7 +60,7 @@ mod('alpha', {
   tools: [{ name: 'alpha_tool', description: 'd', input: { type: 'object' } }],
 })
 mod('beta', { backend: { entry: 'backend.mjs' }, permissions: ['events.turn'], defaultEnabled: true })
-mod('gamma', { panel: { entry: 'ui/index.html', slot: 'chat.right' }, permissions: ['events.emotion'] })
+mod('gamma', { panel: { entry: 'ui/index.html', slot: 'chat.right' }, permissions: ['events.emotion'], tools: [{ name: 'gamma_tool', description: 'd', input: { type: 'object' } }] })
 
 const none = join(dataDir, 'none')
 const flags = {}
@@ -138,6 +138,7 @@ try {
 
   await test('appEvent emotion reaches only mods with events.emotion', async () => {
     await mods.enable('gamma', true)
+    eq(mods.enabledTools().map((t) => t.tool.name), ['alpha_tool'], 'a mod without agent.tools offers the agent nothing')
     clear()
     mods.appEvent('emotion', { emotion: 'happy' })
     mods.appEvent('turn.end', { ok: true })

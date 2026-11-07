@@ -79,6 +79,7 @@ function parseField(f: unknown): SettingField {
 function parseTool(t: unknown): ToolDef {
   if (!isObj(t)) throw new Bad('tools entries must be objects')
   const name = needStr(t.name, 'tool name')
+  if (!/^[A-Za-z0-9_-]{1,40}$/.test(name)) throw new Bad(`tool name "${name}" must be 1-40 letters, digits, dashes or underscores`)
   if (!isObj(t.input)) throw new Bad(`tool "${name}" input must be a JSON schema object`)
   return { name, description: needStr(t.description, `tool "${name}" description`), input: t.input }
 }

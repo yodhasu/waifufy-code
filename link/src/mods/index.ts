@@ -90,10 +90,13 @@ export class Mods extends EventEmitter {
     try {
       rmSync(tmp, { recursive: true, force: true })
       ;(this.o.copy ?? ((from, to) => cpSync(from, to, { recursive: true })))(path, tmp)
-      await this.host.stop(id)
-      mkdirSync(modsDir(), { recursive: true })
-      rmSync(dest, { recursive: true, force: true })
-      renameSync(tmp, dest)
+      // Through the mod's queue, so a concurrent toggle can't start a backend in the folder being replaced.
+      await this.exclusive(id, async () => {
+        await this.host.stop(id)
+        mkdirSync(modsDir(), { recursive: true })
+        rmSync(dest, { recursive: true, force: true })
+        renameSync(tmp, dest)
+      })
     } catch (e) {
       return { ok: false, reason: `could not copy the mod: ${(e as Error).message}` }
     } finally {
@@ -108,12 +111,14 @@ export class Mods extends EventEmitter {
     const m = this.find(id)
     if (!m) throw new Error(`no mod ${id}`)
     if (m.source !== 'installed') throw new Error(`${id} is not an installed mod: remove its folder yourself`)
-    await this.host.stop(id)
-    rmSync(m.dir, { recursive: true, force: true })
-    if (deleteData) {
-      rmSync(modDataDir(id), { recursive: true, force: true })
-      this.secrets.delete(id)
-    }
+    await this.exclusive(id, async () => {
+      await this.host.stop(id)
+      rmSync(m.dir, { recursive: true, force: true })
+      if (deleteData) {
+        rmSync(modDataDir(id), { recursive: true, force: true })
+        this.secrets.delete(id)
+      }
+    })
     this.errors.delete(id)
     await this.rescan()
   }
@@ -152,6 +157,13 @@ export class Mods extends EventEmitter {
       this.flags[id] = on
     })
     this.changed()
+  }
+
+  /** Runs `work` after the mod's earlier queued steps, and holds later ones until it is done. */
+  private exclusive(id: string, work: () => Promise<void>): Promise<void> {
+    const run = (this.queue.get(id) ?? Promise.resolve()).then(work)
+    this.queue.set(id, run.catch(() => {}))
+    return run
   }
 
   private apply(id: string, first?: () => Promise<void>): Promise<void> {
@@ -291,7 +303,10 @@ export class Mods extends EventEmitter {
   }
 
   enabledTools(): { id: string; tool: ToolDef }[] {
-    return this.served().flatMap((m) => m.manifest!.tools.map((tool) => ({ id: m.id, tool })))
+    // Tools reach the agent only with the agent.tools permission.
+    return this.served()
+      .filter((m) => m.manifest!.permissions.includes('agent.tools'))
+      .flatMap((m) => m.manifest!.tools.map((tool) => ({ id: m.id, tool })))
   }
 
   enabledSkills(): { id: string; name: string; dir: string }[] {

@@ -2,7 +2,7 @@
 // (an iframe can't send it); each mod's files need that mod's own `pt` token instead.
 
 import { randomBytes, timingSafeEqual } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { extname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -64,7 +64,15 @@ async function handle(url: URL, res: ServerResponse, mods: () => DiscoveredMod[]
   if (!file.startsWith(base + sep)) return send(res, 404, 'not found')
   const type = TYPES[extname(file).toLowerCase()]
   if (!type) return send(res, 404, 'not found')
-  const body = await readFile(file)
+  // The lexical guard above misses a symlink or junction inside ui/ that points out of it.
+  let body: Buffer
+  try {
+    const real = await realpath(file)
+    if (!real.startsWith((await realpath(base)) + sep)) return send(res, 404, 'not found')
+    body = await readFile(real)
+  } catch {
+    return send(res, 404, 'not found')
+  }
   // CSP on every type: an SVG runs scripts too, and panels do all I/O through the bridge.
   send(res, 200, body, type, { 'Content-Security-Policy': "default-src 'self'; connect-src 'none'", 'X-Content-Type-Options': 'nosniff' })
 }

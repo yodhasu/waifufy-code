@@ -438,8 +438,10 @@ function modApp(_id: string, _capability: 'chat.send', params: unknown) {
 
 /** Session events the mods subscribe to (events.turn, events.emotion, events.affection, events.message). */
 function feedMods(live: Live, e: SessionEvent) {
-  if (e.t === 'turn_end') mods.appEvent('turn.end', { ok: e.ok, interrupted: e.interrupted, seconds: e.seconds })
-  else if (e.t === 'face') mods.appEvent('emotion', { emotion: e.emotion })
+  if (e.t === 'turn_end') {
+    mods.appEvent('turn.end', { ok: e.ok, interrupted: e.interrupted, seconds: e.seconds })
+    live.reply = ''
+  } else if (e.t === 'face') mods.appEvent('emotion', { emotion: e.emotion })
   else if (e.t === 'affection') mods.appEvent('affection', { delta: e.delta })
   else if (e.t === 'text') live.reply += e.delta
   else if (e.t === 'text_end') {
@@ -789,15 +791,12 @@ async function handle(ws: WebSocket, m: ClientMsg) {
       // from a window that hasn't heard of a switch yet carry the old card's fields: those go to the old card, and
       // the new one keeps its own.
       const from = m.settings.card
-      let flagsChanged = false
       const saved = await updateSettings((s) => {
-        const next = { ...m.settings, card: s.card }
+        // The link owns the mod flags (mod-enable writes them): no client's settings can toggle a mod.
+        const next = { ...m.settings, card: s.card, plugins: s.plugins }
         if (from !== s.card) keepCard(next, s)
-        flagsChanged = JSON.stringify(s.plugins ?? {}) !== JSON.stringify(next.plugins ?? {})
         return next
       })
-      // A mod turned on or off with the settings (its plugins flag): its backend follows.
-      if (flagsChanged) void mods.refresh().catch((e) => console.warn('[mods] refresh failed:', e))
       if (from !== saved.card) await syncCard(m.settings)
       await syncCard(saved)
       // The sender already has these settings; echoing them back could undo an edit typed meanwhile.

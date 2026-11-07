@@ -1,6 +1,6 @@
 // Unit check of link/src/mods/http.ts serveMod: panel files over real HTTP, per-mod token, path guard, SDK.
 // Run: node tests/unit/mods-http.test.mjs
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -60,6 +60,13 @@ await test('%2e%2e encoded escape → 404', async () => {
   eq(await raw(`/mods/tickets/${pt}/ui/%2e%2e/mod.json`), 404)
   eq(await raw(`/mods/tickets/${pt}/ui/..%2fmod.json`), 404)
   eq(await raw(`/mods/tickets/${pt}/ui/..%5cmod.json`), 404)
+})
+await test('a junction in ui/ pointing outside → 404', async () => {
+  const outside = join(root, 'outside')
+  mkdirSync(outside)
+  writeFileSync(join(outside, 'secret.js'), 'leak')
+  symlinkSync(outside, join(mods[0].dir, 'ui', 'leak'), 'junction')
+  eq((await get(`/mods/tickets/${pt}/ui/leak/secret.js`)).status, 404)
 })
 await test('wrong pt → 403', async () => {
   eq((await get('/mods/tickets/nope/ui/index.html')).status, 403)

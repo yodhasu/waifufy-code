@@ -79,6 +79,7 @@ export function mountModsTab(host: HTMLElement, ctx: Ctx): { show(): void } {
         <span><b>${esc(m.name)}</b> <em class="mod-pill" data-test="mod-status" data-status="${m.status}">${m.status}</em>
           <small>${esc([m.version && `v${m.version}`, m.description].filter(Boolean).join(' · '))}</small>
           ${m.reason ? `<small class="mod-reason" data-test="mod-reason">${esc(m.reason)}</small>` : ''}</span></label>
+      ${m.permissions.length ? `<small class="mod-has" data-test="mod-has">Asks for: ${m.permissions.map((p) => `<code>${esc(p)}</code>`).join(' ')}</small>` : ''}
       ${perms}
       ${m.enabled ? m.settings.map((f) => control(m, f)).join('') : ''}
       ${m.enabled && m.settingsPageUrl ? '<div class="mod-page" data-mod-page></div>' : ''}
@@ -187,10 +188,11 @@ export function mountModsTab(host: HTMLElement, ctx: Ctx): { show(): void } {
 
   async function remove(m: ModInfo, deleteData: boolean) {
     step.delete(m.id)
-    if (deleteData) for (const f of m.settings) if (f.type === 'secret') await secretDelete(m.id, f.key).catch(() => {})
     ctx.link.send({ t: 'mod-remove', id: m.id, deleteData })
     const r = await answer('mod-remove', m.id).catch(() => undefined)
     if (r && !r.ok) ctx.toast(`Couldn't remove ${m.name}: ${r.reason}`, 6000)
+    // Secrets go only once the link has removed the mod.
+    else if (r?.ok && deleteData) for (const f of m.settings) if (f.type === 'secret') await secretDelete(m.id, f.key).catch(() => {})
   }
 
   host.addEventListener('change', (e) => {

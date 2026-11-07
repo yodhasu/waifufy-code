@@ -52,6 +52,7 @@ export default {
           ),
         )
         eq(rows.probe, { status: 'running', on: true }, 'probe runs')
+        eq(await app.texts(`${row('probe')} ${T('mod-has')} code`), ['agent.tools'], 'an enabled mod row shows its permissions')
         eq(rows.knobs, { status: 'off', on: false }, 'knobs is off')
         assert(rows.boom, 'boom is listed')
         eq(await app.eval(() => !!document.querySelector('[data-test="mods-builtin"], [data-test^="set-plugins."]')), false, 'no built-in group is left')

@@ -30,7 +30,7 @@
 2. Link exits or restarts — no orphaned mod processes, panels reconnect and re-request state; test in Task 3 (kill on `stop()`) and Task 6 (reconnect).
 3. A backend that prints a non-JSON or very long stdout line — logged and ignored, the mod keeps running; test in Task 3.
 4. Toggling a mod off and on quickly — exactly one backend process and one panel; test in Task 5.
-5. Several clients connected (desktop + phone remote) — mod pushes and app events reach every client; test in Task 5.
+5. Several clients connected (desktop + phone remote) — mod pushes and app events reach every desktop client, never phone remotes (T5 ruling); test in Task 5.
 
 ## Prerequisite
 

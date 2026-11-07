@@ -68,6 +68,12 @@ test('duplicate tool names in one mod are invalid', () => {
   const r = parseManifest({ ...base, tools: [tool, tool] }, modDir())
   eq([r.ok, r.status], [false, 'invalid'], 'result')
 })
+test('tool names outside [A-Za-z0-9_-]{1,40} are invalid', () => {
+  for (const name of ['a b', 'a.b', 'x'.repeat(41)]) {
+    const r = parseManifest({ ...base, tools: [{ name, description: 'd', input: {} }] }, modDir())
+    eq([r.ok, r.status], [false, 'invalid'], `name ${JSON.stringify(name)}`)
+  }
+})
 test('select without options is invalid', () => {
   const r = parseManifest({ ...base, settings: [{ key: 'k', type: 'select', label: 'K' }] }, modDir())
   eq([r.ok, r.status], [false, 'invalid'], 'result')

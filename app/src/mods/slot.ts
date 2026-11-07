@@ -133,13 +133,19 @@ export function createModSlots(link: Link, hosts: (slot: string) => { parent: HT
 
 /** The `_app` mod events: `theme.set` (CSS variables onto :root) and `notify` (a toast). Returns the unsubscribe. */
 export function listenAppEvents(link: Link, toast: (text: string) => void): () => void {
+  const names = new Map<string, string>()
   return link.on((m) => {
+    if (m.t === 'mods') for (const x of m.mods) names.set(x.id, x.name)
     if (m.t !== 'mod-event' || m.id !== '_app') return
     const p = m.payload as Record<string, unknown> | null
     if (!p || typeof p !== 'object') return
     if (m.type === 'theme.set') {
       // Only CSS variables, only strings: a mod themes the app, it doesn't restyle it.
       for (const [k, v] of Object.entries(p)) if (k.startsWith('--') && typeof v === 'string') document.documentElement.style.setProperty(k, v)
-    } else if (m.type === 'notify' && typeof p.text === 'string') toast(p.text)
+    } else if (m.type === 'notify' && typeof p.text === 'string') {
+      // Prefixed with the mod's name, so a toast can't pass for the app's own.
+      const id = String(p.modId ?? '')
+      toast(`${names.get(id) ?? id}: ${p.text}`)
+    }
   })
 }
