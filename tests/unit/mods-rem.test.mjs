@@ -31,7 +31,7 @@ for (const f of manifest.settings) if (f.key in defaults) f.default = defaults[f
 writeFileSync(join(remDir, 'mod.json'), JSON.stringify(manifest))
 
 const store = new TicketStore(db)
-store.create({ title: 'waiting before the night', project: 'covena', labels: ['rem', 'adipura'] })
+store.create({ title: 'waiting before the night', project: 'work', labels: ['rem', 'client-a'] })
 
 const PORT = 47996
 const TOKEN = 'desktop-token'
@@ -87,8 +87,8 @@ try {
   console.log('PASS  starts a session in the configured folder with the brief')
 
   ok(!got.some((m) => m.t === 'said' && m.text?.includes('waiting before the night')), 'a ticket waiting at start is not forwarded again')
-  store.create({ title: 'not ours', project: 'covena', labels: ['adipura'] })
-  store.create({ title: 'filed during the night', project: 'covena', labels: ['rem', 'smmotorsport'] })
+  store.create({ title: 'not ours', project: 'work', labels: ['client-a'] })
+  store.create({ title: 'filed during the night', project: 'work', labels: ['rem', 'client-b'] })
   await until(got, (m) => m.t === 'said' && m.text?.includes('filed during the night'), 'the forwarded ticket')
   await sleep(1000)
   ok(!got.some((m) => m.t === 'said' && m.text?.includes('not ours')), 'a ticket without the rem label is not forwarded')
