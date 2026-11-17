@@ -87,5 +87,16 @@ await test('a mock clip is a WAV whose length follows the line', () => {
   if (!(long.audio.length > short.audio.length * 2)) throw new Error('a longer line is a longer clip')
 })
 
+await test('the persona carries the memory index only when WAIFUFY_MEMORY_FILE names a file', () => {
+  const s = defaultSettings()
+  const file = join(dir, 'MEMORY.md')
+  writeFileSync(file, '# Index\n- [A note](a.md) — remembered thing')
+  process.env.WAIFUFY_MEMORY_FILE = join(dir, 'missing.md')
+  if (buildPersona(s).includes('## Long-term memory')) throw new Error('a missing file adds nothing')
+  process.env.WAIFUFY_MEMORY_FILE = file
+  if (!buildPersona(s).includes('remembered thing')) throw new Error('the index is in the persona')
+  delete process.env.WAIFUFY_MEMORY_FILE
+})
+
 console.log(failures ? `\n${failures} failed` : '\nall passed')
 process.exit(failures ? 1 : 0)
