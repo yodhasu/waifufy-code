@@ -51,7 +51,7 @@ function mod(id, manifest) {
 mod('alpha', {
   backend: { entry: 'backend.mjs' },
   panel: { entry: 'ui/index.html', slot: 'chat.left' },
-  permissions: ['events.emotion', 'chat.send', 'theme', 'notify', 'agent.tools'],
+  permissions: ['events.emotion', 'chat.send', 'theme', 'notify', 'agent.tools', 'session.interrupt'],
   settings: [
     { key: 'name', type: 'string', label: 'Name', default: 'x' },
     { key: 'limit', type: 'number', label: 'Limit', default: 3 },
@@ -173,6 +173,17 @@ try {
     eq(msg, 'notify needs a non-empty text', 'empty text')
     await mods.appCall('beta', 'notify', { text: 'x' }).catch((e) => (msg = e.message))
     eq(msg, 'permission denied: notify', 'no permission')
+  })
+
+  await test('session.start and session.interrupt need their own permissions, then reach the app callback', async () => {
+    appCalls.length = 0
+    let msg = ''
+    await mods.appCall('alpha', 'session.start', { cwd: 'x' }).catch((e) => (msg = e.message))
+    eq(msg, 'permission denied: session.start', 'chat.send does not grant session.start')
+    eq(await mods.panelCall('beta', 'app', { capability: 'session.interrupt' }), { error: 'permission denied: session.interrupt' }, 'backend call')
+    eq(appCalls, [], 'nothing reached the app')
+    eq(await mods.appCall('alpha', 'session.interrupt'), 'sent', 'with permission')
+    eq(appCalls, [['alpha', 'session.interrupt', undefined]], 'app got it')
   })
 
   await test('toggling off then on quickly leaves one new backend running', async () => {

@@ -1989,6 +1989,12 @@ export function chatScreen(): Screen {
           return ctx.router.go('title')
         }
         if (m.t === 'replay') return void (m.epoch === epoch && live && playReplay(m.events))
+        // A mod started a session: every window goes to it from any screen. A chat already following its `started`
+        // just comes to the front; any other joins it, replay included.
+        if (m.t === 'session_started') {
+          if (ctx.store.get().onboarded) ctx.router.go('chat', m.epoch === epoch && live ? undefined : { attach: true })
+          return
+        }
         if (!('epoch' in m)) return
         if (m.epoch === epoch && live) return onSession(m)
         // Another window started a session (a phone, or the desktop while a phone watches): the link runs one at a

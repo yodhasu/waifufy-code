@@ -15,7 +15,15 @@ export type AppEventType = 'turn.end' | 'emotion' | 'affection' | 'message'
 /** The permission each app event needs. */
 const EVENT_PERMS: Record<AppEventType, string> = { 'turn.end': 'events.turn', emotion: 'events.emotion', affection: 'events.affection', message: 'events.message' }
 /** The permission each capability needs. */
-const CAPABILITY_PERMS: Record<string, string> = { 'chat.send': 'chat.send', notify: 'notify', 'theme.set': 'theme' }
+const CAPABILITY_PERMS: Record<string, string> = {
+  'chat.send': 'chat.send',
+  notify: 'notify',
+  'theme.set': 'theme',
+  'session.start': 'session.start',
+  'session.interrupt': 'session.interrupt',
+}
+/** The capabilities server.ts runs: the ones that touch the session. */
+export type SessionCapability = 'chat.send' | 'session.start' | 'session.interrupt'
 
 export type ModsOptions = {
   broadcast: (m: ServerMsg) => void
@@ -24,8 +32,8 @@ export type ModsOptions = {
   /** The stored `plugins` flags. */
   flags: () => Promise<Record<string, boolean>>
   setFlag: (id: string, on: boolean) => Promise<void>
-  /** Runs `chat.send` for a mod (already permission-checked). */
-  app: (id: string, capability: 'chat.send', params: unknown) => unknown
+  /** Runs a session capability for a mod (already permission-checked). */
+  app: (id: string, capability: SessionCapability, params: unknown) => unknown
   discover?: () => DiscoveredMod[]
   /** Copies a mod folder on install (cpSync); a seam for tests. */
   copy?: (from: string, to: string) => void
@@ -289,7 +297,7 @@ export class Mods extends EventEmitter {
       if (typeof text !== 'string' || !text.trim()) throw new Error('notify needs a non-empty text')
       return void this.o.broadcast({ t: 'mod-event', id: '_app', type: 'notify', payload: { modId: id, text } })
     }
-    return this.o.app(id, 'chat.send', params)
+    return this.o.app(id, capability as SessionCapability, params)
   }
 
   async panelCall(id: string, method: string, params?: unknown): Promise<unknown> {

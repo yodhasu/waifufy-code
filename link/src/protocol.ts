@@ -721,6 +721,8 @@ export type ServerMsg =
   | { t: 'paired'; token: string }
   /** The answer to `attach`: the running session's epoch, or none when nothing runs. */
   | { t: 'attached'; epoch?: number }
+  /** A mod started a fresh session (`session.start`): every window switches to it, from any screen. */
+  | { t: 'session_started'; epoch: number; cwd: string }
   /** Where an attachment was kept (`path`, for the message to mention), or why it wasn't (`error`). */
   | { t: 'file_put'; id: string; path?: string; error?: string }
   /**

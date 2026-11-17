@@ -1,0 +1,27 @@
+{
+  "id": "rem",
+  "name": "REM — Running Every Midnight",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "Takes over the app each night: starts a fresh session with the night brief, feeds it new REM tickets, wraps up at dawn.",
+  "defaultEnabled": true,
+  "backend": {
+    "entry": "backend.mjs"
+  },
+  "settings": [
+    { "key": "cwd", "type": "string", "label": "Session folder", "default": "" },
+    { "key": "brief", "type": "string", "label": "Night brief file", "default": "" },
+    { "key": "start", "type": "string", "label": "Start (HH:MM)", "default": "21:00" },
+    { "key": "wrapUp", "type": "string", "label": "Last commit / wrap up (HH:MM)", "default": "06:00" },
+    { "key": "stop", "type": "string", "label": "Hard stop (HH:MM)", "default": "06:30" },
+    { "key": "loops", "type": "number", "label": "Test rounds per ticket", "default": 3 },
+    { "key": "label", "type": "string", "label": "Ticket label to watch", "default": "rem" }
+  ],
+  "permissions": [
+    "session.start",
+    "session.interrupt",
+    "chat.send",
+    "fs.read:%APPDATA%/waifufy-tickets",
+    "fs.write:%APPDATA%/waifufy-tickets"
+  ]
+}

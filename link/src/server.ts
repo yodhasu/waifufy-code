@@ -11,7 +11,7 @@ import { listCostumes, serveMmd, serveModel, serveThumb } from './assets.ts'
 import { asMood } from './affection.ts'
 import { putAttachment } from './attachments.ts'
 import { createAuth } from './auth.ts'
-import { Mods } from './mods/index.ts'
+import { Mods, type SessionCapability } from './mods/index.ts'
 import { serveMod } from './mods/http.ts'
 import { findBlender, openInBlender } from './blender.ts'
 import { hasVoiceKey, setVoiceKey, synthesize } from './tts.ts'
@@ -426,14 +426,38 @@ const mods = new Mods({
   app: modApp,
 })
 
-/** A mod's `chat.send`, already permission-checked by Mods (which handles notify and theme.set itself). */
-function modApp(_id: string, _capability: 'chat.send', params: unknown) {
-  const text = (params as { text?: unknown } | null)?.text
-  need(isStr(text) && text.trim(), 'text')
-  // The same path as a typed message.
+/** A mod's session capability, already permission-checked by Mods (which handles notify and theme.set itself). */
+function modApp(id: string, capability: SessionCapability, params: unknown) {
+  const p = (params ?? {}) as { text?: unknown; cwd?: unknown; mode?: unknown }
+  if (capability === 'session.interrupt') return current?.session?.interrupt()
+  if (capability === 'session.start') return modStart(id, p)
+  need(isStr(p.text) && p.text.trim(), 'text')
+  return modSay(p.text)
+}
+
+/** The same path as a typed message, so it shows in every window's chat. */
+function modSay(text: string) {
   const session = live()
   said(undefined, { t: 'said', text })
   return session.say(text)
+}
+
+/** A mod's `session.start`: ends the running session even mid-turn, and every window switches to the new one. */
+async function modStart(id: string, p: { text?: unknown; cwd?: unknown; mode?: unknown }) {
+  need(isStr(p.cwd) && p.cwd.trim() && (p.mode === undefined || MODES.includes(p.mode as PermissionModeName)) && (p.text === undefined || isStr(p.text)), 'cwd, mode, text')
+  const cwd = resolve(p.cwd)
+  // Refused here, so the mod gets the reason; start() would only tell the windows.
+  const problem = folderProblem(cwd)
+  if (problem) throw new BadRequest(problem)
+  // Past any epoch a window chose (they use the clock too), so no window drops its events as stale.
+  const epoch = Math.max(Date.now(), (current?.epoch ?? 0) + 1)
+  await start({ t: 'start', epoch, cwd })
+  if (current?.epoch !== epoch) throw new BadRequest('The session did not start (it failed, or another start overtook it).')
+  console.log(`[mods] ${id} started epoch ${epoch} in ${cwd}`)
+  broadcast({ t: 'session_started', epoch, cwd })
+  if (p.mode) await live().setMode(p.mode as PermissionModeName)
+  if (isStr(p.text) && p.text.trim()) modSay(p.text)
+  return { epoch }
 }
 
 /** Session events the mods subscribe to (events.turn, events.emotion, events.affection, events.message). */
@@ -577,14 +601,20 @@ async function rememberDir(cwd: string): Promise<Settings> {
   }
 }
 
+/** Why a session can't start in `cwd`, if it can't. */
+function folderProblem(cwd: string): string | undefined {
+  if (!isDir(cwd)) return `The folder ${cwd} doesn't exist.`
+  // The app shows the trust dialog first; this only stops a start that skipped it.
+  if (!isTrusted(cwd)) return `The folder ${cwd} isn't trusted yet. Open it from New Game or Load to confirm you trust it.`
+}
+
 async function start(m: Extract<ClientMsg, { t: 'start' }>) {
   const gen = ++startGen
   await closeCurrent()
   if (gen !== startGen) return
   const cwd = resolve(m.cwd)
-  if (!isDir(cwd)) return sessionFailed(m.epoch, `The folder ${cwd} doesn't exist.`)
-  // The app shows the trust dialog first; this only stops a start that skipped it.
-  if (!isTrusted(cwd)) return sessionFailed(m.epoch, `The folder ${cwd} isn't trusted yet. Open it from New Game or Load to confirm you trust it.`)
+  const problem = folderProblem(cwd)
+  if (problem) return sessionFailed(m.epoch, problem)
   let live: Live | undefined
   // Whatever fails from here, the chat waiting on this epoch gets its error and `ended` instead of hanging (R24).
   try {
